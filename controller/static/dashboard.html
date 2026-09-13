@@ -113,6 +113,12 @@
       /* Bar tracks and meter grounds. */
       --track: #e4ddcf;
 
+      /* Behind a modal. A literal was typed at both call sites and it
+         was a LIGHT grey, so on the dark theme the page went pale behind
+         the window instead of receding — the one kind of colour that
+         cannot be got right without knowing which theme it is on. */
+      --scrim: rgba(120,114,104,0.42);
+
       /* The console / log surface. Dark in both themes — see the note
          above; these are the only role colours that do not invert. */
       --console-bg:     #0c0d0c;
@@ -202,6 +208,7 @@
       --on-accent: #0b1a14;
 
       --track: #2c2926;
+      --scrim: rgba(6,5,4,0.62);
 
       --console-bg:     #0c0d0c;
       --console-line:   #1e201d;
@@ -319,6 +326,40 @@
       background: var(--surface);
       border: 1px solid var(--line); border-radius: 14px;
       padding: 18px 22px 22px;
+    }
+
+    /* Form fields. There was no rule for these at all — every input in the
+       dashboard rendered as the browser's default, which on a dark theme is
+       a white box with black text, and on the approval screen that box is
+       the one thing the user has to fill in.
+
+       Styled by ELEMENT rather than a class because they are typed as bare
+       <input> at forty-odd call sites; a class would have to be added to
+       each, and the one that got missed would be the one nobody saw. */
+    input, select, textarea {
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--line-strong); border-radius: 10px;
+      font-family: 'Instrument Sans', sans-serif; font-size: 14px;
+      padding: 9px 12px; width: 100%; max-width: 100%;
+      transition: border-color 0.12s;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none; border-color: var(--voice);
+    }
+    input::placeholder, textarea::placeholder { color: var(--empty); }
+    input:disabled, select:disabled, textarea:disabled {
+      color: var(--muted); cursor: not-allowed;
+    }
+    /* Checkboxes and radios are not boxes to type in; the rule above would
+       stretch them across their row. */
+    input[type="checkbox"], input[type="radio"] {
+      width: auto; padding: 0; accent-color: var(--voice);
+    }
+    /* Range inputs carry their own geometry from the design (3px track,
+       14px handle) and must not take the box treatment either. */
+    input[type="range"] {
+      width: 100%; padding: 0; border: none; background: transparent;
+      accent-color: var(--voice);
     }
 
     /* Small uppercase mono heading. */

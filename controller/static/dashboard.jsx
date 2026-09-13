@@ -217,6 +217,17 @@ function _emitDeviceLog(deviceId, entry) {
   _logSubs.forEach(fn => { try { fn(deviceId, entry); } catch (e) { console.error(e); } });
 }
 
+// Volume as a percentage, from the 0.0–1.0 float the API reports.
+//
+// The scale is not obvious from the field name and it is the kind of thing
+// each new call site guesses at: `${d.volume}%` renders a real device at
+// "0.31%" and a test fixture written as 31 at "31%", so the mistake survives
+// exactly as long as nobody looks at real data. em_volume.device_level_to_ha
+// owns the conversion on the controller side; this is the display half.
+function volumePct(d) {
+  return d.volume == null ? null : Math.round(d.volume * 100);
+}
+
 // What a device's music plane is playing, named the way the dashboard shows
 // it. The keys are em_audiostate's SOURCE_* values; `voice` and `none` are
 // absent on purpose — voice is not a music source, and "none" is the answer
@@ -270,6 +281,12 @@ function deviceState(d) {
 function eventAccent(level) {
   return { info: 'var(--ok)', warn: 'var(--warn)', error: 'var(--error)' }[level] || 'var(--muted)';
 }
+
+// What each tab is called on screen. See the note beside TABS.
+const TAB_LABELS = {
+  status: 'Status', activity: 'Turns', config: 'Config',
+  console: 'Console', updates: 'Updates', logs: 'Logs',
+};
 
 // ─── Components ───────────────────────────────────────────────────────────────
 
@@ -416,10 +433,10 @@ function Panel({ label, children, style }) {
 function CircleButton({ onClick, title, color, children }) {
   return (
     <button onClick={onClick} title={title} style={{
-      background: 'linear-gradient(180deg,var(--sunken),var(--border))', border: '1px solid var(--muted)',
+      background: 'var(--surface)', border: '1px solid var(--line)',
       borderRadius: '50%', width: 28, height: 28, display: 'flex', alignItems: 'center',
-      justifyContent: 'center', cursor: 'pointer', boxShadow: '0 1px 0 var(--sheen) inset',
-      color: color || 'var(--text2)', fontSize: 15, fontWeight: 300, lineHeight: 1,
+      justifyContent: 'center', cursor: 'pointer',
+      color: color || 'var(--text2)', fontSize: 15, fontWeight: 400, lineHeight: 1,
     }}>{children}</button>
   );
 }
@@ -1512,6 +1529,11 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
   const state = deviceState(device);
   const needsUpdate = device.firmware_ver && release?.version && device.firmware_ver !== release.version;
 
+  // The tab KEY is the state and the label is what is read, because the two
+  // want different things: `activity` is what the code has always called the
+  // turn history and renaming it would touch every branch, while "Turns" is
+  // what the thing is. Keeping them apart means the design can name a tab
+  // without a refactor behind it.
   const TABS = device.approved
     ? (isAdmin ? ['status', 'activity', 'config', 'console', 'updates', 'logs'] : ['status', 'activity', 'config', 'logs'])
     : ['approve'];
@@ -2075,16 +2097,16 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
   );
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(180,176,168,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, backdropFilter: 'blur(8px)' }}
+    <div style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, backdropFilter: 'blur(8px)' }}
       onClick={e => e.target === e.currentTarget && onClose()}>
       {/* Fixed height (not maxHeight): every tab renders in an identical
           frame — content scrolls inside, the window never resizes as you
           move between tabs. */}
-      <div className="em-modal" style={{ width: 'min(900px,95vw)', height: 'min(700px,90vh)', background: 'linear-gradient(170deg,var(--raised),var(--surface))', border: '1px solid var(--border)', borderRadius: 16, boxShadow: '0 24px 80px rgba(0,0,0,0.3),0 2px 0 var(--sheen) inset', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'fadeIn 0.15s ease' }}>
+      <div className="em-modal" style={{ width: 'min(900px,95vw)', height: 'min(700px,90vh)', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'fadeIn 0.15s ease' }}>
         {/* Header */}
-        <div className="em-modal-head" style={{ background: 'linear-gradient(180deg,var(--card),var(--bg))', borderBottom: '1px solid var(--border-hard)', padding: '20px 24px 0', boxShadow: '0 1px 0 var(--sheen) inset' }}>
+        <div className="em-modal-head" style={{ borderBottom: '1px solid var(--line)', padding: '20px 24px 0' }}>
           <div className="em-modal-headrow" style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 16 }}>
-            <LedRing state={state} size={72}/>
+            <LedRing state={state} size={44}/>
             <div style={{ flex: 1, minWidth: 0 }}>
               {renaming ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2105,11 +2127,14 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   onClick={() => isAdmin && setRenaming(true)}
                   title={isAdmin ? 'Click to rename' : undefined}
                   style={{
-                    fontFamily: "'DM Sans',sans-serif", fontSize: 26, color: 'var(--text)', fontWeight: 600,
-                    letterSpacing: '-0.02em', lineHeight: 1, cursor: isAdmin ? 'pointer' : 'default',
+                    fontFamily: "'Instrument Sans',sans-serif", fontSize: 24, color: 'var(--text)', fontWeight: 600,
+                    letterSpacing: '-0.01em', lineHeight: 1.2, cursor: isAdmin ? 'pointer' : 'default',
                     display: 'inline-block',
                   }}>
-                  {device.label || <span style={{ color: 'var(--muted)', fontSize: 20 }}>{device.device_id.slice(0,8)}…</span>}
+                  {/* Not a truncated copy of the id: the line below already
+                      carries it in full, and a device with no name has a
+                      name-shaped gap rather than a shorter name. */}
+                  {device.label || <span style={{ color: 'var(--muted)' }}>Unnamed device</span>}
                 </div>
               )}
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', marginTop: 4, letterSpacing: '0.05em' }}>
@@ -2122,9 +2147,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ background: 'linear-gradient(160deg,var(--lcd-face),var(--lcd-deep))', border: '1px solid var(--lcd-line)', borderRadius: 6, padding: '5px 12px', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.5)' }}>
-                <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: state.color, letterSpacing: '0.05em' }}>{state.label.toUpperCase()}{state.source ? ` · ${state.source}` : ''}</span>
-              </div>
+              <StateChip state={state}/>
               {isAdmin && !confirmDelete && (
                 <CircleButton onClick={() => setConfirmDelete(true)} title="Delete device" color="var(--error)">🗑</CircleButton>
               )}
@@ -2141,14 +2164,22 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
           {device.approved ? (
             <div className="em-tabs" style={{ display: 'flex', gap: 2 }}>
               {TABS.map(t => (
-                <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? 'linear-gradient(180deg,var(--raised),var(--surface))' : 'transparent', border: tab === t ? '1px solid var(--border-hard)' : '1px solid transparent', borderBottom: tab === t ? '1px solid var(--surface)' : '1px solid transparent', borderRadius: '6px 6px 0 0', fontFamily: "'DM Mono',monospace", fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', padding: '7px 14px', cursor: 'pointer', color: tab === t ? 'var(--text)' : 'var(--muted)', marginBottom: -1, transition: 'color 0.15s' }}>{t}</button>
+                <button key={t} onClick={() => setTab(t)} style={{
+                  background: tab === t ? 'var(--raised)' : 'transparent',
+                  border: `1px solid ${tab === t ? 'var(--line-strong)' : 'transparent'}`,
+                  borderRadius: 9, fontFamily: "'Instrument Sans',sans-serif",
+                  fontSize: 13, fontWeight: tab === t ? 600 : 400,
+                  padding: '7px 14px', cursor: 'pointer',
+                  color: tab === t ? 'var(--text)' : 'var(--muted)',
+                  transition: 'background 0.12s, border-color 0.12s, color 0.12s',
+                }}>{TAB_LABELS[t] || t}</button>
               ))}
             </div>
           ) : (
             // One tab is not a tab bar — it reads as a label and the approval
             // form sat behind a click. Pending devices get a banner instead.
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: -1, padding: '9px 14px', background: 'linear-gradient(180deg,var(--accent-tint),var(--surface))', border: '1px solid var(--accent-line)', borderBottom: '1px solid var(--surface)', borderRadius: '6px 6px 0 0', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: 'var(--accent-deep)', lineHeight: 1.4 }}>
-              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--warn)', fontWeight: 600, flexShrink: 0 }}>Action required</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', background: 'var(--warn-bg)', border: '1px solid var(--warn-line)', borderRadius: 10, fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--text2)', lineHeight: 1.4, marginBottom: 16 }}>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--warn)', flexShrink: 0 }}>Action required</span>
               <span>Name this device below, then approve it to add it to your fleet.</span>
             </div>
           )}
@@ -2177,11 +2208,36 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   button used to be a default-weight pill reading "Approve
                   Device", which read as an acknowledgement rather than a
                   decision — say what it does, then size it like it matters. */}
-              <div style={{ marginTop: 24, background: 'linear-gradient(160deg,var(--text),var(--bg))', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px' }}>
-                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: 'var(--text2)', lineHeight: 1.5, marginBottom: 14 }}>
-                  Approving adds this device to your fleet: it receives the fleet
-                  configuration, gets a voice satellite Home Assistant can drive,
-                  and its microphone starts streaming to the controller when woken.
+              {/* This panel used to paint itself `linear-gradient(160deg,
+                  var(--text),var(--bg))` — the TEXT colour as a background,
+                  so the most consequential panel in the dashboard was a
+                  near-black slab with --text2 prose on it. A token swept in
+                  by name at some point and nothing rendered it wrong enough
+                  to be reported. */}
+              <div style={{ marginTop: 24, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: '16px 18px' }}>
+                <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--text2)', lineHeight: 1.6, marginBottom: 14, textWrap: 'pretty' }}>
+                  What approving does, in the order it happens:
+                </div>
+                {/* Each consequence in the colour of the thing it turns on,
+                    so the one that is about the MICROPHONE is the one that
+                    is not green. Somebody admitting a device to their home
+                    should see that distinction without reading. */}
+                <div style={{ marginBottom: 16 }}>
+                  {[
+                    ['var(--voice)', 'It receives the fleet configuration.'],
+                    ['var(--voice)', 'Home Assistant gets a voice satellite and a media player for it.'],
+                    ['var(--media)', 'Its Spotify, AirPlay and Sendspin endpoints become reachable.'],
+                    ['var(--warn)',  'Its microphone streams to the controller once it hears the wake word.'],
+                  ].map(([c, text]) => (
+                    <div key={text} style={{ display: 'flex', gap: 10, alignItems: 'baseline',
+                                             marginTop: 8 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: c,
+                                     flexShrink: 0, transform: 'translateY(-1px)' }}/>
+                      <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                                     color: 'var(--text2)', lineHeight: 1.5,
+                                     textWrap: 'pretty' }}>{text}</span>
+                    </div>
+                  ))}
                 </div>
                 <Pill big accent disabled={approving || !approveLabel.trim()} onClick={doApprove}>
                   {approving ? 'Approving…' : 'Approve & Add to Fleet'}
@@ -2226,6 +2282,58 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
             const wwLabel = wwModelLabel(cfgEff.owwModel);
             return (
               <div style={{ minHeight:'100%', display:'flex', flexDirection:'column', gap:16 }}>
+                {/* Playing, at the top, because it is the one thing on this
+                    tab that is true only right now — everything below is a
+                    property of the device rather than of this minute.
+
+                    The design draws cover art, a title and a progress bar
+                    here. None of that reaches the controller: em_audiostate
+                    reports which source owns the music plane and nothing
+                    about what it is playing (#172). So this shows what is
+                    known and says plainly what is not, rather than leaving
+                    an empty frame that reads as a failure to load. */}
+                {state.key === 'playing' && (
+                  <Panel label="Playing now">
+                    <div style={{ display:'flex', alignItems:'center', gap:16,
+                                  flexWrap:'wrap' }}>
+                      <div style={{ width:52, height:52, borderRadius:10, flexShrink:0,
+                                    background:'var(--raised)', border:'1px solid var(--line)',
+                                    display:'flex', alignItems:'center', justifyContent:'center',
+                                    color:'var(--empty)', fontSize:16 }}>♪</div>
+                      <div style={{ flex:'1 1 220px', minWidth:0 }}>
+                        <div style={{ fontFamily:"'Instrument Sans',sans-serif", fontSize:15,
+                                      color:'var(--text2)', lineHeight:1.5,
+                                      textWrap:'pretty' }}>
+                          This device is playing. Its firmware does not report the
+                          track, so there is nothing to name here yet.
+                        </div>
+                      </div>
+                      <div style={{ display:'flex', gap:0, flexWrap:'wrap' }}>
+                        {[
+                          ['Source', state.source, 'var(--media)'],
+                          ['Level', volumePct(device) != null ? `${volumePct(device)}%` : null, 'var(--text)'],
+                          /* The depth is what the device will apply when a
+                             voice turn starts, not a live measurement — a
+                             device that cannot mix never ducks at all, so the
+                             two answers must not read the same. */
+                          ['Ducking', device.audioMixCapable === false
+                            ? 'pauses' : `${cfgEff.duckDb ?? -18} dB`,
+                            device.audioMixCapable === false ? 'var(--muted)' : 'var(--text)'],
+                        ].map(([l, v, c]) => (
+                          <div key={l} style={{ padding:'0 18px',
+                                                borderLeft:'1px solid var(--line)' }}>
+                            <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10,
+                                          letterSpacing:'0.16em', textTransform:'uppercase',
+                                          color:'var(--muted)' }}>{l}</div>
+                            <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:14,
+                                          color: v == null ? 'var(--empty)' : c,
+                                          marginTop:5 }}>{v ?? '—'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </Panel>
+                )}
                 <div className="em-grid2" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
                   <Panel label="Device">
                     {row('IP', (() => {
@@ -2273,8 +2381,8 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     {row('Status',
                          device.connected ? 'Online' : `Offline · last seen ${relTime(device.last_seen)}`,
                          device.connected ? 'var(--ok)' : 'var(--warn)')}
-                    {row('Volume', device.volume != null
-                         ? `${Math.round(device.volume * 100)}%`
+                    {row('Volume', volumePct(device) != null
+                         ? `${volumePct(device)}%`
                          : (s?.volumePct != null ? `${s.volumePct}%` : '—'))}
                     {row('Link', device.connected ? (device.linkTls ? 'wss (TLS)' : 'plain ws') : '—',
                          device.connected ? (device.linkTls ? 'var(--ok)' : 'var(--warn)') : undefined)}
@@ -6933,7 +7041,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
        circular close button. */
     <div style={{
       position: 'fixed', inset: 0, zIndex: 200,
-      background: 'rgba(180,176,168,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'var(--scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center',
       backdropFilter: 'blur(8px)',
     }}>
       <div style={{
@@ -8730,7 +8838,7 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
       onClick={e => e.target === e.currentTarget && onClose()}>
       {/* Same fixed frame as the device Detail modal — consistent window
           size across the whole dashboard. */}
-      <div className="em-modal" style={{ width:'min(900px,95vw)', height:'min(700px,90vh)', background:'linear-gradient(170deg,var(--raised),var(--surface))', border:'1px solid var(--border)', borderRadius:16, boxShadow:'0 24px 80px rgba(0,0,0,0.3),0 2px 0 var(--sheen) inset', display:'flex', flexDirection:'column', overflow:'hidden', animation:'fadeIn 0.15s ease' }}>
+      <div className="em-modal" style={{ width:'min(900px,95vw)', height:'min(700px,90vh)', background:'var(--bg)', border:'1px solid var(--line)', borderRadius:16, display:'flex', flexDirection:'column', overflow:'hidden', animation:'fadeIn 0.15s ease' }}>
 
         {/* Header */}
         <div className="em-modal-head" style={{ background:'linear-gradient(180deg,var(--card),var(--bg))', borderBottom:'1px solid var(--border-hard)', padding:'20px 24px 0', boxShadow:'0 1px 0 var(--sheen) inset' }}>
@@ -9179,7 +9287,7 @@ function PlaybackLine({ device, state }) {
         </div>
         <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
                       color: 'var(--muted)', marginTop: 3, letterSpacing: '0.04em' }}>
-          {state.source}{device.volume != null ? ` · volume ${device.volume}%` : ''}
+          {state.source}{device.volume != null ? ` · volume ${volumePct(device)}%` : ''}
         </div>
       </div>
     </div>
@@ -9227,7 +9335,7 @@ function DeviceRow({ device, release, onClick }) {
             widths. */}
         <div className="em-rowvals" style={{ display: 'flex', alignItems: 'center',
                       gap: 16, marginLeft: 'auto' }}>
-          <RowValue value={device.volume} unit="%" width={84} title="Volume"/>
+          <RowValue value={volumePct(device)} unit="%" width={84} title="Volume"/>
           <RowValue value={device.rttMs} unit="ms" width={72} title="Control-plane round trip"
                     color={device.rttMs >= 200 ? 'var(--warn)' : undefined}/>
           {/* 120, not the 88 the design specifies: that width was drawn
@@ -9312,7 +9420,7 @@ function DenseRow({ device, release, onClick }) {
         )}
       </div>
       <div style={cell}>{device.volume == null
-        ? <span style={{ color: 'var(--empty)' }}>—</span> : `${device.volume}%`}</div>
+        ? <span style={{ color: 'var(--empty)' }}>—</span> : `${volumePct(device)}%`}</div>
       <div style={{ ...cell, color: device.rttMs >= 200 ? 'var(--warn)' : 'var(--text2)' }}>
         {device.rttMs == null
           ? <span style={{ color: 'var(--empty)' }}>—</span> : `${device.rttMs}ms`}</div>
@@ -9332,10 +9440,14 @@ function DenseRow({ device, release, onClick }) {
 
 function PendingRow({ device, onClick }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+    // The whole row opens the device, as every other row does — the button
+    // is the one that says what happens next, not the only way in.
+    <div onClick={onClick}
+         style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
                   background: 'var(--surface)', border: '1px solid var(--line)',
                   borderLeft: '2px solid var(--warn)', borderRadius: 12,
-                  padding: '14px 18px', marginBottom: 10 }}>
+                  padding: '14px 18px', marginBottom: 10, cursor: 'pointer',
+                  userSelect: 'none' }}>
       <LedRing state={deviceState(device)} size={34}/>
       <div style={{ flex: '1 1 200px', minWidth: 0 }}>
         <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 16,
