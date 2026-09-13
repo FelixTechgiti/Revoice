@@ -7109,6 +7109,19 @@ def _merge_device(row) -> dict:
         # Gates the audio hold-off, and with it the two HA entities that
         # report whether this Echo is audible.
         "audioStateCapable": getattr(live, "audio_state_capable", False) if live else False,
+        # What is coming out of the speaker, aggregated by em_audiostate:
+        # the controller's own stream, Spotify Connect, AirPlay, Sendspin,
+        # or a voice turn. The dashboard draws its `playing` state from it,
+        # so this is the same answer Home Assistant gets from the same
+        # object — one state machine, two readers, never two rules.
+        #
+        # None from an offline device rather than {"active": False}: those
+        # are different claims. "Not playing" is something a connected
+        # device is observed to be doing; an offline one is not observed at
+        # all, and NULL is what the rest of this dict uses for that.
+        "audio":            ({"active": live.audio_state.active,
+                              "source": live.audio_state.source}
+                             if live is not None else None),
         # Gates the AEC delay slider, which only means anything on the
         # software tap. Paired with aecRef because the capability says the
         # firmware KNOWS how to use a hardware reference and aecRef says

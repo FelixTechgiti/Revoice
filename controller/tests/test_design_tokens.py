@@ -32,20 +32,25 @@ BUDGET = Path(__file__).resolve().parent / "design_budget.json"
 # Components whose colours are DATA, not styling, with the reason each is
 # exempt. These must keep literal hexes — theming them would be a bug.
 #
-#   LedRing, DeviceDiagram, DeviceDiagramMini
-#       render the physical Echo Dot: its black plastic, its actual LED
-#       colours. A device drawn in "dark mode" would be a different device.
+#   DeviceDiagram, DeviceDiagramMini
+#       render the physical Echo Dot: its black plastic, seen from above.
+#       A device drawn in "dark mode" would be a different device. LedRing
+#       was on this list for the same reason and has left it: it no longer
+#       draws the hardware at all, only the state, so its colours are
+#       chrome and belong in tokens. These two follow when the microphone
+#       pane is rebuilt around them.
 #   Shell
 #       an xterm.js theme. Terminal palettes are a 16-colour contract that
 #       programs address by index; they are not ours to restyle.
 #   DeviceConfigForm
 #       the LED scene swatches are values sent to the hardware. `#00b400` is
 #       what the ring will emit, not what the page will paint.
-#   deviceState (module scope)
-#       `dot` is the simulated LED colour and stays literal; `color` beside
-#       it is chrome and is tokenised. Hence module scope is budgeted, not
-#       exempt — the split has to hold.
-EXEMPT = {"LedRing", "DeviceDiagram", "DeviceDiagramMini", "Shell", "DeviceConfigForm"}
+#
+# deviceState (module scope) used to carry a budgeted `dot` — the simulated
+# LED colour, literal beside a tokenised `color`. The ring stopped depicting
+# an LED, so there is one colour now and it is a token; the module-scope
+# budget came down with it.
+EXEMPT = {"DeviceDiagram", "DeviceDiagramMini", "Shell", "DeviceConfigForm"}
 
 _HEX = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 _COMPONENT = re.compile(r"^function ([A-Z]\w*)")

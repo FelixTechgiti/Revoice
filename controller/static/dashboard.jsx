@@ -217,14 +217,54 @@ function _emitDeviceLog(deviceId, entry) {
   _logSubs.forEach(fn => { try { fn(deviceId, entry); } catch (e) { console.error(e); } });
 }
 
+// What a device's music plane is playing, named the way the dashboard shows
+// it. The keys are em_audiostate's SOURCE_* values; `voice` and `none` are
+// absent on purpose — voice is not a music source, and "none" is the answer
+// this function returns by being false.
+//
+// `media` is the controller's own stream, which reaches the device because
+// Home Assistant asked for it, so that is what it is called on screen.
+const PLAYBACK_SOURCES = {
+  spotify:  'SPOTIFY',
+  airplay:  'AIRPLAY',
+  sendspin: 'SENDSPIN',
+  media:    'HA MEDIA',
+};
+
+// The source label for a device that is audibly playing, or null.
+//
+// `audio` is absent on a controller that has not reported it and on a device
+// whose firmware cannot say what owns its music plane. Absent reads as "not
+// playing", never as unknown — a device drawn as playing when nothing is
+// audible is a wrong answer, and the compatibility rule is to degrade to the
+// old behaviour instead. Same reason em_audiostate.Inputs.local_source
+// treats None that way.
+function playbackSource(d) {
+  if (!d.audio || !d.audio.active) return null;
+  return PLAYBACK_SOURCES[d.audio.source] || null;
+}
+
+// The one state a device is in, and the colour that says so.
+//
+// The ORDER is the contract. Voice outranks music because that is what the
+// mixer itself does: a turn DUCKS the music rather than pausing it, so while
+// both are audible the voice is the thing being listened to — and a Dot that
+// went quiet mid-track must not read as idle just because a turn is open.
+// So `playing` is tested after every voice state and before `idle`.
+//
+// There is no `dot` any more. It used to be the simulated LED colour, a
+// literal hex, because LedRing drew the physical Echo Dot's ring. The ring
+// is chrome now, so there is one colour and it is a token.
 function deviceState(d) {
-  if (!d.approved)  return { key: 'pending',   label: 'Pending',   color: 'var(--accent-hi)', dot: '#8ab0d0' };
-  if (!d.connected) return { key: 'offline',   label: 'Offline',   color: 'var(--warn)', dot: '#d4703a' };
-  if (d.muted)      return { key: 'muted',     label: 'Muted',     color: 'var(--error)', dot: '#c04040' };
-  if (d.speaking)   return { key: 'speaking',  label: 'Speaking',  color: 'var(--accent)', dot: '#4080d0' };
-  if (d.thinking)   return { key: 'thinking',  label: 'Thinking',  color: 'var(--warn)', dot: '#a08020' };
-  if (d.listening)  return { key: 'listening', label: 'Listening', color: 'var(--ok)', dot: '#40906a' };
-  return               { key: 'idle',      label: 'Idle',      color: 'var(--muted)', dot: '#aaaaaa' };
+  if (!d.approved)  return { key: 'pending',   label: 'Pending',   color: 'var(--warn)' };
+  if (!d.connected) return { key: 'offline',   label: 'Offline',   color: 'var(--error)' };
+  if (d.muted)      return { key: 'muted',     label: 'Muted',     color: 'var(--error)' };
+  if (d.speaking)   return { key: 'speaking',  label: 'Speaking',  color: 'var(--voice)' };
+  if (d.thinking)   return { key: 'thinking',  label: 'Thinking',  color: 'var(--voice)' };
+  if (d.listening)  return { key: 'listening', label: 'Listening', color: 'var(--voice)' };
+  const source = playbackSource(d);
+  if (source)       return { key: 'playing',   label: 'Playing',   color: 'var(--media)', source };
+  return               { key: 'idle',      label: 'Ready',     color: 'var(--faint)' };
 }
 
 function eventAccent(level) {
@@ -820,67 +860,107 @@ function StatBar({ label, pct, text }) {
 
 
 
+// LedRing — the device state as one mark, at any size.
+//
+// It used to be a picture of an Echo Dot: black plastic, a radial-gradient
+// shell, a specular highlight, and the ring's real LED colours. That is why
+// it was exempt from the token test. It is not a picture of hardware any
+// more — it is the state, drawn — so every colour here is a token and the
+// exemption went with them.
+//
+// Each state is distinguished by SHAPE as well as motion (dashed against
+// solid, a core against bars), so it still reads with animation off and for
+// anyone who cannot tell the green from the blue. The keyframes live in
+// dashboard.html; an inline style can name an animation but cannot define
+// one.
 function LedRing({ state, size = 120 }) {
-  const cx = size / 2, cy = size / 2, r = size * 0.38;
-  const stateKey = state?.key || 'idle';
-  const stateColor = state?.dot || '#aaaaaa';
-  const isPending = stateKey === 'pending';
-  const isOffline = stateKey === 'offline';
+  const cx = size / 2, cy = size / 2;
+  const r = size * 0.38;
+  const sw = Math.max(2, size * 0.075);
+  const key = state?.key || 'idle';
+  const color = state?.color || 'var(--faint)';
+  const circumference = 2 * Math.PI * r;
 
-  const ledColor = isPending ? '#c8c8c8'
-                 : isOffline ? '#d4703a'
-                 : stateKey === 'muted' ? '#c04040'
-                 : stateKey === 'speaking' ? '#4080d0'
-                 : stateKey === 'listening' ? '#40906a'
-                 : stateKey === 'thinking' ? '#a08020'
-                 : '#3a4a30';
+  // Dashed for the states that are waiting on something — a person, a
+  // network, the other end of a turn. Solid for the states that are a
+  // settled fact: muted, playing, ready.
+  const dashed = `${circumference / 24 * 1.35} ${circumference / 24 * 0.65}`;
+  const spin = { transformOrigin: `${cx}px ${cy}px` };
 
-  const shouldPulse = isPending || isOffline;
-  const circumference = 2 * Math.PI * (size * 0.38);
-  const segLen = circumference / 12 * 0.72;
-  const gapLen = circumference / 12 * 0.28;
+  const ring = (stroke, extra) => (
+    <circle cx={cx} cy={cy} r={r} fill="none" stroke={stroke} strokeWidth={sw}
+            strokeLinecap="round" {...extra}/>
+  );
 
   return (
-    <svg width={size} height={size} style={{ display: 'block', flexShrink: 0 }}>
-      <defs>
-        <radialGradient id={`shell-${size}`} cx="38%" cy="32%" r="65%">
-          <stop offset="0%" stopColor="#505050"/>
-          <stop offset="55%" stopColor="#2c2c2c"/>
-          <stop offset="100%" stopColor="#181818"/>
-        </radialGradient>
-        <radialGradient id={`inner-${size}`} cx="42%" cy="36%" r="58%">
-          <stop offset="0%" stopColor="#383838"/>
-          <stop offset="100%" stopColor="#202020"/>
-        </radialGradient>
-        <filter id={`glow-${size}`} x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="2.5" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-        <clipPath id={`clip-${size}`}><circle cx={cx} cy={cy} r={size*0.47}/></clipPath>
-      </defs>
-      <circle cx={cx} cy={cy} r={size*0.49} fill="#0d0d0d"/>
-      <circle cx={cx} cy={cy} r={size*0.47} fill={`url(#shell-${size})`}/>
-      <circle cx={cx} cy={cy} r={size*0.47} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="1.2"/>
-      <g clipPath={`url(#clip-${size})`}>
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#0b0b0b" strokeWidth={size*0.065}/>
-        <circle cx={cx} cy={cy} r={r} fill="none"
-          stroke={ledColor} strokeWidth={size*0.045}
-          strokeDasharray={`${segLen} ${gapLen}`}
-          transform={`rotate(-90 ${cx} ${cy})`}
-          filter={stateKey !== 'idle' ? `url(#glow-${size})` : undefined}
-          style={shouldPulse ? { animation: 'ledpulse 1.8s ease-in-out infinite' } : undefined}
-        />
-        <circle cx={cx} cy={cy} r={r} fill="none"
-          stroke="#141414" strokeWidth={size*0.065}
-          strokeDasharray={`1.5 ${circumference/12 - 1.5}`}
-          transform={`rotate(-90 ${cx} ${cy})`}
-        />
-      </g>
-      <circle cx={cx} cy={cy} r={size*0.36} fill={`url(#inner-${size})`}/>
-      <circle cx={cx} cy={cy} r={size*0.36} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="0.8"/>
-      <circle cx={cx} cy={cy} r={size*0.09} fill={stateColor} style={{ transition: 'fill 0.4s' }}
-        filter={stateKey !== 'idle' ? `url(#glow-${size})` : undefined}/>
-      <ellipse cx={cx - size*0.07} cy={cy - size*0.08} rx={size*0.09} ry={size*0.055} fill="rgba(255,255,255,0.06)"/>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}
+         style={{ display: 'block', flexShrink: 0 }}
+         role="img" aria-label={state?.label || 'Ready'}>
+      {/* The track. Always there, so every state is the same ring with
+          something done to it rather than a different drawing. */}
+      {ring('var(--line)')}
+
+      {key === 'pending' && (
+        <g className="em-ring-breathe"
+           style={{ animation: 'em-ring-breathe 1.8s ease-in-out infinite' }}>
+          {ring(color, { strokeDasharray: dashed })}
+        </g>
+      )}
+
+      {key === 'offline' && ring(color, { strokeDasharray: dashed, opacity: 0.75 })}
+
+      {key === 'muted' && (
+        <g>
+          {ring(color)}
+          <line x1={cx - r * 0.42} y1={cy - r * 0.42} x2={cx + r * 0.42} y2={cy + r * 0.42}
+                stroke={color} strokeWidth={sw * 0.7} strokeLinecap="round"/>
+          <line x1={cx + r * 0.42} y1={cy - r * 0.42} x2={cx - r * 0.42} y2={cy + r * 0.42}
+                stroke={color} strokeWidth={sw * 0.7} strokeLinecap="round"/>
+        </g>
+      )}
+
+      {(key === 'speaking' || key === 'thinking') && (
+        <g>
+          {ring(color, { strokeDasharray: dashed, opacity: 0.55 })}
+          <circle cx={cx} cy={cy} r={size * 0.11} fill={color} className="em-ring-pulse"
+                  style={{ animation: 'em-ring-pulse 1.2s ease-in-out infinite',
+                           transformOrigin: `${cx}px ${cy}px` }}/>
+        </g>
+      )}
+
+      {/* Listening: one arc going round. The rotation is the whole signal,
+          so the arc is a quarter of the ring — short enough that its
+          position is unambiguous at a glance. */}
+      {key === 'listening' && (
+        <g className="em-ring-spin"
+           style={{ ...spin, animation: 'em-ring-spin 2.4s linear infinite' }}>
+          {ring(color, {
+            strokeDasharray: `${circumference * 0.26} ${circumference * 0.74}`,
+            transform: `rotate(-90 ${cx} ${cy})`,
+          })}
+        </g>
+      )}
+
+      {/* Playing: an all-but-closed ring with a level meter inside it. The
+          gap is what keeps it from reading as `muted` with the cross lost
+          at small sizes. */}
+      {key === 'playing' && (
+        <g>
+          {ring(color, {
+            strokeDasharray: `${circumference * 0.93} ${circumference * 0.07}`,
+            transform: `rotate(-90 ${cx} ${cy})`,
+          })}
+          {[-1, 0, 1].map((i, n) => (
+            <rect key={n} x={cx + i * size * 0.1 - size * 0.028} y={cy - size * 0.13}
+                  width={size * 0.056} height={size * 0.26} rx={size * 0.028}
+                  fill={color} className="em-ring-eq"
+                  style={{ animation: `em-ring-eq 1s ease-in-out ${n * 0.2}s infinite`,
+                           transformOrigin: `${cx + i * size * 0.1}px ${cy + size * 0.13}px` }}/>
+          ))}
+        </g>
+      )}
+
+      {key === 'idle' && <circle cx={cx} cy={cy} r={size * 0.09} fill={color}/>}
     </svg>
   );
 }
@@ -2043,7 +2123,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ background: 'linear-gradient(160deg,var(--lcd-face),var(--lcd-deep))', border: '1px solid var(--lcd-line)', borderRadius: 6, padding: '5px 12px', boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.5)' }}>
-                <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: state.dot, textShadow: `0 0 8px ${state.dot}88`, letterSpacing: '0.05em' }}>{state.label.toUpperCase()}</span>
+                <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: state.color, letterSpacing: '0.05em' }}>{state.label.toUpperCase()}{state.source ? ` · ${state.source}` : ''}</span>
               </div>
               {isAdmin && !confirmDelete && (
                 <CircleButton onClick={() => setConfirmDelete(true)} title="Delete device" color="var(--error)">🗑</CircleButton>
@@ -2437,7 +2517,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     recordingsOn={cfgEff.saveUtterances}
                     nearMisses={device.owwNearMisses}
                     stateLabel={state.label.toUpperCase()}
-                    stateColor={state.dot}
+                    stateColor={state.color}
                     isAdmin={isAdmin}
                   />
                 </Panel>
@@ -3118,7 +3198,7 @@ function Card({ device, onClick }) {
       </div>
       <div style={{ padding: '0 16px 16px' }}>
         <div className="em-inset" style={{ '--em-inset-radius':'6px', '--em-inset-pad':'7px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: state.dot, letterSpacing: '0.12em', textShadow: `0 0 8px ${state.dot}88` }}>{state.label.toUpperCase()}</span>
+          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: state.color, letterSpacing: '0.12em' }}>{state.label.toUpperCase()}{state.source ? ` · ${state.source}` : ''}</span>
           <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--lcd-dim)', letterSpacing: '0.08em' }}>{(() => {
             const ip = device.ip && device.ip !== '127.0.0.1' ? device.ip : null;
             return device.connected ? (ip || '—') : (ip ? `${ip} ↑` : '—');
