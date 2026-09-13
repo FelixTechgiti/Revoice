@@ -12,6 +12,31 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.45.0-fx.1
+
+### Die Firmware reicht ihre Audiogeräte nicht mehr an Unterprozesse weiter
+
+**Am Gerät gefunden, 2026-09-13, und es ist ein Fund ohne Symptom — noch.**
+librespot und shairport-sync hielten beide denselben Zugriff auf den
+Lautsprecher wie die Firmware selbst. librespot ist bewusst ganz ohne
+Audio-Unterstützung gebaut und kann so ein Gerät gar nicht öffnen; es hatte den
+Zugriff also von der Firmware geerbt, als diese es startete.
+
+**Warum das gefährlich ist, obwohl gerade nichts kaputt war:** Wenn die
+Firmware den Lautsprecher schließt, bleibt er belegt, solange ein Unterprozess
+ihn noch hält. Das nächste Öffnen kann dann scheitern — und zwar aus einer
+Richtung, in die die vorhandene Wartelogik gar nicht schaut. Genau daran hing
+ein Gerät schon einmal achtzehn Minuten fest.
+
+**Was sich ändert:** Die Firmware markiert ihre Audiogeräte jetzt so, dass sie
+beim Start eines Unterprozesses nicht mitwandern — an der Stelle, an der sie
+geöffnet werden, und damit für alle rund zwanzig Programme, die diese Firmware
+startet, auf einmal.
+
+**Was du dafür tun musst:** nichts, und du wirst nichts davon merken. Es ist
+eine Absicherung gegen einen Fehler, der schwer zu diagnostizieren wäre, wenn er
+einträte.
+
 ## 2.44.0-fx.1
 
 ### Ein fehlgeschlagenes Spotify-Stück wirft AirPlay nicht mehr raus

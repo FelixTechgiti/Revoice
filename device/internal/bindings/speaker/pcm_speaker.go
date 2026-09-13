@@ -19,6 +19,7 @@ import (
 
 	"github.com/Binozo/GoTinyAlsa/pkg/pcm"
 	"github.com/Binozo/GoTinyAlsa/pkg/tinyalsa"
+	"github.com/wilbowes/EchoMuse/internal/sndcloexec"
 )
 
 // cardNr/deviceNr live in pcmstatus.go so the host test can pin them against
@@ -251,6 +252,15 @@ func (p *PcmSpeaker) Init() error {
 		return err
 	}
 	p.session = &session
+
+	// tinyalsa's open is C's, so the descriptor is not close-on-exec and
+	// every subprocess this firmware starts inherits the speaker. Marked here
+	// rather than at the twenty-odd exec sites, for the reason in the
+	// package comment of internal/sndcloexec — and after every open, not only
+	// the first, because this path also runs on a reopen.
+	if n := sndcloexec.MarkOpenSoundDevices(); n > 0 {
+		log.Printf("[speaker] %d sound descriptor(s) marked close-on-exec", n)
+	}
 
 	go p.silenceLoop()
 
