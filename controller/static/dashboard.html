@@ -485,16 +485,33 @@
       outline: 2px solid var(--voice); outline-offset: 2px;
     }
 
-    /* Mobile layout — the dashboard is inline-styled, so phone-width
-       adjustments live here as class-targeted media overrides (the classes
-       are on the structural containers in dashboard.jsx). !important is
-       required to beat the inline styles; keep these to layout only. */
+    /* Narrow layout — the dashboard is inline-styled, so width adjustments
+       live here as class-targeted media overrides (the classes are on the
+       structural containers in dashboard.jsx). !important is required to
+       beat the inline styles; keep these to layout only. */
+
+    /* The sidebar goes under the list before the phone breakpoint, because
+       a 340px column beside a device row is what runs out of width first —
+       the row wraps into an unreadable stack long before anything else on
+       the page is in trouble. */
+    @media (max-width: 900px) {
+      .em-fleet { grid-template-columns: 1fr !important; }
+      .em-side  { border-left: none !important; border-top: 1px solid var(--line) !important; }
+    }
     @media (max-width: 640px) {
-      .em-page    { padding: 16px 12px 48px !important; }
-      .em-header  { flex-wrap: wrap !important; gap: 10px !important; margin-bottom: 20px !important; }
-      .em-summary { flex-wrap: wrap !important; }
-      .em-summary > div { flex: 1 1 40% !important; }
-      .em-summary > .em-summary-release { flex: 1 1 100% !important; }
+      .em-header    { padding: 14px 16px !important; }
+      .em-situation { padding: 24px 16px 22px !important; }
+      .em-side      { padding: 0 16px 32px !important; }
+      /* The readouts are a row of four with a rule between them; at this
+         width they are a pair of pairs, and the leading rule has to go or
+         the second row starts with a stray line. */
+      .em-situation > div:last-child > div { padding: 0 14px !important; }
+      .em-situation > div:last-child > div:first-child { padding-left: 0 !important; border-left: none !important; }
+      /* The readouts drop to their own line under the name rather than
+         squeezing beside the state chip, and keep their left edge so the
+         columns still read down the list. */
+      .em-rowvals { flex: 1 1 100% !important; margin-left: 0 !important;
+                    padding-left: 48px !important; }
       /* Modals go full-screen — the desktop frame is min(900px,95vw) ×
          min(700px,90vh), which leaves useless slivers of backdrop on a
          phone. 100dvh tracks the browser chrome collapsing on scroll. */

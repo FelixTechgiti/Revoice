@@ -425,9 +425,16 @@ def test_controller_update_is_advisory_only():
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent
 
+    # The banner is bounded by the element that follows it, and that element
+    # moves whenever the page is relaid out — it was the summary tiles until
+    # the fleet page was rebuilt around a grid. `.index` RAISING when the
+    # marker is gone is the point: falling back to the rest of the file would
+    # widen the search and keep passing, and defaulting to an empty slice
+    # would pass vacuously. A loud failure here is somebody being asked to
+    # re-point the boundary, which takes a second.
     jsx = (root / "static" / "dashboard.jsx").read_text()
     start = jsx.index("{/* Controller update notice.")
-    banner = jsx[start:jsx.index("{/* Summary */}", start)]
+    banner = jsx[start:jsx.index('<div className="em-fleet"', start)]
     for forbidden in ("API.post", "API.put", "API.delete", "onClick={doUpdate"):
         assert forbidden not in banner, (
             f"the controller update notice must not perform actions, found "
