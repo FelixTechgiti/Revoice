@@ -1331,6 +1331,60 @@ tick yet, must not render as "not running". Accusing a working Echo for the
 first thirty seconds of every reconnect is how this becomes the line everyone
 learns to ignore.
 
+## Spotify DJ cannot play, and a log nobody can read is how that stayed a mystery
+
+**Measured on hardware 2026-09-13**, across a 45-minute session: all seven
+fatal Spotify context errors were the SAME context — `context_description:
+"DJ"`, `spotify:playlist:37i9dQZF1EYkqdzj48dyYq`. Not one ordinary playlist,
+album or track failed; they played before and after each failure, and librespot
+never crashed or was restarted.
+
+The dump says why in three lines out of sixty:
+
+```
+pages: [ ContextPage { page_url: None, next_page_url: None, tracks: [] } ]
+metadata: { "lexicon_context_url": "hm://lexicon-session-provider/..." }
+```
+
+One page, no tracks, and no `page_url` to fetch any from. DJ's tracks come from
+the lexicon session provider that the response itself names, and the string
+`lexicon` appears nowhere in librespot's connect module (checked against
+v0.8.0). So librespot resolves the ordinary `context://` path, gets an empty
+context, and `update_context` rejects it before it ever looks at `page_url`:
+
+```rust
+if context.pages.iter().all(|p| p.tracks.is_empty()) {
+    error!("context didn't have any tracks: {context:#?}");
+    Err(StateError::ContextHasNoTracks)?;
+```
+
+**There is nothing to fix on this side and no pin that fixes it** — it is a
+protocol librespot does not speak, not a version behind. What the device does
+about it is say so: `internal/spotify/logfilter.go` collapses that `{:#?}`
+dump to one line and adds one that names the finding.
+
+**Three things about that filter are deliberate, and each is the general form
+of something that cost time here:**
+
+- **It keys on `lexicon_context_url`, not on `"DJ"` and not on the playlist
+  id.** The condition is "this context's tracks live behind a session provider
+  librespot does not implement"; DJ is the one instance that has been measured.
+  A display string can be localised and a playlist id can be minted again.
+- **The summary carries the COUNT of what it dropped.** A suppressed dump that
+  says how big it was cannot be misread as a log with nothing in it, which is
+  the only way suppression is honest.
+- **A dump body is an INDENTED line, not merely one that is not a log line.**
+  env_logger always starts with `[`, and Rust's `{:#?}` always indents — so a
+  panic, whose first line is neither, still comes through.
+
+**And the diagnostic lesson is the one that generalises past Spotify:** three
+models of this failure were written and all three were wrong, because each was
+built from a snapshot of a log taken after the fact. What settled it was
+grepping the WHOLE log for every occurrence of the error together with the
+context each one named — seven failures, one context. A single occurrence
+cannot distinguish "this context is broken" from "this feature is flaky", and
+"flaky" is the answer that gets written down when nobody counts.
+
 ## A refused Spotify credential must be DELETED, not retried
 
 **An endpoint that can only be repaired from the network cannot be repaired by
