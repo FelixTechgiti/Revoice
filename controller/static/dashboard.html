@@ -633,6 +633,10 @@
   <script src="static/vendor/react-dom.min.js"></script>
   <script src="static/vendor/xterm.js"></script>
   <script src="static/vendor/addon-fit.js"></script>
+  <!-- Before the bundle, and a plain script: dashboard.jsx reads it at
+       module scope, and the landing page loads the same file with no bundle
+       at all. -->
+  <script src="static/strings.js"></script>
   <script src="static/dashboard.js"></script>
 </body>
 </html>

@@ -115,34 +115,50 @@ async function clickText(page, text) {
   await new Promise(r => setTimeout(r, 900));
 }
 
-// Every state a screenshot can show: both themes, both densities, the width
-// where the sidebar goes under the list, and the two windows — a playing
-// device and one waiting to be approved.
+// Every state a screenshot can show: both themes, both densities, both
+// languages, the width where the sidebar goes under the list, the two
+// windows — a playing device and one waiting to be approved — and the
+// landing page in its three states.
+//
+// Objects rather than positional tuples: there are seven things to say
+// about a shot now, and `[…, null, null, null, 'dark', true]` is a row
+// nobody can read.
+//
+// `lang` is set on EVERY shot rather than left to the browser. Chrome takes
+// its locale from the machine, so the language of these screenshots was
+// whatever the person running them happened to have — which is fine until
+// somebody compares two runs.
 const SHOTS = [
-  ['dark',    'dark.html',  1440, 1000, null,    null],
-  ['light',   'light.html', 1440, 1000, null,    null],
-  ['narrow',  'dark.html',   620, 1100, null,    null],
-  ['dense',   'dark.html',  1440,  700, 'dense', null],
-  ['device',  'dark.html',  1440,  900, null,    'Lounge'],
-  ['approve', 'light.html', 1440,  900, null,    'G090LF1180570XYZ'],
-  ['settings', 'dark.html', 1440,  900, null,    null, 'Settings'],
-  ['wizard',   'dark.html', 1440,  900, null,    null, 'Set up an Echo Dot'],
+  { name: 'dark',     page: 'dark.html',  w: 1440, h: 1000 },
+  { name: 'light',    page: 'light.html', w: 1440, h: 1000 },
+  { name: 'german',   page: 'dark.html',  w: 1440, h: 1000, lang: 'de' },
+  { name: 'narrow',   page: 'dark.html',  w: 620,  h: 1100 },
+  { name: 'dense',    page: 'dark.html',  w: 1440, h: 700,  density: 'dense' },
+  { name: 'dense-de', page: 'dark.html',  w: 1440, h: 700,  density: 'dense', lang: 'de' },
+  { name: 'device',   page: 'dark.html',  w: 1440, h: 900,  open: 'Lounge' },
+  { name: 'approve',  page: 'light.html', w: 1440, h: 900,  open: 'G090LF1180570XYZ' },
+  { name: 'settings', page: 'dark.html',  w: 1440, h: 900,  click: 'Settings' },
+  { name: 'wizard',   page: 'dark.html',  w: 1440, h: 900,  click: 'Set up an Echo Dot' },
   // The landing page, which is the first thing anyone sees and the only
   // page here that is not the dashboard.
-  ['landing-dark',  'landing', 900, 640, null, null, null],
-  ['landing-light', 'landing', 900, 640, null, null, null, 'light'],
-  ['landing-setup', 'landing', 900, 760, null, null, null, 'dark', true],
+  { name: 'landing-dark',  page: 'landing', w: 900, h: 640, theme: 'dark' },
+  { name: 'landing-light', page: 'landing', w: 900, h: 640, theme: 'light' },
+  { name: 'landing-de',    page: 'landing', w: 900, h: 640, theme: 'dark', lang: 'de' },
+  { name: 'landing-setup', page: 'landing', w: 900, h: 760, theme: 'dark', setup: true },
 ];
 
 let problems = 0;
-for (const [name, page_, w, h, density, open, click, theme, setup] of SHOTS) {
+for (const shot of SHOTS) {
+  const { name, page: page_, w, h } = shot;
+  const { density = 'roomy', lang = 'en', theme, open, click, setup } = shot;
   const page = await browser.newPage();
   // Set every time, not only for the dense shot: localStorage is per ORIGIN
   // and these pages share one, so a preference left by an earlier shot
   // silently decided the layout of the ones after it.
-  await page.evaluateOnNewDocument((d, th) => {
+  await page.evaluateOnNewDocument((d, th, lg) => {
     try {
       localStorage.setItem('em-density', d);
+      localStorage.setItem('em-lang', lg);
       // The landing page reads em-theme before first paint, the same way
       // dashboard.html does; the two dashboard pages carry the attribute in
       // their markup instead, so this is harmless there.
@@ -152,7 +168,7 @@ for (const [name, page_, w, h, density, open, click, theme, setup] of SHOTS) {
       // what cannot be photographed.
       localStorage.removeItem('em_token');
     } catch (e) {}
-  }, density || 'roomy', theme || (page_.startsWith('landing') ? 'dark' : null));
+  }, density, theme || null, lang);
   LANDING_SETUP = !!setup;
   const errs = [];
   page.on('pageerror', e => errs.push(String(e)));

@@ -70,6 +70,10 @@ ${FONTS}${style}
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 ${STUBS}  <script src="../boot.js"></script>
+  <!-- Served from the real static/ directory, like the favicon: the strings
+       are not a build product and a copy here would be a second answer to
+       what the UI says. -->
+  <script src="static/strings.js"></script>
   <script src="dashboard.js"></script>
 </body>
 </html>
