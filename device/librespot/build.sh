@@ -95,10 +95,25 @@ docker build -t "$IMAGE" "$HERE"
 COMPAT="$(cd "$HERE/../shairport/compat" && pwd)"
 
 mkdir -p "$OUT"
-docker run --rm -v "$OUT:/out" -v "$COMPAT:/compat:ro" -v "$HERE:/alias:ro" "$IMAGE" bash -c "
+docker run --rm -v "$OUT:/out" -v "$COMPAT:/compat:ro" -v "$HERE:/alias:ro" \
+    -v "$HERE/patches:/patches:ro" "$IMAGE" bash -c "
     set -euo pipefail
     git clone --depth 1 --branch '$REF' https://github.com/librespot-org/librespot /build/librespot
     cd /build/librespot
+    # Patches on top of a PINNED tag, applied in name order with git apply —
+    # git is already here for the clone, where `patch` is not guaranteed to
+    # be in the base image, and git apply refuses a fuzzy match rather than
+    # silently landing a hunk in the wrong place. Each patch must apply
+    # cleanly. This is deliberately not a moving pin onto a branch:
+    # the base is still a release, the delta is readable in this repository,
+    # and a patch that stops applying fails the build instead of silently
+    # being dropped — which is the whole difference between carrying a change
+    # and losing one.
+    for p in /patches/*.patch; do
+        [ -e \"\$p\" ] || continue
+        echo \"applying \$(basename \"\$p\")\"
+        git apply -p1 --verbose \"\$p\"
+    done
     # An OBJECT rather than an archive, passed with -Clink-arg: an .o is
     # always pulled into the link, while an archive member is taken only if
     # something already unresolved needs it — which depends on where the
