@@ -66,31 +66,49 @@ const browser = await puppeteer.launch({
   args: ['--force-color-profile=srgb', '--font-render-hinting=none'],
 });
 
-// Every state the fleet page can be in that a screenshot can show: both
-// themes, both densities, and the width where the sidebar goes under the
-// list and a device row breaks into two.
+// Click the row whose name starts with `name`. The rows carry no id — they
+// are what a person clicks, so this clicks what a person would.
+async function openDevice(page, name) {
+  await page.evaluate(n => {
+    const row = [...document.querySelectorAll('div')].find(
+      el => el.innerText?.startsWith(n) && el.onclick);
+    if (!row) throw new Error(`no row for ${n}`);
+    row.click();
+  }, name);
+  await new Promise(r => setTimeout(r, 600));
+}
+
+// Every state a screenshot can show: both themes, both densities, the width
+// where the sidebar goes under the list, and the two windows — a playing
+// device and one waiting to be approved.
 const SHOTS = [
-  ['dark',   'dark.html',  1440, 1000, null],
-  ['light',  'light.html', 1440, 1000, null],
-  ['narrow', 'dark.html',   620, 1100, null],
-  ['dense',  'dark.html',  1440,  700, 'dense'],
+  ['dark',    'dark.html',  1440, 1000, null,    null],
+  ['light',   'light.html', 1440, 1000, null,    null],
+  ['narrow',  'dark.html',   620, 1100, null,    null],
+  ['dense',   'dark.html',  1440,  700, 'dense', null],
+  ['device',  'dark.html',  1440,  900, null,    'Lounge'],
+  ['approve', 'light.html', 1440,  900, null,    'G090LF1180570XYZ'],
 ];
 
 let problems = 0;
-for (const [name, page_, w, h, density] of SHOTS) {
+for (const [name, page_, w, h, density, open] of SHOTS) {
   const page = await browser.newPage();
-  if (density) {
-    await page.evaluateOnNewDocument(d => {
-      try { localStorage.setItem('em-density', d); } catch (e) {}
-    }, density);
-  }
+  // Set every time, not only for the dense shot: localStorage is per ORIGIN
+  // and these pages share one, so a preference left by an earlier shot
+  // silently decided the layout of the ones after it.
+  await page.evaluateOnNewDocument(d => {
+    try { localStorage.setItem('em-density', d); } catch (e) {}
+  }, density || 'roomy');
   const errs = [];
   page.on('pageerror', e => errs.push(String(e)));
   page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
   await page.setViewport({ width: w, height: h, deviceScaleFactor: 2 });
   await page.goto(`http://127.0.0.1:${port}/${page_}`, { waitUntil: 'networkidle0' });
   await new Promise(r => setTimeout(r, 1200));
-  await page.screenshot({ path: join(OUT, `shot-${name}.png`), fullPage: true });
+  if (open) await openDevice(page, open);
+  // A modal is position:fixed, so fullPage would shoot the page BEHIND it
+  // at full height with the window floating over the first screenful.
+  await page.screenshot({ path: join(OUT, `shot-${name}.png`), fullPage: !open });
 
   const text = await page.evaluate(() => document.getElementById('root').innerText);
   console.log(`\n── ${name} → out/shot-${name}.png`);

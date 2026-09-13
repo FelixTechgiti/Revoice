@@ -10,6 +10,10 @@
     localStorage.removeItem('em_auth_via');
   } catch (e) {}
 
+  // Fixtures must carry the API's OWN shapes, not plausible-looking ones.
+  // `volume` is the 0.0–1.0 float em_volume.device_level_to_ha produces; it
+  // was written here as 0-100 at first and every row rendered beautifully
+  // while being wrong by a factor of a hundred on real data.
   const now = Math.floor(Date.now() / 1000);
   const base = (id, label, extra) => Object.assign({
     device_id: id, label, approved: true, connected: true,
@@ -18,7 +22,7 @@
     config: {}, config_sections: [], use_global_config: true,
     esphome_port: 16001, ble_proxy_port: 17001,
     speaking: false, muted: false, listening: false, thinking: false,
-    stats: null, rttMs: 7, volume: 42, bleProxy: null, voiceSatellite: null,
+    stats: null, rttMs: 7, volume: 0.42, bleProxy: null, voiceSatellite: null,
     linkDown: false, linkTokenIssued: true, linkTls: true, owwNearMisses: 0,
     owwShadowCapable: true, owwTriggerCapable: true, audioMixCapable: true,
     audioStateCapable: true, audio: { active: false, source: 'none' },
@@ -32,12 +36,12 @@
   }, extra || {});
 
   const DEVICES = [
-    base('G090LF1180570SPJ', 'Kitchen', { listening: true, rttMs: 6, volume: 55 }),
+    base('G090LF1180570SPJ', 'Kitchen', { listening: true, rttMs: 6, volume: 0.55 }),
     base('G090LF1180570ABC', 'Lounge', {
-      audio: { active: true, source: 'spotify' }, volume: 31, rttMs: 11,
+      audio: { active: true, source: 'spotify' }, volume: 0.31, rttMs: 11,
     }),
     base('G090LF1180570DEF', 'Office', {
-      connected: false, last_seen: now - 14 * 60, rttMs: null, volume: 25,
+      connected: false, last_seen: now - 14 * 60, rttMs: null, volume: 0.25,
       firmware_ver: 'v2.38.0-fx.1',
     }),
     base('G090LF1180570XYZ', 'G090LF1180570XYZ', {
