@@ -1804,25 +1804,33 @@ reader *before* the restart that rewrites the config, and stops it when the
 handler goes away so it cannot outlive what it reads for. One owner
 (`metaStop != nil`), reconciled, rather than two places that can disagree.
 
-**The firmware half IS verified on hardware, and the remaining unknown is
-narrower than "does this work".** Measured 2026-09-13 by writing one synthetic
-`pvol` item into the FIFO on a live device:
+**The firmware half was verified on hardware by injection, and that verification
+was FLAWED in a way worth keeping.** Writing one synthetic `pvol` item into the
+FIFO on a live device produced
 
 ```
 [airplay] volume 0.0 dB -> level 127
 Volume set to 127/127
 ```
 
-So the pipe, the reader, the parse, the mapping and the apply are all proven
-against a real running firmware. A `0.0 dB` item was chosen deliberately — it
-maps to the level the device was already at, so the log line is the whole
-observable and nothing audible moves. **That technique is the useful part:** a
-FIFO one owns is an injection point, and it turns "somebody has to reproduce it
-with a phone" into a test that runs from a shell.
+which proves the parse, the mapping and the apply — and proves nothing about
+the part that was broken. A shell redirect is a **blocking** writer: it parks
+until a reader appears. The reader held the read end for a few microseconds out
+of every second (O_RDONLY, EOF, close, sleep), so every writer that waits got
+through and every writer that does not never found it. shairport-sync is the
+second kind, and the feature had never once worked.
 
-What is NOT established is whether **shairport-sync emits `pvol` at all** for a
-given client and session. That is its half, not ours, and it is the only thing
-left between a slider and the codec.
+Measured 2026-09-13 during a live AirPlay session with audio playing: nothing
+held the FIFO at either end and no `pvol` had ever arrived. The reader now holds
+it `O_RDWR` for its whole life, the same as `internal/spotify`'s, and
+`TestANonBlockingWriterReachesTheReader` writes the way shairport does —
+non-blocking, no retry — which against the old code fails with `ENXIO`.
+
+**The general lesson is about the injection, not the pipe.** Owning a FIFO makes
+a fine injection point, and a test written through it inherits the tester's own
+timing. When the thing under test is WHETHER SOMEBODY ELSE CAN REACH US, the
+probe has to behave like them — otherwise it measures the half that already
+worked and reports the whole.
 
 ## Volume / mute persistence
 

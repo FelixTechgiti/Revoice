@@ -3,9 +3,11 @@ package airplay
 import (
 	"encoding/base64"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -280,5 +282,102 @@ func TestSyncingTwiceStartsOneReader(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(starts); got != 1 {
 		t.Fatalf("%d readers started, want exactly 1", got)
+	}
+}
+
+// THE regression, and the only test that would have caught it.
+//
+// shairport-sync does not wait for a reader. The first implementation held the
+// read end for a few microseconds out of every second — open, EOF, close,
+// sleep — so a writer that does not park simply never found one. Measured on
+// hardware 2026-09-13: a live AirPlay session with audio playing, nothing
+// holding the FIFO at either end, and not one pvol ever delivered.
+//
+// Every earlier test wrote with a plain os.OpenFile or a shell redirect, which
+// BLOCKS until a reader appears — so our own tests were the one writer whose
+// timing did not matter, and they all passed.
+//
+// So this one writes the way shairport does: non-blocking, no waiting, no
+// retry. If the reader is not already holding the pipe open, O_WRONLY|O_NONBLOCK
+// fails with ENXIO and nothing is delivered.
+func TestANonBlockingWriterReachesTheReader(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "airplay-metadata")
+
+	got := make(chan float64, 4)
+	stop := make(chan struct{})
+	defer close(stop)
+	go readMetadataPipe(path, stop, func(db float64) { got <- db })
+
+	// Give the reader a moment to create the FIFO and open it. It should then
+	// hold it for good — that is the property under test.
+	var w *os.File
+	var err error
+	for i := 0; i < 200; i++ {
+		w, err = os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("a non-blocking writer could not open the pipe: %v — the "+
+			"reader is not holding the read end, so shairport-sync's metadata "+
+			"goes nowhere", err)
+	}
+	defer w.Close()
+
+	if _, err := w.WriteString(pvolItem("-20.500000,-30.000000,-30.000000,0.000000")); err != nil {
+		t.Fatalf("writing to the pipe failed: %v", err)
+	}
+
+	select {
+	case db := <-got:
+		if db != -20.5 {
+			t.Errorf("delivered %v dB, want -20.5", db)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the item was written but never arrived")
+	}
+}
+
+// And the reader must STAY available: shairport writes metadata repeatedly
+// across a session, and a reader that let go after the first item would work
+// exactly once — which is indistinguishable from working, in a manual test.
+func TestTheReaderStaysAvailableAcrossSeveralWrites(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "airplay-metadata")
+
+	got := make(chan float64, 8)
+	stop := make(chan struct{})
+	defer close(stop)
+	go readMetadataPipe(path, stop, func(db float64) { got <- db })
+
+	var w *os.File
+	var err error
+	for i := 0; i < 200; i++ {
+		if w, err = os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("non-blocking open failed: %v", err)
+	}
+	defer w.Close()
+
+	for _, want := range []float64{-30, -20, -10} {
+		payload := fmt.Sprintf("%f,-30.000000,-30.000000,0.000000", want)
+		if _, err := w.WriteString(pvolItem(payload)); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+		select {
+		case db := <-got:
+			if db != want {
+				t.Errorf("delivered %v dB, want %v", db, want)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%v dB never arrived — the reader let go after an earlier item", want)
+		}
 	}
 }
