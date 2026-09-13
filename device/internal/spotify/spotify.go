@@ -59,19 +59,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"log"
-	"os"
-	"os/exec"
-	"sync"
-	"time"
-
 	"github.com/wilbowes/EchoMuse/internal/endpoint"
 	"github.com/wilbowes/EchoMuse/internal/musicplane"
 	"github.com/wilbowes/EchoMuse/internal/netfilter"
 	"github.com/wilbowes/EchoMuse/internal/orphan"
 	"github.com/wilbowes/EchoMuse/internal/pcm"
 	"github.com/wilbowes/EchoMuse/internal/resample"
+	"io"
+	"log"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
 )
 
 // BinaryPath is where the controller installs librespot.
@@ -136,6 +136,7 @@ type MusicSink interface {
 // other's.
 type PlaneOwner interface {
 	Claim() bool
+	ClaimIfFree() bool
 	Release()
 	MayWrite() bool
 }
@@ -201,6 +202,10 @@ type Client struct {
 	// credential. Under mu with the rest because the stderr relay sets it
 	// from its own goroutine while supervise reads it. See credentials.go.
 	credsRefused bool
+	// ctxFailed says librespot's last word on a play context was that it
+	// could not be resolved. Set from the stderr relay's goroutine and read
+	// from the audio pump's, hence under mu. See contextFailed.
+	ctxFailed bool
 	// proc is the live process, held so a preemption can end it.
 	proc *os.Process
 }
@@ -664,7 +669,12 @@ func (c *Client) pump(r io.Reader) {
 	for {
 		n, err := io.ReadFull(br, buf)
 		if n > 0 {
-			if !claim.Feed() {
+			// A context that failed to resolve still produces audio: librespot
+			// starts a fallback track, streams a few seconds and stops. That
+			// audio is indistinguishable from music the user chose, so an
+			// ordinary claim is granted for it — and it evicts whoever is
+			// playing. See contextFailed for the session that cost.
+			if !c.feed(claim) {
 				continue
 			}
 			out := conv.Convert(buf[:n-n%bytesPerFrame], pcm.DownmixStereo)
@@ -693,6 +703,72 @@ func (c *Client) pump(r io.Reader) {
 // credential refusal and a missing ALSA device are indistinguishable by the
 // time `session` returns. See credentials.go for why that distinction has to
 // be made at all.
+// feed asks for the plane on behalf of one chunk, withholding an eviction
+// while the last thing librespot said was that a context failed.
+func (c *Client) feed(claim *musicplane.IdleClaim) bool {
+	if c.contextFailed() {
+		return claim.FeedIfFree()
+	}
+	return claim.Feed()
+}
+
+// contextFailed reports whether librespot's last word on a play context was
+// that it could not be resolved.
+//
+// # What it is for
+//
+// Measured on hardware 2026-09-13, one second apart:
+//
+//	13:11:57 [librespot] Loading <COMEBACCC> with Spotify URI <...>
+//	13:11:57 [librespot] ERROR spirc] Invalid state { the provided context has no tracks }
+//	13:11:58 [airplay]   ending the session: preempted
+//	13:11:58 [music]     plane owner: spotify
+//	13:11:58 [airplay]   shairport-sync exited: signal: killed
+//	13:12:03 [speaker]   music stream complete — returning to silence
+//
+// A Spotify DJ context resolved empty (see logfilter.go). librespot played the
+// fallback track anyway, which claimed the plane, which evicted a LIVE AirPlay
+// session — and eviction kills shairport-sync, so the phone's session is over
+// and there is no rejoin. Five seconds later Spotify stopped too. Net result
+// of a feature that cannot work: the one that was working is dead as well.
+//
+// # Why the signal is the log and not a state machine
+//
+// librespot's stderr is the only place this is knowable. There is no status
+// socket, the exit code is 1 for every fault it has, and the audio itself
+// carries no hint — the fallback track is ordinary PCM.
+//
+// # Why clearing it on `Loading` is sufficient, and a timeout is not needed
+//
+// The flag can only ever withhold an EVICTION, never playback, and every
+// track that plays is announced by a `Loading <...>` line BEFORE its first
+// sample reaches the pipe. So a real track always clears the flag ahead of
+// the claim it needs, and a flag stuck on cannot silence anything. That
+// ordering is the whole design and is pinned by a test: in the trace above
+// the fallback's own `Loading` arrives BEFORE the error, which is what leaves
+// the flag set for the claim that follows.
+func (c *Client) contextFailed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ctxFailed
+}
+
+func (c *Client) noteContextFailed(failed bool) {
+	c.mu.Lock()
+	was := c.ctxFailed
+	c.ctxFailed = failed
+	c.mu.Unlock()
+	if failed && !was {
+		log.Printf("[spotify] a play context failed to resolve — Spotify will " +
+			"not take the music plane from another source until a track loads")
+	}
+}
+
+// contextLoading is the line librespot prints before the first sample of a
+// track reaches the pipe. Matched on the player target so a mention of the
+// word inside some other message cannot clear the flag.
+const contextLoading = "librespot_playback::player] Loading <"
+
 func (c *Client) relayLog(r io.Reader) {
 	s := bufio.NewScanner(r)
 	var f logFilter
@@ -704,6 +780,12 @@ func (c *Client) relayLog(r io.Reader) {
 	for s.Scan() {
 		line := s.Text()
 		emit(f.Line(line))
+		switch {
+		case strings.Contains(line, contextLoading):
+			c.noteContextFailed(false)
+		case strings.Contains(line, contextHasNoTracks):
+			c.noteContextFailed(true)
+		}
 		if credentialRejection(line) {
 			c.mu.Lock()
 			c.credsRefused = true

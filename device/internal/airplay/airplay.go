@@ -130,6 +130,7 @@ type MusicSink interface {
 // PlaneOwner is the arbitration.
 type PlaneOwner interface {
 	Claim() bool
+	ClaimIfFree() bool
 	Release()
 	MayWrite() bool
 }

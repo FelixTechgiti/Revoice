@@ -1331,6 +1331,58 @@ tick yet, must not render as "not running". Accusing a working Echo for the
 first thirty seconds of every reconnect is how this becomes the line everyone
 learns to ignore.
 
+## A source that cannot show it will keep playing may take an idle plane, never a busy one
+
+**A feature that could not work took down the one that was working.** Measured
+on hardware 2026-09-13, four log lines one second apart:
+
+```
+13:11:57 [librespot] Loading <COMEBACCC> with Spotify URI <...>
+13:11:57 [librespot] ERROR spirc] Invalid state { the provided context has no tracks }
+13:11:58 [airplay]   ending the session: preempted
+13:11:58 [music]     plane owner: spotify
+13:11:58 [airplay]   shairport-sync exited: signal: killed
+13:12:03 [speaker]   music stream complete — returning to silence
+```
+
+A Spotify DJ context resolved empty (see the section below). librespot started
+the fallback track anyway, that audio claimed the music plane, and the claim
+evicted a **live** AirPlay session — which for AirPlay means killing
+shairport-sync, so the phone's session is over and `musicplane`'s no-rejoin
+rule means nothing brings it back. Five seconds later Spotify stopped too. The
+user's report was the correct one: *Spotify zwingt auch AirPlay in die Knie.*
+
+**Every step of that was working as designed, which is the interesting part.**
+Preempting AirPlay when the user starts Spotify is right. Ending the session
+rather than just muting it is right. No rejoin is right. What was missing was
+that the arbiter had exactly one way to ask — `Claim`, which evicts — so a
+source about to die for five seconds asked with the same authority as one
+about to play an album.
+
+`Owner.ClaimIfFree` is the second way to ask, and the rule it expresses is the
+general one in the heading. **Only the caller can know which it is** — the
+arbiter cannot tell a fallback track from a chosen one, and neither can the
+PCM — so it is offered alongside `Claim` rather than replacing it.
+
+`internal/spotify` decides that from librespot's stderr, because that is the
+only place it is knowable: no status socket, exit code 1 for every fault, and
+the audio itself carries no hint. **The ordering is the whole design and is
+what a test has to pin**: librespot announces the fallback with `Loading <...>`
+*before* it discovers the context is empty, so a flag cleared by `Loading` and
+set by the error ends up SET for the claim one second later — while a real
+track, announced by its own `Loading` after the failure, clears it in time for
+the claim it needs. That is also why no timeout is needed: the flag can only
+ever withhold an eviction, never playback, so a flag stuck on cannot silence
+anything.
+
+**The general trap this came out of:** a capability that is a strict
+*narrowing* of an existing one looks like it needs no interface change and
+therefore gets expressed as a special case at one call site. It was worth the
+fourth verb on `Plane`, `PlaneOwner` and `Scoped`, because "may I have this
+without taking it from anybody" is a question every producer will eventually
+need to ask, and a version of it hidden inside `internal/spotify` would have
+been re-invented differently by the next one.
+
 ## Spotify DJ cannot play, and a log nobody can read is how that stayed a mystery
 
 **Measured on hardware 2026-09-13**, across a 45-minute session: all seven

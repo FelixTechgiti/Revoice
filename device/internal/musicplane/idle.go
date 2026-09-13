@@ -38,6 +38,7 @@ const DefaultIdle = 2 * time.Second
 // works with a Scoped without either side knowing about the other's shape.
 type Plane interface {
 	Claim() bool
+	ClaimIfFree() bool
 	Release()
 	MayWrite() bool
 }
@@ -69,12 +70,22 @@ func NewIdleClaim(scoped Plane, idle time.Duration) *IdleClaim {
 // plane whenever Home Assistant is playing, and a local source waits rather
 // than fighting it. The caller drops the chunk and asks again with the next
 // one, which is what makes the handover instant when HA finishes.
-func (i *IdleClaim) Feed() bool {
+func (i *IdleClaim) Feed() bool { return i.feed(i.scoped.Claim) }
+
+// FeedIfFree is Feed for audio the source cannot vouch for: it takes an idle
+// plane but never one somebody else is using. See Owner.ClaimIfFree for the
+// session it is there to protect.
+//
+// A source holding the plane already keeps it — this withholds an eviction,
+// not the right to go on playing.
+func (i *IdleClaim) FeedIfFree() bool { return i.feed(i.scoped.ClaimIfFree) }
+
+func (i *IdleClaim) feed(claim func() bool) bool {
 	i.mu.Lock()
 	if !i.held {
 		// Claim under our own lock but not the arbiter's — Claim runs the
 		// change observer and the eviction callback outside it.
-		if !i.scoped.Claim() {
+		if !claim() {
 			i.mu.Unlock()
 			return false
 		}

@@ -217,6 +217,49 @@ func (o *Owner) Claim(src Source) bool {
 	return true
 }
 
+// ClaimIfFree asks for the plane WITHOUT evicting anybody: it succeeds only
+// when the plane is free, or already this source's.
+//
+// It exists because a source can be about to produce audio it cannot sustain,
+// and taking the plane for that costs somebody else a working session. The
+// measured case is Spotify: when a play context fails to resolve, librespot
+// starts a fallback track anyway, streams a few seconds and stops. That audio
+// is real, so an ordinary Claim is granted — and one second after a failed
+// context it preempted a live AirPlay session and killed shairport-sync, which
+// ends the phone's session for good. There is no rejoin, by design, so the
+// user is left with no sound from either source.
+//
+// The rule this expresses is the general one: **a source that cannot show it
+// will keep playing may take an idle plane, but may not take a busy one.** It
+// is the caller who knows that about itself — the arbiter cannot — so this is
+// offered alongside Claim rather than replacing it.
+func (o *Owner) ClaimIfFree(src Source) bool {
+	o.mu.Lock()
+	if src == None {
+		o.mu.Unlock()
+		return false
+	}
+	if o.owner == src {
+		o.mu.Unlock()
+		return true
+	}
+	if o.owner != None {
+		o.mu.Unlock()
+		return false
+	}
+	o.owner = src
+	notify := o.change
+	o.mu.Unlock()
+
+	// No eviction callback is possible here — there was no previous owner.
+	// The observer still fires, for Claim's reason: it is the only thing
+	// that can tell Home Assistant this Echo started making a sound.
+	if notify != nil {
+		notify(src)
+	}
+	return true
+}
+
 // Release gives up the plane, if the caller still holds it.
 //
 // Deliberately a no-op for a source that has already been preempted: it was
@@ -317,6 +360,15 @@ func (s Scoped) Claim() bool {
 		return false
 	}
 	return s.owner.Claim(s.src)
+}
+
+// ClaimIfFree asks for the plane on this source's behalf without evicting
+// anybody. See Owner.ClaimIfFree.
+func (s Scoped) ClaimIfFree() bool {
+	if s.owner == nil {
+		return false
+	}
+	return s.owner.ClaimIfFree(s.src)
 }
 
 // Release gives it up, if this source still holds it.
