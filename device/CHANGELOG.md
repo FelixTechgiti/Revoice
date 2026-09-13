@@ -12,6 +12,34 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.42.0-fx.1
+
+### Die AirPlay-Lautstärke hat noch nie funktioniert — jetzt schon
+
+**Der Fehler lag bei uns, nicht bei deinem Handy.** shairport-sync schickt seine
+Lautstärkeänderungen durch eine Leitung, die die Firmware auslesen muss. Diese
+Leitung war fast immer zu: Die Firmware hat sie geöffnet, sofort festgestellt,
+dass gerade nichts drin steht, wieder geschlossen und eine Sekunde gewartet —
+und in dieser Sekunde wirft shairport-sync alles weg, weil es nicht wartet.
+
+Am Gerät gemessen, mitten in einer laufenden AirPlay-Wiedergabe: **niemand hielt
+die Leitung, und es war noch nie ein einziger Wert angekommen.**
+
+Die Firmware hält die Leitung jetzt dauerhaft offen. Damit kann shairport-sync
+sie nicht mehr verpassen.
+
+**Warum das so lange unentdeckt blieb**, und das ist der unangenehme Teil: Ich
+hatte die Kette gestern „am Gerät geprüft", indem ich einen Wert selbst
+hineingeschrieben habe — und mein Schreibbefehl *wartet*, bis jemand liest.
+Genau der Unterschied, an dem es scheiterte. Die Prüfung hat also die Hälfte
+bestätigt, die ohnehin ging, und über die kaputte nichts ausgesagt. Der neue
+Test schreibt jetzt so, wie shairport es tut, und schlägt gegen den alten Stand
+fehl.
+
+**Was du davon merkst:** Mit „AirPlay volume moves this Echo" (Konfiguration →
+Streaming) setzt der Lautstärkeregler deines Abspielgeräts die Lautstärke des
+Echo, und der Ring blitzt auf.
+
 ## 2.41.0-fx.1
 
 ### Die Spotify-Lautstärke funktioniert jetzt wirklich — und die Pause auch
