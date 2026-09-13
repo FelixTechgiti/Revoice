@@ -12,6 +12,41 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.43.0-fx.1
+
+### Spotify DJ kann nicht abspielen, und das Log sagt es jetzt in einer Zeile
+
+**Am Gerät verifiziert, 2026-09-13, in einer laufenden Sitzung von 45 Minuten:**
+Alle sieben schweren Spotify-Fehler in diesem Zeitraum betrafen **denselben**
+Kontext — den DJ. Keine normale Playlist, kein Album, kein einzelner Titel ist
+je gescheitert; sie liefen vor und nach jedem dieser Fehler weiter, und
+librespot ist kein einziges Mal abgestürzt.
+
+**Warum DJ nicht geht:** Spotify liefert für die DJ-Playlist einen Kontext mit
+genau einer Seite, null Titeln und keiner Adresse, unter der man welche
+nachladen könnte. Die Titel des DJ kommen von einem eigenen Dienst, den die
+Antwort selbst benennt (`lexicon_context_url`) — und librespot kennt diesen
+Dienst nicht. Es fragt den gewöhnlichen Weg, bekommt nichts, und gibt auf.
+
+**Daran ist auf unserer Seite nichts zu reparieren.** Es ist keine kaputte
+Einstellung und kein Fehler der Firmware; librespot spricht dieses Protokoll
+schlicht nicht. Was du merkst, wenn du DJ auswählst: Der Echo verschwindet aus
+der Wiedergabe, bis du etwas anderes auswählst. Alles andere spielt normal.
+
+**Was sich in dieser Version ändert, ist das Log.** Bisher hat librespot bei
+jedem dieser Fehler den kompletten Datensatz ausgegeben — rund 60 Zeilen
+Struktur, in denen die drei Angaben, auf die es ankommt, untergehen. Die
+Firmware fasst diesen Block jetzt zu einer Zeile zusammen (welcher Kontext, wie
+er heißt, wie viele Zeilen unterdrückt wurden) und hängt eine zweite Zeile an,
+die den Befund benennt. Die Zahl der unterdrückten Zeilen steht bewusst dabei:
+Ein stilles Log soll nicht wie ein leeres aussehen.
+
+**Was du dafür tun musst:** nichts. Es ist eine reine Verbesserung der
+Fehlersuche und ändert an der Wiedergabe nichts.
+
+**Nicht behoben, weil es nicht behebbar ist:** DJ selbst. Das bleibt offen und
+ist als eigener Punkt festgehalten.
+
 ## 2.42.0-fx.1
 
 ### Die AirPlay-Lautstärke hat noch nie funktioniert — jetzt schon

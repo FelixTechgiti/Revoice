@@ -685,8 +685,8 @@ func (c *Client) pump(r io.Reader) {
 	}
 }
 
-// relayLog passes librespot's stderr through and watches it for the ONE line
-// that needs acting on rather than reading.
+// relayLog passes librespot's stderr through logFilter and watches it for the
+// ONE line that needs acting on rather than reading.
 //
 // The watch lives here because this is the only place that sees librespot's
 // own words: the exit status is `exit status 1` for every fault it has, so a
@@ -695,15 +695,22 @@ func (c *Client) pump(r io.Reader) {
 // be made at all.
 func (c *Client) relayLog(r io.Reader) {
 	s := bufio.NewScanner(r)
+	var f logFilter
+	emit := func(out []relayed) {
+		for _, l := range out {
+			log.Printf("[%s] %s", l.tag, l.text)
+		}
+	}
 	for s.Scan() {
 		line := s.Text()
-		log.Printf("[librespot] %s", line)
+		emit(f.Line(line))
 		if credentialRejection(line) {
 			c.mu.Lock()
 			c.credsRefused = true
 			c.mu.Unlock()
 		}
 	}
+	emit(f.Flush())
 }
 
 // Report says whether Spotify Connect can run on this device, and why not
