@@ -12,6 +12,41 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.41.0-fx.1
+
+### Die Spotify-Lautstärke funktioniert jetzt wirklich — und die Pause auch
+
+**Zwei Dinge, die ich als repariert gemeldet habe, waren es nie.** Beide hingen
+am selben Fehler, und beide sind mit dieser Version tatsächlich behoben:
+
+- der Spotify-Regler, der die Lautstärke des Echo setzen sollte
+- das schnelle Verstummen beim Pausieren (die 6–7 Sekunden Nachlauf)
+
+Beide laufen über ein kleines Skript, das librespot bei jedem Ereignis
+aufruft. Dieses Skript benutzte `printf` — einen Befehl, den die Shell des Echo
+**nicht hat**, weder eingebaut noch als Programm. Jeder Aufruf endete mit
+„Befehl nicht gefunden", in einer Warnung, die nirgends auffiel. Es hat also
+seit dem Tag, an dem es eingebaut wurde, nie eine einzige Zeile geschrieben.
+
+Dazu kam ein zweiter Fehler beim Regler: der Schalter, der librespot davon
+abhalten sollte, selbst leiser zu machen, wird von unserem Audio-Ausgang
+stillschweigend ignoriert. librespot hat also weiter in Software gedämpft —
+genau die zwei übereinanderliegenden Lautstärken, die die Einstellung
+abschaffen sollte. Jetzt wird der richtige Schalter benutzt.
+
+**Was du davon merkst:** Mit „Spotify volume moves this Echo" (Konfiguration →
+Streaming) setzt der Regler in der Spotify-App die Lautstärke des Echo und der
+Ring blitzt auf. Und eine Pause ist nach etwa einer Sekunde still statt nach
+sieben.
+
+### AirPlay-Lautstärke: unsere Hälfte ist geprüft
+
+Die Firmware-Seite ist am Gerät nachgewiesen — eingespeiste Lautstärkedaten
+kommen an, werden umgerechnet und gesetzt. Falls der AirPlay-Regler bei dir
+trotzdem nichts tut, liegt es daran, ob shairport-sync die Änderung überhaupt
+meldet, und das hängt am abspielenden Gerät. Dafür brauche ich einen Test mit
+dir zusammen; die Firmware ist an dieser Stelle in Ordnung.
+
 ## 2.40.0-fx.1
 
 ### Die Warnung „dieser Echo hört das Netz nicht" war falsch — und zwar immer

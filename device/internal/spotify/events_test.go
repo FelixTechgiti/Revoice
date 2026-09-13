@@ -81,10 +81,9 @@ func TestUnparseableVolumeIsNotReported(t *testing.T) {
 func TestEventScriptWritesWhatParseEventReads(t *testing.T) {
 	sc := eventScript("/tmp/pipe")
 	for _, want := range []string{
-		"$PLAYER_EVENT",    // the event name, first field
-		"${VOLUME:-}",      // and the volume, empty rather than unset
-		">> /tmp/pipe",     // appended, because two events can overlap
-		`printf '%s %s\n'`, // one line, space-separated — what ParseEvent splits
+		"$PLAYER_EVENT", // the event name, first field
+		"${VOLUME:-}",   // and the volume, empty rather than unset
+		">> /tmp/pipe",  // appended, because two events can overlap
 	} {
 		if !strings.Contains(sc, want) {
 			t.Errorf("the event script no longer contains %q:\n%s", want, sc)
@@ -93,6 +92,79 @@ func TestEventScriptWritesWhatParseEventReads(t *testing.T) {
 	// `>` would be meaningless on a FIFO and reads as if it truncated.
 	if strings.Contains(sc, "> /tmp/pipe") && !strings.Contains(sc, ">> /tmp/pipe") {
 		t.Error("the script truncates rather than appends")
+	}
+}
+
+// THE regression, and the reason this guard is about the PLATFORM rather than
+// about one command.
+//
+// The script shipped using `printf`, which is correct on every ordinary shell
+// and absent here: FireOS's /system/bin/sh is mksh, which has no printf
+// builtin, and /system/bin/printf does not exist. Measured on hardware
+// 2026-09-13 — `printf: not found`, exit 127 — after which every event since
+// the feature shipped had ended as `On event program … returned exit code
+// 127` in librespot's log, and the FIFO had never seen a byte.
+//
+// Two features were dead behind it and both had been reported as working: the
+// Spotify slider moving this device, and the music flush that stops a pause
+// taking the buffer's length to fall silent.
+//
+// So the assertion is not "uses echo". It is "uses nothing this shell has to
+// go and find", because the next person reaching for `date`, `cat` or `tr`
+// makes exactly the same mistake with a different word.
+func TestTheScriptUsesOnlyWhatThisShellHas(t *testing.T) {
+	// COMMENTS STRIPPED FIRST. The script explains in prose why it may not use
+	// printf, and a guard reading the whole file matches that sentence rather
+	// than the line obeying it — this tree's recurring source-guard trap, and
+	// it fired on the very commit that added this test.
+	var body []string
+	for _, l := range strings.Split(eventScript("/tmp/pipe"), "\n") {
+		if t := strings.TrimSpace(l); t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		body = append(body, l)
+	}
+	sc := strings.Join(body, "\n")
+	// Commands that are builtins in bash or present in coreutils, and that
+	// this device answers with "not found". printf is the one that shipped.
+	for _, absent := range []string{
+		"printf", "cat ", "date", "tr ", "sed ", "awk ", "head ", "tee ",
+		"logger", "busybox",
+	} {
+		if strings.Contains(sc, absent) {
+			t.Errorf("the script uses %q, which /system/bin/sh on this device "+
+				"cannot find — it has mksh's builtins and no coreutils:\n%s",
+				absent, sc)
+		}
+	}
+	if !strings.Contains(sc, "echo ") {
+		t.Errorf("the script no longer writes with echo, the builtin this "+
+			"shell does have:\n%s", sc)
+	}
+	// And it must still be ONE line per event, whatever writes it.
+	if !strings.Contains(sc, `"$PLAYER_EVENT ${VOLUME:-}"`) {
+		t.Errorf("the two fields are no longer written as one space-separated "+
+			"line, which is what ParseEvent splits:\n%s", sc)
+	}
+}
+
+// The two halves meet here: whatever the script writes, ParseEvent has to read.
+func TestWhatTheScriptWritesRoundTripsThroughParseEvent(t *testing.T) {
+	// Exactly what `echo "$PLAYER_EVENT ${VOLUME:-}"` produces for each case.
+	for _, tc := range []struct {
+		line string
+		kind string
+		vol  uint16
+		has  bool
+	}{
+		{"volume_changed 28671", "volume_changed", 28671, true},
+		{"paused ", "paused", 0, false},
+		{"session_disconnected ", "session_disconnected", 0, false},
+	} {
+		e, ok := ParseEvent(tc.line)
+		if !ok || e.Kind != tc.kind || e.HasVol != tc.has || e.Volume != tc.vol {
+			t.Errorf("%q parsed as %+v (ok=%v)", tc.line, e, ok)
+		}
 	}
 }
 

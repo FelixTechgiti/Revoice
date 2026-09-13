@@ -603,3 +603,35 @@ func TestTheZeroconfPortIsPinnedToTheOneTheFirewallOpens(t *testing.T) {
 		t.Fatalf("missing %q in: %s", want, got)
 	}
 }
+
+// THE second half of the same bug. `--mixer none` was meant to stop librespot
+// scaling the samples, and this build has no backend that implements a mixer:
+// librespot's own help says "-m, --mixer MIXER  Not supported by the included
+// audio backend(s)". It was ACCEPTED AND IGNORED rather than refused, so the
+// process started, nothing complained, and the log said what was really
+// happening in a line nobody read: "Mixing with softvol and volume control:
+// Linear" — measured on hardware 2026-09-13.
+//
+// The consequence is the one the feature exists to prevent: librespot
+// attenuates AND the device attenuates, two volumes in series.
+func TestVolumeControlUsesTheScaleTypeNotTheIgnoredMixerFlag(t *testing.T) {
+	c := New(Options{Name: "X", CacheDir: t.TempDir(), VolumeControl: true}, nil, nil)
+	args := strings.Join(c.args(), " ")
+	if strings.Contains(args, "--mixer") {
+		t.Errorf("--mixer is passed; the pipe backend ignores it silently:\n%s", args)
+	}
+	if !strings.Contains(args, "--volume-ctrl fixed") {
+		t.Errorf("--volume-ctrl fixed is missing, so librespot keeps "+
+			"attenuating in software:\n%s", args)
+	}
+}
+
+// And with the setting off, librespot keeps its own default curve — the flag
+// is what hands the slider over, so its absence must leave the old behaviour
+// exactly as it was.
+func TestWithoutVolumeControlNoScaleTypeIsForced(t *testing.T) {
+	c := New(Options{Name: "X", CacheDir: t.TempDir()}, nil, nil)
+	if args := strings.Join(c.args(), " "); strings.Contains(args, "--volume-ctrl") {
+		t.Errorf("--volume-ctrl is forced with the setting off:\n%s", args)
+	}
+}

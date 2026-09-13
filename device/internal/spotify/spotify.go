@@ -172,7 +172,7 @@ type Options struct {
 	// VolumeControl makes the Spotify slider set the DEVICE's volume instead
 	// of attenuating in librespot.
 	//
-	// It is a command-line property (`--mixer none --volume-ctrl linear`), so
+	// It is a command-line property (`--volume-ctrl fixed`), so
 	// changing it restarts the endpoint — see SetVolumeControl.
 	VolumeControl bool
 }
@@ -502,18 +502,31 @@ func (c *Client) args() []string {
 	}
 	// Hand the slider to the device instead of applying it here.
 	//
-	// `--mixer none` is what stops librespot scaling the samples. Without it
-	// the slider would attenuate TWICE — once in software and once at the
-	// codec — which is the audible version of the two-limiters-in-series
-	// mistake the output chain is written to avoid.
+	// **`--volume-ctrl fixed`, and the first version's `--mixer none` was a
+	// no-op.** The intent was right — stop librespot scaling the samples, or
+	// the slider attenuates TWICE, once in software and once at the codec,
+	// which is the audible version of the two-limiters-in-series mistake the
+	// output chain is written to avoid. The lever was wrong. This build drops
+	// the rodio backend, and librespot's own help says what that costs:
 	//
-	// `--volume-ctrl linear` is not a preference either. librespot's default
-	// `log` curve exists so a LINEAR multiply on the samples sounds right;
-	// feeding it into a control that is already dB-linear applies the curve
-	// twice. LevelForSpotifyVolume does the conversion, and it needs the
-	// unshaped fraction to do it — see its comment.
+	//	-m, --mixer MIXER   Not supported by the included audio backend(s).
+	//
+	// It is ACCEPTED AND IGNORED rather than refused, so the process started,
+	// nothing complained, and the log said what was really happening in a line
+	// nobody was reading: `Mixing with softvol and volume control: Linear`.
+	// Measured on hardware 2026-09-13.
+	//
+	// `fixed` is the scale type that means "the gain does not follow the
+	// volume": librespot passes the samples through unattenuated and still
+	// tracks and REPORTS the value the client set, which is the half we need.
+	// It is one option doing what two were meant to do.
+	//
+	// The u16 on the event is the client's raw value either way — the scale
+	// type governs librespot's own attenuation, not what it reports — so
+	// `LevelForSpotifyVolume` is unaffected by the change and keeps reading it
+	// as a linear amplitude fraction.
 	if c.volumeControl() {
-		a = append(a, "--mixer", "none", "--volume-ctrl", "linear")
+		a = append(a, "--volume-ctrl", "fixed")
 	}
 	return append(a, c.opts.ExtraArgs...)
 }
@@ -733,7 +746,7 @@ func (c *Client) volumeControl() bool {
 
 // SetVolumeControl turns the device-volume mapping on or off, live.
 //
-// Restarts the endpoint when it changes, and only then: `--mixer` is a
+// Restarts the endpoint when it changes, and only then: `--volume-ctrl` is a
 // command-line flag, so a running librespot cannot be told. Resolved on every
 // config push rather than once at wiring, for the reason AirPlay's
 // SetVolumeHandler is — the setting arrives long after the client is built,
@@ -750,6 +763,6 @@ func (c *Client) SetVolumeControl(on bool) {
 		return
 	}
 	log.Printf("[spotify] device volume control %s — restarting so librespot "+
-		"picks up the mixer change", map[bool]string{true: "on", false: "off"}[on])
+		"picks up the volume-control change", map[bool]string{true: "on", false: "off"}[on])
 	c.kill()
 }
