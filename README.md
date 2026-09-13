@@ -299,12 +299,17 @@ wilbowes auf und ist ein Fork davon.
 
 ## Lizenz
 
-MIT — siehe [LICENSE](LICENSE).
+MIT — siehe [LICENSE](LICENSE), die das Copyright von Upstream und das dieses
+Forks nebeneinander trägt.
 
-Revoice bindet mehrere Fremdkomponenten ein, die jeweils ihre eigene Lizenz
-behalten. Sie sind in [NOTICE.md](NOTICE.md) aufgeführt; das Geräte-Binary
-verlinkt zwei BSD-3-Clause-Komponenten, deren Copyright-Hinweise diese Datei
-stellvertretend trägt.
+Revoice bindet Fremdkomponenten ein, verlinkt sie und veröffentlicht sie —
+jede behält ihre eigene Lizenz. Aufgeführt sind sie in
+[NOTICE.md](NOTICE.md), die deren Copyright-Hinweise stellvertretend für die
+Binaries trägt: die Firmware verlinkt zwei BSD-3-Clause-Komponenten, und die
+`endpoints-v*`-Releases sind fremde Programme im Ganzen — librespot und
+shairport-sync, beide MIT, letzteres statisch gegen ein LGPL-2.1-lizenziertes
+libconfig gelinkt, das `device/shairport/build.sh` per Tag festnagelt und damit
+neu linkbar hält.
 
 *Revoice steht in keiner Verbindung zu Amazon. „Amazon", „Echo", „Echo Dot"
 und „Alexa" sind Marken von Amazon.com, Inc.*

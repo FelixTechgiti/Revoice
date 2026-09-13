@@ -14,13 +14,23 @@ name: Endpoint Release (librespot + shairport-sync)
 # ⚠ LICENCES. These are other people's programs and publishing their binaries
 # carries obligations:
 #
-#   * librespot is MIT — the notice ships in the release body below.
-#   * shairport-sync is GPLv2-or-later, so distributing the binary means
-#     offering the corresponding source. The recipe is `device/shairport/`,
-#     it names the exact upstream tag it builds, and the compat shim is in
-#     this repository under the same terms. The release body says where, and
-#     that offer is what makes publishing it legitimate — it is not a
-#     formality to drop when the notes get edited.
+#   * librespot is MIT, and so is shairport-sync — this said GPLv2-or-later
+#     until 2026-09-13 and that was simply wrong. shairport-sync carries an
+#     MIT header in `shairport.c` (James Laird 2013, Mike Brady 2014--2026)
+#     and an MIT `LICENSES` at its root; there is no GPL anywhere in it. The
+#     error was conservative, promising more than was owed, which is exactly
+#     why nothing ever caught it.
+#   * The obligation that IS real sits one layer down, in what the static
+#     link pulls in: **libconfig v1.8.2 is LGPL-2.1**. LGPL §6 wants a user
+#     to be able to relink against their own build of it, and what discharges
+#     that is `device/shairport/build.sh` pinning it by tag and building it
+#     from source — the recipe is the offer. Mbed TLS (Apache-2.0 of its
+#     dual licence) and popt (MIT) need their notices carried and nothing
+#     more.
+#
+# So the release body below names every licence in the binary, not just the
+# program's own. That is the part not to drop when the notes get edited: for
+# a static binary, attribution means everything inside it.
 #
 # The build is `endpoint-binaries.yml`'s, deliberately duplicated as a call
 # rather than copied: the same build.sh in the same pinned compiler image, so
@@ -84,18 +94,29 @@ jobs:
             echo "## Licences and source"
             echo
             echo "These are upstream programs, built unmodified except where"
-            echo "the build recipe says otherwise."
+            echo "the build recipe says otherwise. Both are statically linked,"
+            echo "so the libraries inside them are listed too."
             echo
             echo "- **librespot** — MIT. Source: <https://github.com/librespot-org/librespot>."
             echo "  Build recipe and the exact tag: \`device/librespot/\`."
-            echo "- **shairport-sync** — GPL-2.0-or-later. Source:"
+            echo "- **shairport-sync** — MIT. Source:"
             echo "  <https://github.com/mikebrady/shairport-sync>. Build recipe and"
-            echo "  the exact tag: \`device/shairport/\`; the Android compat shim"
-            echo "  (\`device/shairport/compat/\`) is part of this repository and is"
-            echo "  offered under the same terms."
+            echo "  the exact tag: \`device/shairport/\`. Linked into it:"
+            echo "  **Mbed TLS** v2.28.8 (Apache-2.0), **libconfig** v1.8.2"
+            echo "  (LGPL-2.1-or-later) and **popt** 1.19 (MIT)."
+            echo
+            echo "libconfig is LGPL and linked statically. LGPL-2.1 §6 asks that"
+            echo "you be able to relink against your own build of it, and you can:"
+            echo "\`device/shairport/build.sh\` pins it by tag and builds it from"
+            echo "source, so substituting your own libconfig and rebuilding needs"
+            echo "nothing from us that is not already in this repository."
+            echo
+            echo "The Android compat shims (\`device/librespot/ifaddrs_alias.c\` and"
+            echo "\`device/shairport/compat/\`) are this repository's own code, MIT,"
+            echo "and are compiled into these binaries."
             echo
             echo "The corresponding source for both binaries is therefore the"
-            echo "named upstream tag plus this repository at this release's commit."
+            echo "named upstream tags plus this repository at this release's commit."
             for f in device/librespot/out/librespot device/shairport/out/shairport-sync; do
               echo
               echo "\`\`\`"
