@@ -5,8 +5,8 @@ running controller and a fleet of real Echo Dots — so every change to it
 shipped on reasoning rather than on looking, and "not verified: how it looks"
 was the honest note on every commit that touched it.
 
-This renders `static/dashboard.jsx` in a headless browser against fixed
-device fixtures. It is a development tool, not a test: it has no assertions
+This renders `static/dashboard.jsx` — and `static/index.html`, the landing
+page — in a headless browser against fixed device fixtures. It is a development tool, not a test: it has no assertions
 and CI does not run it. What it gives you is a PNG of each theme, each
 density and a narrow viewport, plus every `pageerror` and console error the
 page raised on the way — which is how a component that throws at render is
@@ -39,6 +39,11 @@ loads, `WebSocket` is a stub so the poll fallback carries the page, and xterm
 is a stub because the console tab would otherwise need the real library. The
 fonts come from Google rather than `static/vendor/fonts/`, which the
 controller image fetches at build time and a checkout does not have.
+
+The landing page is served as itself — it is self-contained, with its own
+tokens and its own script — and the two API calls it makes are answered by
+the harness server. It is shot in both themes and in the first-run state,
+which are the whole of what that page can look like.
 
 So this shows LAYOUT and COLOUR. It does not show anything that depends on a
 device answering, and a screenshot from it is not evidence that a control
