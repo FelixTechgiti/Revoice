@@ -620,8 +620,16 @@ async def _serve_spa(request: web.Request) -> web.Response:
             status=503,
             text="Dashboard not built — static/index.html not found",
         )
+    page = _with_ingress_base(index.read_text(encoding="utf-8"), request)
+    # The landing page loads strings.js too, and it is the same separate
+    # request that can go stale beside a fresh page — see _serve_dashboard.
+    # Here it matters more rather than less: this page is what somebody sees
+    # before they have a session, so a stale copy is the first impression.
+    stamp = _bundle_version()
+    if stamp:
+        page = page.replace("static/strings.js", f"static/strings.js?v={stamp}")
     return web.Response(
-        text=_with_ingress_base(index.read_text(encoding="utf-8"), request),
+        text=page,
         content_type="text/html",
         headers={"Cache-Control": "no-cache"},
     )
@@ -673,6 +681,19 @@ async def _serve_dashboard(request: web.Request) -> web.Response:
         page = page.replace(
             "static/dashboard.js",
             f"static/dashboard.js?v={stamp}",
+        )
+        # strings.js carries the same stamp, and it has to: it is a SEPARATE
+        # request, so a browser can hold a stale copy of it beside a fresh
+        # bundle. What that looks like is a German UI with English words
+        # scattered through it — the missing-key fallback working exactly as
+        # designed, on a file nobody suspects — rather than an error.
+        #
+        # The bundle's mtime rather than the file's own, because the two are
+        # only ever wrong TOGETHER: a build that changes one changes both, and
+        # a second stamp would be a second answer to the same question.
+        page = page.replace(
+            "static/strings.js",
+            f"static/strings.js?v={stamp}",
         )
     # `no-store`, not just `no-cache`, and the difference is the whole point:
     # no-cache means "revalidate before using", which a browser may honour and

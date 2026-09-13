@@ -197,13 +197,14 @@ function uptime(s) {
   return `${m}m`;
 }
 
-function relTime(ts) {
+function relTime(ts, str) {
   if (!ts) return '—';
+  const ago = (str || S()).ago;
   const d = Date.now() - ts * 1000;
-  if (d < 60000) return `${Math.floor(d / 1000)}s ago`;
-  if (d < 3600000) return `${Math.floor(d / 60000)}m ago`;
-  if (d < 86400000) return `${Math.floor(d / 3600000)}h ago`;
-  return `${Math.floor(d / 86400000)}d ago`;
+  if (d < 60000)    return ago.seconds(Math.floor(d / 1000));
+  if (d < 3600000)  return ago.minutes(Math.floor(d / 60000));
+  if (d < 86400000) return ago.hours(Math.floor(d / 3600000));
+  return ago.days(Math.floor(d / 86400000));
 }
 
 // Controller-generated device log lines (`device_log` on the shared events
@@ -267,19 +268,67 @@ function playbackSource(d) {
 // literal hex, because LedRing drew the physical Echo Dot's ring. The ring
 // is chrome now, so there is one colour and it is a token.
 function deviceState(d) {
-  if (!d.approved)  return { key: 'pending',   label: 'Pending',   color: 'var(--warn)' };
-  if (!d.connected) return { key: 'offline',   label: 'Offline',   color: 'var(--error)' };
-  if (d.muted)      return { key: 'muted',     label: 'Muted',     color: 'var(--error)' };
-  if (d.speaking)   return { key: 'speaking',  label: 'Speaking',  color: 'var(--voice)' };
-  if (d.thinking)   return { key: 'thinking',  label: 'Thinking',  color: 'var(--voice)' };
-  if (d.listening)  return { key: 'listening', label: 'Listening', color: 'var(--voice)' };
+  if (!d.approved)  return { key: 'pending',   labelKey: 'statePending',   color: 'var(--warn)' };
+  if (!d.connected) return { key: 'offline',   labelKey: 'stateOffline',   color: 'var(--error)' };
+  if (d.muted)      return { key: 'muted',     labelKey: 'stateMuted',     color: 'var(--error)' };
+  if (d.speaking)   return { key: 'speaking',  labelKey: 'stateSpeaking',  color: 'var(--voice)' };
+  if (d.thinking)   return { key: 'thinking',  labelKey: 'stateThinking',  color: 'var(--voice)' };
+  if (d.listening)  return { key: 'listening', labelKey: 'stateListening', color: 'var(--voice)' };
   const source = playbackSource(d);
-  if (source)       return { key: 'playing',   label: 'Playing',   color: 'var(--media)', source };
-  return               { key: 'idle',      label: 'Ready',     color: 'var(--faint)' };
+  if (source)       return { key: 'playing',   labelKey: 'statePlaying',   color: 'var(--media)', source };
+  return               { key: 'idle',      labelKey: 'stateIdle',      color: 'var(--faint)' };
+}
+
+// The state's NAME, looked up at render time.
+//
+// deviceState returns a key rather than a word so it stays pure — it is the
+// one piece of logic on this page with a contract (the order), and a
+// function that reaches for the current language cannot be tested without
+// one. The lookup is here, where it is being drawn.
+function stateLabel(state) {
+  return state?.labelKey ? t(state.labelKey) : '';
 }
 
 function eventAccent(level) {
   return { info: 'var(--ok)', warn: 'var(--warn)', error: 'var(--error)' }[level] || 'var(--muted)';
+}
+
+// ─── Language ─────────────────────────────────────────────────────────────
+//
+// The strings live in static/strings.js, loaded before this bundle — see the
+// note at the top of that file for why they are not in here.
+//
+// `t` and `S` are read at RENDER time rather than captured, so a language
+// change is a re-render and nothing has to be re-plumbed. App subscribes and
+// bumps a state; every component below simply calls these again.
+const t = key => window.EM_I18N.t(key);
+const S = () => window.EM_I18N.strings();
+
+// LanguageToggle — beside the theme and density toggles, because it is the
+// same kind of preference: it changes how this reader wants to be spoken to
+// and nothing about what the page says.
+//
+// A two-state segment rather than a dropdown: there are two languages, and a
+// dropdown for two options is a click to find out what the options are.
+function LanguageToggle({ lang, onChange }) {
+  return (
+    <div style={{ display: 'inline-flex', background: 'var(--surface)',
+                  border: '1px solid var(--line)', borderRadius: 8, padding: 2 }}>
+      {window.EM_I18N.supported.map(l => (
+        <button key={l} onClick={() => onChange(l)}
+                aria-pressed={l === lang}
+                title={t('language')}
+                style={{
+                  background: l === lang ? 'var(--raised)' : 'transparent',
+                  border: 'none', borderRadius: 6, cursor: 'pointer',
+                  fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                  letterSpacing: '0.1em', padding: '4px 8px',
+                  color: l === lang ? 'var(--text)' : 'var(--muted)',
+                  transition: 'background 0.12s, color 0.12s',
+                }}>{l.toUpperCase()}</button>
+      ))}
+    </div>
+  );
 }
 
 // What each of the device window's tabs is called on screen. See the note
@@ -346,7 +395,7 @@ function ThemeToggle() {
 
   return (
     <IconButton onClick={flip}
-      label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>
+      label={theme === 'dark' ? t('themeToLight') : t('themeToDark')}>
       {theme === 'dark' ? '☾' : '☀'}
     </IconButton>
   );
@@ -937,7 +986,7 @@ function LedRing({ state, size = 120 }) {
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}
          style={{ display: 'block', flexShrink: 0 }}
-         role="img" aria-label={state?.label || 'Ready'}>
+         role="img" aria-label={stateLabel(state) || t('stateIdle')}>
       {/* The track. Always there, so every state is the same ring with
           something done to it rather than a different drawing. */}
       {ring('var(--line)')}
@@ -2159,7 +2208,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   {/* Not a truncated copy of the id: the line below already
                       carries it in full, and a device with no name has a
                       name-shaped gap rather than a shorter name. */}
-                  {device.label || <span style={{ color: 'var(--muted)' }}>Unnamed device</span>}
+                  {device.label || <span style={{ color: 'var(--muted)' }}>{t('unnamedDevice')}</span>}
                 </div>
               )}
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', marginTop: 4, letterSpacing: '0.05em' }}>
@@ -2204,8 +2253,8 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
             // One tab is not a tab bar — it reads as a label and the approval
             // form sat behind a click. Pending devices get a banner instead.
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', background: 'var(--warn-bg)', border: '1px solid var(--warn-line)', borderRadius: 10, fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--text2)', lineHeight: 1.4, marginBottom: 16 }}>
-              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--warn)', flexShrink: 0 }}>Action required</span>
-              <span>Name this device below, then approve it to add it to your fleet.</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--warn)', flexShrink: 0 }}>{t('actionRequired')}</span>
+              <span>{t('approvePrompt')}</span>
             </div>
           )}
         </div>
@@ -2241,7 +2290,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   to be reported. */}
               <div style={{ marginTop: 24, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: '16px 18px' }}>
                 <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--text2)', lineHeight: 1.6, marginBottom: 14, textWrap: 'pretty' }}>
-                  What approving does, in the order it happens:
+                  {t('approveHeading')}
                 </div>
                 {/* Each consequence in the colour of the thing it turns on,
                     so the one that is about the MICROPHONE is the one that
@@ -2249,10 +2298,10 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     should see that distinction without reading. */}
                 <div style={{ marginBottom: 16 }}>
                   {[
-                    ['var(--voice)', 'It receives the fleet configuration.'],
-                    ['var(--voice)', 'Home Assistant gets a voice satellite and a media player for it.'],
-                    ['var(--media)', 'Its Spotify, AirPlay and Sendspin endpoints become reachable.'],
-                    ['var(--warn)',  'Its microphone streams to the controller once it hears the wake word.'],
+                    ['var(--voice)', t('approveConfig')],
+                    ['var(--voice)', t('approveSatellite')],
+                    ['var(--media)', t('approveEndpoints')],
+                    ['var(--warn)',  t('approveMic')],
                   ].map(([c, text]) => (
                     <div key={text} style={{ display: 'flex', gap: 10, alignItems: 'baseline',
                                              marginTop: 8 }}>
@@ -2318,7 +2367,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     known and says plainly what is not, rather than leaving
                     an empty frame that reads as a failure to load. */}
                 {state.key === 'playing' && (
-                  <Panel label="Playing now">
+                  <Panel label={t('playingNow')}>
                     <div style={{ display:'flex', alignItems:'center', gap:16,
                                   flexWrap:'wrap' }}>
                       <div style={{ width:52, height:52, borderRadius:10, flexShrink:0,
@@ -2329,20 +2378,19 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                         <div style={{ fontFamily:"'Instrument Sans',sans-serif", fontSize:15,
                                       color:'var(--text2)', lineHeight:1.5,
                                       textWrap:'pretty' }}>
-                          This device is playing. Its firmware does not report the
-                          track, so there is nothing to name here yet.
+                          {t('playingNoTrackPanel')}
                         </div>
                       </div>
                       <div style={{ display:'flex', gap:0, flexWrap:'wrap' }}>
                         {[
-                          ['Source', state.source, 'var(--media)'],
-                          ['Level', volumePct(device) != null ? `${volumePct(device)}%` : null, 'var(--text)'],
+                          [t('source'), state.source, 'var(--media)'],
+                          [t('level'), volumePct(device) != null ? `${volumePct(device)}%` : null, 'var(--text)'],
                           /* The depth is what the device will apply when a
                              voice turn starts, not a live measurement — a
                              device that cannot mix never ducks at all, so the
                              two answers must not read the same. */
-                          ['Ducking', device.audioMixCapable === false
-                            ? 'pauses' : `${cfgEff.duckDb ?? -18} dB`,
+                          [t('ducking'), device.audioMixCapable === false
+                            ? t('duckingPauses') : `${cfgEff.duckDb ?? -18} dB`,
                             device.audioMixCapable === false ? 'var(--muted)' : 'var(--text)'],
                         ].map(([l, v, c]) => (
                           <div key={l} style={{ padding:'0 18px',
@@ -2649,7 +2697,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     deviceLabel={device.label}
                     recordingsOn={cfgEff.saveUtterances}
                     nearMisses={device.owwNearMisses}
-                    stateLabel={state.label.toUpperCase()}
+                    stateLabel={stateLabel(state).toUpperCase()}
                     stateColor={state.color}
                     isAdmin={isAdmin}
                   />
@@ -9032,14 +9080,6 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
 // it, and then one row per device with the same columns in the same places
 // so a column can be read straight down.
 
-// Number words up to nine, because "3 devices are ready" in a sentence reads
-// as a readout and the readouts are elsewhere. Above nine the digit wins —
-// "twelve" in a glance costs more than it saves.
-const _WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
-                'eight', 'nine'];
-function _word(n) { return _WORDS[n] || String(n); }
-function _cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-
 // The counts every part of this page is derived from, in one place so the
 // sentence, the readouts and the rows can never disagree about them.
 function fleetSummary(devices, release) {
@@ -9055,44 +9095,25 @@ function fleetSummary(devices, release) {
   };
 }
 
-// The fleet in one sentence. Pure, because it is the largest text on the
-// page and it is assembled rather than written.
+// The fleet in one sentence, and the exception line under it.
 //
-// The first clause names the noun and the rest are bare numbers — "One
-// device is listening, one is playing music" — which is how somebody would
-// say it out loud.
-function fleetSentence(s) {
-  if (!s.approved) return s.pending ? 'Something new is waiting for you.'
-                                    : 'No devices yet.';
-  if (!s.online)   return s.approved === 1 ? 'Your device is offline.'
-                                           : 'Every device is offline.';
-  const clauses = [];
-  if (s.active)  clauses.push([s.active,  'listening']);
-  if (s.playing) clauses.push([s.playing, 'playing music']);
-  if (!clauses.length) {
-    return s.online === 1 ? 'One device is ready.'
-                          : `${_cap(_word(s.online))} devices are ready.`;
-  }
-  return clauses.map(([n, what], i) => {
-    const subject = i === 0
-      ? (n === 1 ? 'One device' : `${_cap(_word(n))} devices`)
-      : _word(n);
-    return `${subject} ${n === 1 ? 'is' : 'are'} ${what}`;
-  }).join(', ') + '.';
-}
+// Both are ASSEMBLED rather than written, and both are assembled
+// differently per language — "One device is listening, one is playing
+// music" and "Ein Gerät hört zu, eines spielt Musik" do not share a shape.
+// So the composition lives in static/strings.js, one function per language,
+// and these are the seams: they take the strings object so a test can pass
+// either one without a browser.
 
-// How long ago, as a duration rather than an instant: "for 14 minutes", not
-// "14m ago". The sentence above it is about now, so the exception reads as a
-// continuing state rather than a past event.
-//
-// `nowMs` is a parameter so this is testable without a clock.
-function sinceText(ts, nowMs) {
-  if (!ts) return 'for an unknown time';
+function fleetSentence(s, str) { return (str || S()).sentence(s); }
+
+function sinceText(ts, nowMs, str) {
+  const since = (str || S()).since;
+  if (!ts) return since.unknown;
   const d = Math.max(0, nowMs - ts * 1000);
-  if (d < 90000)   return 'just now';
-  if (d < 5400000) return `for ${Math.round(d / 60000)} minutes`;
-  if (d < 172800000) return `for ${Math.round(d / 3600000)} hours`;
-  return `for ${Math.round(d / 86400000)} days`;
+  if (d < 90000)     return since.justNow;
+  if (d < 5400000)   return since.minutes(Math.round(d / 60000));
+  if (d < 172800000) return since.hours(Math.round(d / 3600000));
+  return since.days(Math.round(d / 86400000));
 }
 
 // The one line under the sentence: what is NOT as it should be.
@@ -9100,17 +9121,16 @@ function sinceText(ts, nowMs) {
 // Offline devices are named because a name is what somebody can act on; past
 // two they are counted, because a list long enough to wrap has stopped being
 // an exception and is the situation.
-function fleetException(devices, s, nowMs) {
+function fleetException(devices, s, nowMs, str) {
+  const L = str || S();
   const bits = [];
   const off = devices.filter(d => d.approved && !d.connected);
-  off.slice(0, 2).forEach(d => bits.push(
-    `${d.label || d.device_id.slice(0, 8)} offline ${sinceText(d.last_seen, nowMs)}`));
-  if (off.length > 2) bits.push(`${off.length - 2} more offline`);
-  if (s.pending) bits.push(
-    `${s.pending} waiting for approval`);
-  if (s.updates) bits.push(
-    `${s.updates} on older firmware`);
-  return bits.join(' · ') || 'Nothing needs attention';
+  off.slice(0, 2).forEach(d => bits.push(L.offlineFor(
+    d.label || d.device_id.slice(0, 8), sinceText(d.last_seen, nowMs, L))));
+  if (off.length > 2) bits.push(L.moreOffline(off.length - 2));
+  if (s.pending) bits.push(L.waitingForApproval(s.pending));
+  if (s.updates) bits.push(L.onOlderFirmware(s.updates));
+  return L.exception(bits);
 }
 
 // The situation, in one sentence, with the exception under it and the
@@ -9122,13 +9142,13 @@ function fleetException(devices, s, nowMs) {
 // screen, and a 34px sentence spends the room they asked to get back.
 function Situation({ devices, summary, dense }) {
   const counts = [
-    ['Online', `${summary.online}/${summary.approved}`,
+    [t('online'), `${summary.online}/${summary.approved}`,
       summary.online === summary.approved ? 'var(--voice)' : 'var(--warn)'],
-    ['In conversation', summary.active,
+    [t('inConversation'), summary.active,
       summary.active ? 'var(--voice)' : 'var(--faint)'],
-    ['Playing', summary.playing,
+    [t('playing'), summary.playing,
       summary.playing ? 'var(--media)' : 'var(--faint)'],
-    ['Waiting', summary.pending,
+    [t('waiting'), summary.pending,
       summary.pending ? 'var(--warn)' : 'var(--faint)'],
   ];
   const label = { fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
@@ -9288,8 +9308,10 @@ function StateChip({ state }) {
                   borderRadius: 999, padding: '4px 11px', minWidth: 0 }}>
       <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
                      background: state.color }}/>
+      {/* No nowrap and no fixed width: "Wartet auf Freigabe" is three
+          times the length of "Pending". */}
       <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
-                     color: 'var(--text2)' }}>{state.label}</span>
+                     color: 'var(--text2)' }}>{stateLabel(state)}</span>
       {state.source && (
         <>
           <span style={{ width: 1, height: 11, background: tint[1], flexShrink: 0 }}/>
@@ -9319,11 +9341,12 @@ function PlaybackLine({ device, state }) {
       <div style={{ minWidth: 0 }}>
         <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
                       color: 'var(--text2)', textWrap: 'pretty' }}>
-          This device is playing; it does not report what.
+          {t('playingNoTrackRow')}
         </div>
         <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
                       color: 'var(--muted)', marginTop: 3, letterSpacing: '0.04em' }}>
-          {state.source}{device.volume != null ? ` · volume ${volumePct(device)}%` : ''}
+          {state.source}{device.volume != null
+            ? ` · ${t('volumeInline')} ${volumePct(device)}%` : ''}
         </div>
       </div>
     </div>
@@ -9355,7 +9378,7 @@ function DeviceRow({ device, release, onClick }) {
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {device.label || device.device_id.slice(0, 8)}
           </div>
-          <div title={device.connected ? undefined : 'Last known address'}
+          <div title={device.connected ? undefined : t('lastKnownAddress')}
                style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
                         color: device.connected ? 'var(--muted)' : 'var(--empty)',
                         marginTop: 2 }}>
@@ -9371,8 +9394,8 @@ function DeviceRow({ device, release, onClick }) {
             widths. */}
         <div className="em-rowvals" style={{ display: 'flex', alignItems: 'center',
                       gap: 16, marginLeft: 'auto' }}>
-          <RowValue value={volumePct(device)} unit="%" width={84} title="Volume"/>
-          <RowValue value={device.rttMs} unit="ms" width={72} title="Control-plane round trip"
+          <RowValue value={volumePct(device)} unit="%" width={84} title={t('volume')}/>
+          <RowValue value={device.rttMs} unit="ms" width={72} title={t('roundTrip')}
                     color={device.rttMs >= 200 ? 'var(--warn)' : undefined}/>
           {/* 120, not the 88 the design specifies: that width was drawn
               against upstream's version shape, and every version this fork
@@ -9380,7 +9403,7 @@ function DeviceRow({ device, release, onClick }) {
               `v2.38.0-fx.1 ↑` is fourteen monospace characters. Truncating
               hides the digit somebody is comparing. */}
           <RowValue value={device.firmware_ver ? `${device.firmware_ver}${needsUpdate ? ' ↑' : ''}` : null}
-                    width={120} title={needsUpdate ? `Update available: ${release.version}` : 'Firmware'}
+                    width={120} title={needsUpdate ? `${t('updateAvailable')}: ${release.version}` : t('firmware')}
                     color={needsUpdate ? 'var(--warn)' : 'var(--text2)'}/>
         </div>
       </div>
@@ -9406,11 +9429,11 @@ function DenseHead() {
                   padding: '0 14px 10px', fontFamily: "'IBM Plex Mono',monospace",
                   fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
                   color: 'var(--muted)' }}>
-      <div>Device</div>
-      <div>State</div>
-      <div style={{ textAlign: 'right' }}>Volume</div>
-      <div style={{ textAlign: 'right' }}>Latency</div>
-      <div style={{ textAlign: 'right' }}>Firmware</div>
+      <div>{t('device')}</div>
+      <div>{t('state')}</div>
+      <div style={{ textAlign: 'right' }}>{t('volume')}</div>
+      <div style={{ textAlign: 'right' }}>{t('latency')}</div>
+      <div style={{ textAlign: 'right' }}>{t('firmware')}</div>
       <div/>
     </div>
   );
@@ -9447,7 +9470,7 @@ function DenseRow({ device, release, onClick }) {
                        background: state.color }}/>
         <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
                        color: 'var(--text2)', overflow: 'hidden',
-                       textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{state.label}</span>
+                       textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stateLabel(state)}</span>
         {state.source && (
           <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 9,
                          letterSpacing: '0.1em', color: 'var(--media)', flexShrink: 0,
@@ -9496,11 +9519,11 @@ function PendingRow({ device, onClick }) {
             it here says the same thing twice and neither time completely. */}
         <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
                       color: 'var(--muted)', marginTop: 3 }}>
-          {device.ip && device.ip !== '127.0.0.1' ? device.ip : 'address unknown'}
-          {device.first_seen ? ` · first seen ${relTime(device.first_seen)}` : ''}
+          {device.ip && device.ip !== '127.0.0.1' ? device.ip : t('addressUnknown')}
+          {device.first_seen ? ` · ${t('firstSeen')} ${relTime(device.first_seen)}` : ''}
         </div>
       </div>
-      <Pill accent onClick={onClick}>Name &amp; approve</Pill>
+      <Pill accent onClick={onClick}>{t('nameAndApprove')}</Pill>
     </div>
   );
 }
@@ -9518,7 +9541,7 @@ function AddDeviceRow({ onClick }) {
                   transition: 'color 0.12s, border-color 0.12s' }}>
       <span style={{ fontSize: 17, lineHeight: 1 }}>+</span>
       <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14 }}>
-        Set up an Echo Dot
+        {t('setUpADot')}
       </span>
     </div>
   );
@@ -9551,7 +9574,7 @@ function NowPlaying({ devices }) {
     return { label, on };
   });
   return (
-    <SidebarSection title="Now playing">
+    <SidebarSection title={t('nowPlaying')}>
       {rows.map(({ label, on }) => (
         <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 10,
                                   marginTop: 9, minWidth: 0 }}>
@@ -9577,7 +9600,7 @@ function DensityToggle({ dense, onChange }) {
   return (
     <IconButton
       onClick={() => onChange(!dense)}
-      label={dense ? 'Switch to the roomy layout' : 'Switch to the dense layout'}>
+      label={dense ? t('densityToRoomy') : t('densityToDense')}>
       {dense ? '▤' : '▥'}
     </IconButton>
   );
@@ -9620,6 +9643,12 @@ function App() {
     try { return localStorage.getItem('em-density') === 'dense'; }
     catch (e) { return false; }
   });
+  // The language lives in static/strings.js, which owns the storage and the
+  // fallback; this is the subscription that turns a change into a render.
+  // Held here rather than threaded through props for ThemeToggle's reason —
+  // one source of truth, and nothing below has to know it exists.
+  const [lang, setLangState] = useState(() => window.EM_I18N.lang);
+  useEffect(() => window.EM_I18N.subscribe(setLangState), []);
   useEffect(() => {
     try { localStorage.setItem('em-density', dense ? 'dense' : 'roomy'); }
     catch (e) { /* private mode */ }
@@ -9820,6 +9849,7 @@ function App() {
                     padding: '18px 28px', borderBottom: '1px solid var(--line)' }}>
         <Wordmark size={26}/>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <LanguageToggle lang={lang} onChange={l => window.EM_I18N.set(l)}/>
           <DensityToggle dense={dense} onChange={setDense}/>
           <ThemeToggle/>
           {status?.controller_version && (
@@ -9832,7 +9862,7 @@ function App() {
                 style={{ ...label, color: 'var(--warn)', fontSize: 11,
                          background: 'none', border: '1px solid var(--warn)',
                          borderRadius: 9, padding: '4px 10px', cursor: 'pointer' }}>
-                Controller {status.controller_version} · reload
+                {t('controllerVersion')} {status.controller_version} · {t('reload')}
               </button>
             ) : (
               /* "Controller" is not decoration. This number and the firmware
@@ -9843,11 +9873,11 @@ function App() {
                  added. */
               <div style={{ ...label, fontSize: 11, textTransform: 'none',
                             letterSpacing: '0.04em' }}>
-                Controller {status.controller_version}
+                {t('controllerVersion')} {status.controller_version}
               </div>
             )
           )}
-          <Pill small onClick={() => setShowSettings(true)}>Settings</Pill>
+          <Pill small onClick={() => setShowSettings(true)}>{t('settings')}</Pill>
           {/* No sign-out on a Home Assistant session: HA owns it, so signing
               out would land on the landing page and be re-authenticated
               immediately — a button that visibly does nothing. Keyed on how
@@ -9855,7 +9885,7 @@ function App() {
               ingress: someone who fell back to the password form (Supervisor
               forwarded no user) can and should still sign out. */}
           {authVia !== 'ingress' && (
-            <IconButton onClick={handleLogout} label="Sign out" danger><SignOutIcon/></IconButton>
+            <IconButton onClick={handleLogout} label={t('signOut')} danger><SignOutIcon/></IconButton>
           )}
           <Avatar name={role}/>
         </div>
@@ -9930,7 +9960,7 @@ function App() {
           {pending.length > 0 && (
             <div style={{ padding: '26px 28px 0' }}>
               <div style={{ ...label, color: 'var(--warn)', marginBottom: 14 }}>
-                Waiting for you · {pending.length}
+                {t('waitingForYou')} · {pending.length}
               </div>
               {pending.map(d => (
                 <PendingRow key={d.device_id} device={d}
@@ -9944,7 +9974,7 @@ function App() {
             <div style={{ padding: '26px 28px 40px' }}>
               {approved.length > 0 && (
                 <div style={{ ...label, marginBottom: dense ? 12 : 14 }}>
-                  Devices · {approved.length}
+                  {t('devices')} · {approved.length}
                 </div>
               )}
               {dense && approved.length > 0 && <DenseHead/>}
@@ -9961,7 +9991,7 @@ function App() {
             <div style={{ textAlign: 'center', padding: '60px 28px',
                           fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
                           color: 'var(--muted)' }}>
-              No devices yet — power on a Revoice device to see it appear here
+              {t('noDevicesYet')}
             </div>
           )}
 
@@ -9977,7 +10007,7 @@ function App() {
                       padding: '10px 28px 40px', minWidth: 0 }}>
           <NowPlaying devices={devices}/>
 
-          <SidebarSection title="Firmware">
+          <SidebarSection title={t('firmwareSection')}>
             {release ? (
               <>
                 <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 20,
@@ -9986,8 +10016,8 @@ function App() {
                               color: 'var(--text2)', lineHeight: 1.6, marginTop: 10,
                               textWrap: 'pretty' }}>
                   {summary.updates
-                    ? `${summary.updates} of ${summary.approved} ${summary.approved === 1 ? 'device' : 'devices'} ${summary.updates === 1 ? 'is' : 'are'} on something older. An update reboots the device.`
-                    : 'Every device is on the latest release.'}
+                    ? S().behindCount(summary.updates, summary.approved)
+                    : t('everyDeviceLatest')}
                 </div>
                 {isAdmin && (
                   <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
@@ -10004,7 +10034,7 @@ function App() {
                         alert(e.error || 'Release check failed');
                       }
                       setCheckingRelease(false);
-                    }}>{checkingRelease ? 'Checking…' : 'Check for updates'}</Pill>
+                    }}>{checkingRelease ? t('checking') : t('checkForUpdates')}</Pill>
                     {(() => {
                       const byId = Object.fromEntries(devices.map(d => [d.device_id, d]));
                       const started = deployState ? (deployState.started || []) : [];
@@ -10029,7 +10059,7 @@ function App() {
                       return (<>
                         {!inFlight && (
                           <Pill small accent onClick={() => setShowDeployAll(true)}>
-                            Deploy to all
+                            {t('deployToAll')}
                           </Pill>
                         )}
                         {deployState && (
@@ -10049,7 +10079,7 @@ function App() {
             ) : (
               <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
                             color: 'var(--empty)' }}>
-                No release information — the controller could not reach GitHub.
+                {t('noReleaseInfo')}
               </div>
             )}
           </SidebarSection>

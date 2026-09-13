@@ -86,6 +86,19 @@
     }
     .brand svg { display: inline-block; vertical-align: baseline; }
 
+    .langrow { display: flex; justify-content: flex-end; margin: -14px 0 18px; }
+    .lang {
+      display: inline-flex; background: var(--bg);
+      border: 1px solid var(--line); border-radius: 8px; padding: 2px;
+    }
+    .lang button {
+      background: transparent; border: none; border-radius: 6px; cursor: pointer;
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+      letter-spacing: 0.1em; padding: 4px 8px; color: var(--muted);
+      transition: background 0.12s, color 0.12s;
+    }
+    .lang button[aria-pressed="true"] { background: var(--raised); color: var(--text); }
+
     /* The status strip replaces the LCD and the animated Dot. It carries
        exactly the states the script below already had — ready, first-run,
        unreachable — so the state machine is untouched; only what they look
@@ -179,6 +192,9 @@
       margin-top: 6px;
     }
   </style>
+  <!-- The same strings the dashboard uses. This page loads no bundle, which
+       is why they are a plain script rather than part of one. -->
+  <script src="static/strings.js"></script>
   <script>
     // Set the theme BEFORE first paint, exactly as dashboard.html does. This
     // page is the first thing anyone sees, so a flash of the light card in
@@ -207,37 +223,45 @@
       <span>ice</span>
     </div>
 
+    <!-- The language segment sits with the mark rather than in a corner:
+         on this page it is the only preference there is, and somebody who
+         cannot read the form cannot find a control described in words they
+         cannot read. -->
+    <div class="langrow">
+      <div class="lang" id="lang"></div>
+    </div>
+
     <div class="status" id="status">
       <span class="status__dot"></span>
-      <span class="status__text" id="status-text">Checking the controller…</span>
+      <span class="status__text" id="status-text"></span>
     </div>
 
     <form id="form-setup" autocomplete="off">
       <div class="field">
-        <label for="su-token">Setup token</label>
+        <label for="su-token"></label>
         <input id="su-token" type="text" spellcheck="false" autocomplete="off" />
       </div>
       <div class="field">
-        <label for="su-user">Username</label>
+        <label for="su-user"></label>
         <input id="su-user" type="text" spellcheck="false" autocomplete="username" />
       </div>
       <div class="field">
-        <label for="su-pass">Password</label>
+        <label for="su-pass"></label>
         <input id="su-pass" type="password" autocomplete="new-password" />
       </div>
-      <button type="submit" id="su-btn">Create admin account</button>
+      <button type="submit" id="su-btn"></button>
     </form>
 
     <form id="form-login">
       <div class="field">
-        <label for="li-user">Username</label>
+        <label for="li-user"></label>
         <input id="li-user" type="text" spellcheck="false" autocomplete="username" />
       </div>
       <div class="field">
-        <label for="li-pass">Password</label>
+        <label for="li-pass"></label>
         <input id="li-pass" type="password" autocomplete="current-password" />
       </div>
-      <button type="submit" id="li-btn">Sign in</button>
+      <button type="submit" id="li-btn"></button>
     </form>
 
     <div class="hint" id="hint"></div>
@@ -261,6 +285,41 @@
       stripText.textContent = text;
       strip.className = 'status' + (tone === OK ? '' : ' status--' + tone);
     }
+
+    const t = k => window.EM_I18N.t(k);
+
+    // Every static label in one function, so a language change is a single
+    // call rather than a list of assignments that can fall out of step. The
+    // STATUS line is deliberately not touched here: it is the one piece of
+    // text that says what just happened, and rewriting it on a language
+    // change would replace an error message with a greeting.
+    function paintLabels() {
+      document.querySelector('label[for=su-token]').textContent = t('setupToken');
+      document.querySelector('label[for=su-user]').textContent  = t('username');
+      document.querySelector('label[for=su-pass]').textContent  = t('password');
+      document.querySelector('label[for=li-user]').textContent  = t('username');
+      document.querySelector('label[for=li-pass]').textContent  = t('password');
+      document.getElementById('su-btn').textContent = t('createAdmin');
+      document.getElementById('li-btn').textContent = t('signIn');
+    }
+
+    const langBox = document.getElementById('lang');
+    window.EM_I18N.supported.forEach(l => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = l.toUpperCase();
+      b.setAttribute('aria-pressed', String(l === window.EM_I18N.lang));
+      b.addEventListener('click', () => window.EM_I18N.set(l));
+      langBox.appendChild(b);
+    });
+    window.EM_I18N.subscribe(() => {
+      langBox.querySelectorAll('button').forEach(b =>
+        b.setAttribute('aria-pressed',
+          String(b.textContent.toLowerCase() === window.EM_I18N.lang)));
+      paintLabels();
+    });
+    paintLabels();
+    setStatus(t('checkingController'), OK);
 
     function show(formId) {
       document.querySelectorAll('form').forEach(f =>
@@ -296,14 +355,14 @@
       e.preventDefault();
       const btn = document.getElementById('su-btn');
       btn.disabled = true;
-      setStatus('Creating account…', WAIT);
+      setStatus(t('creatingAccount'), WAIT);
       try {
         const d = await post('api/setup', {
           token:    document.getElementById('su-token').value.trim(),
           username: document.getElementById('su-user').value.trim(),
           password: document.getElementById('su-pass').value,
         });
-        setStatus('Account created', OK);
+        setStatus(t('accountCreated'), OK);
         enterDashboard(d.token, d.role);
       } catch (err) {
         setStatus(err.message, BAD);
@@ -316,7 +375,7 @@
       e.preventDefault();
       const btn = document.getElementById('li-btn');
       btn.disabled = true;
-      setStatus('Signing in…', OK);
+      setStatus(t('signingIn'), OK);
       try {
         const d = await post('api/auth/login', {
           username: document.getElementById('li-user').value.trim(),
@@ -356,7 +415,7 @@
       // falls through to the forms below.
       try {
         const d = await post('api/auth/ingress', {});
-        setStatus('Signed in via Home Assistant', OK);
+        setStatus(t('signedInViaHa'), OK);
         enterDashboard(d.token, d.role, 'ingress');
         return;
       } catch {}
@@ -365,19 +424,18 @@
         const r = await fetch('api/system/setup-state');
         const d = await r.json();
         if (d.needs_setup) {
-          setStatus('First-run setup', WAIT);
+          setStatus(t('firstRunSetup'), WAIT);
           // Reaching this under ingress means Supervisor sent no user with
           // the session, so naming the container log would be wrong advice
           // on the one deployment that has no container log to read.
           hint.innerHTML = isIngress()
-            ? 'Home Assistant did not identify you to this add-on. ' +
-              'Reload the panel, or use the setup token from the add-on log.'
-            : 'The setup token is in the controller logs:<br/>' +
-              '<code>docker logs revoice-controller</code>';
+            ? t('haDidNotIdentify')
+            : t('tokenInLogs') + '<br/>'
+              + '<code>docker logs revoice-controller</code>';
           show('form-setup');
           document.getElementById('su-token').focus();
         } else {
-          setStatus('Ready — sign in', OK);
+          setStatus(t('readySignIn'), OK);
           hint.textContent = '';
           show('form-login');
           document.getElementById('li-user').focus();
@@ -386,7 +444,7 @@
         // Red, not amber. "The API is not answering" is a fault, and it used
         // to be the same colour as a first-run controller, which is
         // working perfectly and merely new.
-        setStatus('API unreachable', BAD);
+        setStatus(t('apiUnreachable'), BAD);
         hint.textContent = String(e);
       }
     }
