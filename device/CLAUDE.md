@@ -1331,6 +1331,51 @@ tick yet, must not render as "not running". Accusing a working Echo for the
 first thirty seconds of every reconnect is how this becomes the line everyone
 learns to ignore.
 
+## A descriptor opened in C crosses every exec, and both ALSA devices did
+
+**librespot held the speaker.** Measured 2026-09-13: the firmware, librespot
+and shairport-sync each had `fd 3 -> /dev/snd/pcmC0D23p` and
+`fd 13 -> /dev/snd/pcmC0D24c` — same numbers, same devices.
+
+**librespot is what makes this a proof rather than a suspicion.** It is built
+`--no-default-features`, which drops every audio backend but the pipe and with
+it alsa-sys; it has no code that can open a PCM. The descriptors can only have
+come across the fork.
+
+The cause is the language boundary, not a mistake at any call site: the PCM is
+opened by tinyalsa's `pcm_open`, which is C's `open(fn, O_RDWR)`. **Go sets
+`O_CLOEXEC` on everything it opens itself, C does not, and nothing in Go's exec
+closes a descriptor it did not create.** So every one of the ~20 exec sites in
+this firmware — tinymix, wpa_cli, iptables, `sh`, both endpoints — inherited
+the card.
+
+**Why that is worth fixing before it breaks anything.** This file already names
+what a second holder sets up: two things opening the speaker is the #80 case, a
+blocking open with no timeout and eighteen minutes of a stranded device. A
+leaked descriptor is a holder nothing accounts for — closing the speaker here
+does not release the substream while a child still has it, so the next open can
+find it busy from a direction `waitForFreePcm` cannot see. And the children
+holding it are daemons by design.
+
+**The fix marks the descriptor, not the exec** (`internal/sndcloexec`), and that
+choice is the general rule: fixing the exec means fixing twenty sites and every
+one added later, while marking the descriptor where it is opened covers all of
+them and cannot be forgotten by a future caller. It is the only version that
+stays true.
+
+**Two details the call sites needed and a third the tests did:**
+
+- The speaker marks after EVERY open, not only the first, because that path
+  also runs on a reopen. A child already running cannot pick up a new
+  descriptor — inheritance happens at fork — so a later sweep is enough.
+- The mic marks on its FIRST PERIOD rather than next to `GetAudioStream`,
+  because the open happens inside that call on its own goroutine. A period in
+  hand is the only proof the descriptor exists.
+- The sweep reads `/proc/self/fd`, so it is testable off-target against a
+  directory of symlinks whose targets need not exist — which matters, because
+  the host CI runs on has no `/dev/snd` at all and the cgo half of this tree
+  cannot even be compiled there.
+
 ## A source that cannot show it will keep playing may take an idle plane, never a busy one
 
 **A feature that could not work took down the one that was working.** Measured

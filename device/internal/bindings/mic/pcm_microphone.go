@@ -9,11 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wilbowes/EchoMuse/internal/androidsvc"
-	"github.com/wilbowes/EchoMuse/internal/bindings/codec"
-	pkgmic "github.com/wilbowes/EchoMuse/pkg/mic"
 	"github.com/Binozo/GoTinyAlsa/pkg/pcm"
 	"github.com/Binozo/GoTinyAlsa/pkg/tinyalsa"
+	"github.com/wilbowes/EchoMuse/internal/androidsvc"
+	"github.com/wilbowes/EchoMuse/internal/bindings/codec"
+	"github.com/wilbowes/EchoMuse/internal/sndcloexec"
+	pkgmic "github.com/wilbowes/EchoMuse/pkg/mic"
 )
 
 const cardNr = 0
@@ -122,6 +123,15 @@ func (p *PcmMicrophone) readLoop() {
 		batchDur := time.Duration(frames) * time.Second / time.Duration(rate)
 		if firstArrival.IsZero() {
 			firstArrival, lastReport = now, now
+			// The capture descriptor is opened by tinyalsa, in C, without
+			// O_CLOEXEC — so it crosses every exec this firmware makes. It is
+			// marked on the FIRST PERIOD rather than next to GetAudioStream
+			// because the open happens inside that call on its own goroutine,
+			// and a period in hand is the only proof the descriptor exists.
+			// See internal/sndcloexec.
+			if n := sndcloexec.MarkOpenSoundDevices(); n > 0 {
+				log.Printf("[mic] %d sound descriptor(s) marked close-on-exec", n)
+			}
 		} else if gap := now.Sub(lastArrival); gap > 2*batchDur {
 			stalls++
 			log.Printf("[mic] capture stall: %dms between %dms batches — ~%dms lost to ALSA overrun (stalls=%d)",
