@@ -1,5 +1,101 @@
 # Changelog
 
+## 2.47.0-fx.1
+
+### Das Dashboard sieht anders aus
+
+**Nichts ist umgezogen, aber fast alles ist neu gezeichnet.** Der Umbau folgt
+einem durchgehenden Entwurf statt gewachsener Einzelentscheidungen: flache
+Flächen, Haarlinien statt Schatten, und Farbe nur noch dort, wo sie einen
+Zustand bedeutet.
+
+Die wichtigste Regel daran betrifft dich beim Hinsehen: **Grün heißt Stimme,
+Blau heißt Musik.** Ein Echo Dot ist beides — Sprachsatellit und Lautsprecher
+—, und die beiden Rollen haben jetzt getrennte Farben, damit „hört zu" und
+„spielt ab" nie verwechselt werden.
+
+Hell- und Dunkelmodus sind beide neu aufgesetzt. Der Dunkelmodus ist keine
+Umkehrung des hellen: die Signalfarben sind angehoben, weil ein dunkles Grün
+auf dunklem Grund unlesbar ist.
+
+### Du siehst jetzt, welcher Dot gerade Musik spielt
+
+Ein neuer Gerätezustand **Spielt ab**, blau, mit der Quelle direkt daneben —
+SPOTIFY, AIRPLAY, SENDSPIN oder HA MEDIA. Bisher sah ein Echo, aus dem Musik
+kam, genauso aus wie einer, der nichts tat.
+
+Sprache gewinnt, solange ein Gespräch läuft: der Dot senkt die Musik unter
+einer Antwort ab, statt sie anzuhalten, und die Zeile zeigt dann den
+Sprachzustand.
+
+**Was noch fehlt:** der Titel. Die Firmware meldet, WELCHE Quelle die
+Musikebene hält, aber nicht, was sie spielt — kein Titel, kein Interpret,
+kein Fortschritt. Die Zeile sagt das ausdrücklich, statt eine leere Fläche zu
+zeigen.
+
+**Geräte mit älterer Firmware sind nicht betroffen und brauchen kein
+Update.** Wer den Zustand nicht melden kann, erscheint weiter als bereit.
+
+### Die Startseite beantwortet die Frage, mit der man sie öffnet
+
+Oben steht ein Satz — „Ein Gerät hört zu, eines spielt Musik." — und darunter
+eine Zeile mit dem, was nicht stimmt: wer seit wann offline ist, wie viele auf
+Freigabe warten, wie viele auf älterer Firmware laufen.
+
+Aus dem Kachelraster sind Zeilen geworden, mit festen Spalten für Pegel,
+Latenz und Firmware. Damit lässt sich eine Spalte über die ganze Flotte
+herunterlesen, was mit nebeneinanderliegenden Karten nicht ging.
+
+Daneben eine Leiste mit „Läuft gerade" (alle vier Quellen, auch die
+stillen — dass auf AirPlay nichts läuft, ist eine Antwort) und der
+Firmware-Version samt den beiden Update-Knöpfen.
+
+Wer mehr Geräte hat, als auf den Schirm passen: **neben dem Hell/Dunkel-
+Schalter sitzt ein Umschalter auf eine dichte Tabellenansicht.** Dieselben
+Daten, weniger Platz.
+
+### Deutsch und Englisch
+
+**Ein DE/EN-Umschalter in der Kopfzeile**, gemerkt pro Browser. Er folgt
+zunächst der Spracheinstellung deines Browsers; sobald du einmal wählst,
+gilt deine Wahl dauerhaft.
+
+Übersetzt sind die Flotte, die Kopfzeile des Gerätefensters, der
+Freigabe-Bildschirm und die Anmeldeseite — die Flächen, die man benutzt,
+ohne an diesem Ding zu bauen. Die Konfiguration, der Einrichtungsassistent
+und die Dialog-Statistik sind vorerst englisch geblieben: das sind mehrere
+hundert Sätze technischer Prosa, darunter Warnungen, und die falsch zu
+übersetzen wäre schlimmer, als sie englisch zu lassen.
+
+### Ein neues Logo, und die Anmeldeseite dazu
+
+Der LED-Ring ist jetzt das „o" in Revoice — kein Icon mehr vor dem Wort.
+Favicon, Add-on-Kachel und die Wortmarke sind dieselbe Zeichnung in vier
+Größen.
+
+Die Anmeldeseite hat den fotorealistischen Dot und das grüne LCD-Feld
+verloren und dafür einen Statusstreifen bekommen, der dasselbe sagt.
+Nebenbei behoben: sie hatte gar keinen Dunkelmodus, und „API nicht
+erreichbar" hatte dieselbe Farbe wie eine ganz normale Ersteinrichtung.
+
+### Kleinkram, der dabei auffiel
+
+- Der Pegel in der Geräteliste wurde falsch gerechnet und hätte „0,31 %"
+  statt „31 %" angezeigt.
+- Hinter jedem Fenster lag ein **helles** Grau — im Dunkelmodus wurde die
+  Seite dahinter dadurch heller statt zurückzutreten.
+- Der Freigabe-Bildschirm malte sein Panel mit der Textfarbe aus: eine fast
+  schwarze Fläche, in beiden Themes.
+- Eingabefelder hatten überhaupt keine Gestaltung und waren im Dunkelmodus
+  weiße Kästen mit schwarzem Text.
+- Der Einrichtungsassistent und die Einstellungen waren vollständig in
+  Monospace gesetzt, auch die Fließtexte.
+
+### Für dich zu tun
+
+Nichts. Keine Einstellung ändert sich, keine Gerätekonfiguration wird
+angefasst, und es ist kein Firmware-Update nötig.
+
 ## 2.46.0-fx.1
 
 ### Die Netzwerkprüfung sagt jetzt, welche AirPlay-Generation der Echo anbietet
