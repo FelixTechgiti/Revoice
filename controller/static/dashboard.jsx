@@ -3166,232 +3166,10 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
 
 // ─── Device card ──────────────────────────────────────────────────────────────
 
-function Card({ device, onClick }) {
-  const state = deviceState(device);
-  const isPending = !device.approved;
-
-  return (
-    <div onClick={onClick} style={{ background: 'linear-gradient(160deg,var(--card),var(--bg))', border: '1px solid var(--border)', borderRadius: 14, cursor: 'pointer', boxShadow: '0 4px 16px var(--track),0 1px 0 var(--sheen) inset', transition: 'box-shadow 0.15s,transform 0.1s', userSelect: 'none', opacity: isPending ? 0.85 : 1 }}
-      onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 8px 28px rgba(0,0,0,0.18),0 1px 0 var(--sheen) inset'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-      onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 4px 16px var(--track),0 1px 0 var(--sheen) inset'; e.currentTarget.style.transform = 'translateY(0)'; }}>
-      <div style={{ background: 'linear-gradient(180deg,var(--sunken),var(--sunken))', borderBottom: '1px solid var(--border-hard)', borderRadius: '13px 13px 0 0', padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 0 var(--sheen) inset' }}>
-        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: 'var(--text)', fontWeight: 600, letterSpacing: '-0.01em' }}>
-          {device.label || <span style={{ color: 'var(--muted)', fontSize: 12 }}>{device.device_id.slice(0, 8)}…</span>}
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {isPending && (
-            // Chrome sized this box off the DM Mono line box rather than the
-            // glyphs, so 1px symmetric padding rendered visibly bottom-heavy
-            // next to the 14px label. inline-flex + lineHeight:1 makes the
-            // height the text's own; the trimmed paddingRight cancels the
-            // trailing letter-space Chrome leaves after the final N, which is
-            // what made the word look shunted left inside its own badge.
-            <div style={{ display: 'inline-flex', alignItems: 'center', background: 'linear-gradient(160deg,var(--lcd-face),var(--lcd-deep))', border: '1px solid var(--lcd-line)', borderRadius: 3, padding: '3px 6px', paddingRight: 'calc(6px - 0.1em)', fontFamily: "'DM Mono',monospace", fontSize: 9, lineHeight: 1, color: 'var(--accent-lit)', letterSpacing: '0.1em' }}>PENDING</div>
-          )}
-          {!isPending && device.firmware_ver && (
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)' }}>{device.firmware_ver}</div>
-          )}
-        </div>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '20px 0 12px' }}>
-        <LedRing state={state} size={120}/>
-      </div>
-      <div style={{ padding: '0 16px 16px' }}>
-        <div className="em-inset" style={{ '--em-inset-radius':'6px', '--em-inset-pad':'7px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: state.color, letterSpacing: '0.12em' }}>{state.label.toUpperCase()}{state.source ? ` · ${state.source}` : ''}</span>
-          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--lcd-dim)', letterSpacing: '0.08em' }}>{(() => {
-            const ip = device.ip && device.ip !== '127.0.0.1' ? device.ip : null;
-            return device.connected ? (ip || '—') : (ip ? `${ip} ↑` : '—');
-          })()}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Provisioning Wizard ──────────────────────────────────────────────────────
 
 // ADB-over-WebUSB client — thin wrapper around @yume-chan/adb 2.1.0.
 // Lazy-loads from esm.sh on first use (dynamic import works in classic scripts).
-// Exposes the same interface the wizard step runners expect:
-//   Client.requestDevice() -> client
-//   client.connect()
-//   client.shell(cmd)   -> string
-//   client.push(path, Uint8Array, onProgress?)
-//   client.pull(path)   -> Uint8Array
-//   client.close()
-const _ADB = (() => {
-  // Module cache — loaded once on first requestDevice() call.
-  let _mods = null;
-
-  async function _load(logFn) {
-    if (_mods) return _mods;
-    logFn('Loading ADB library from esm.sh…');
-    const [webUsbMod, adbMod] = await Promise.all([
-      import('https://esm.sh/@yume-chan/adb-daemon-webusb@2.1.0?bundle&deps=@yume-chan/adb@2.1.0'),
-      import('https://esm.sh/@yume-chan/adb@2.1.0?bundle'),
-    ]);
-    _mods = {
-      manager:       webUsbMod.AdbDaemonWebUsbDeviceManager,
-      Transport:     adbMod.AdbDaemonTransport,
-      Adb:           adbMod.Adb,
-      defaultAuths:  adbMod.ADB_DEFAULT_AUTHENTICATORS,
-    };
-    logFn('ADB library loaded.');
-    return _mods;
-  }
-
-  // Drain a WHATWG ReadableStream<Uint8Array> into a single Uint8Array.
-  async function _readAll(stream) {
-    const reader = stream.getReader();
-    const chunks = [];
-    let total = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      total += value.length;
-    }
-    const out = new Uint8Array(total);
-    let off = 0;
-    for (const c of chunks) { out.set(c, off); off += c.length; }
-    return out;
-  }
-
-  // Track the last usbDevice so we can release it before reconnecting.
-  let _lastUsbDevice = null;
-
-  class Client {
-    constructor(adb, transport, banner, serial) {
-      this._adb = adb;
-      this._transport = transport;
-      this.banner = banner;  // product name string, e.g. "omni_biscuit" or "csm_biscuit"
-      // Carried so a WebUSB 'disconnect' event can be matched to this client
-      // rather than to any other USB device the operator happens to unplug.
-      this.serial = serial ?? null;
-      this._log = () => {};
-    }
-
-    // Spawn a command and return its stdout as a trimmed string.
-    // Must use noneProtocol — shellProtocol requires Android 7+.
-    async shell(cmd) {
-      const proc = await this._adb.subprocess.noneProtocol.spawn(cmd);
-      const out = await _readAll(proc.output);
-      return new TextDecoder().decode(out).replace(/\r\n/g, '\n').trim();
-    }
-
-    // Push bytes to a remote path via `cat >`.
-    // stdin is a WritableStream<Uint8Array>; we write in 64 KB chunks.
-    async push(remotePath, data, onProgress) {
-      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-      // The per-phase lines exist to localise a stall — which phase it hung in
-      // is the whole diagnostic — but they are four lines per push, and a
-      // provision makes eight sub-megabyte pushes that complete instantly.
-      // Narrate the transfers that can actually stall; one line for the rest.
-      const chatty = bytes.length >= 1024 * 1024;
-      if (chatty) this._log(`push: opening cat > '${remotePath}' (${(bytes.length/1024/1024).toFixed(1)} MB)`);
-      const proc  = await this._adb.subprocess.noneProtocol.spawn(`cat > '${remotePath}'`);
-      if (chatty) this._log('push: stream open, writing chunks…');
-      const writer = proc.stdin.getWriter();
-      const SZ = 64 * 1024;
-      for (let i = 0; i < bytes.length; i += SZ) {
-        await writer.write(bytes.subarray(i, Math.min(i + SZ, bytes.length)));
-        onProgress?.((i + SZ) / bytes.length);
-      }
-      if (chatty) this._log('push: all chunks written, closing stdin…');
-      await writer.close();
-      onProgress?.(1);
-      this._log(chatty ? 'push: done.'
-                       : `push: '${remotePath}' (${(bytes.length/1024).toFixed(0)} KB) done.`);
-      // No drain — busybox cat on TWRP does not close stdout when stdin closes,
-      // so _readAll would hang forever. The next shell command provides sequencing.
-    }
-
-    // Pull a remote file as a Uint8Array via `cat`.
-    async pull(remotePath) {
-      this._log(`pull: cat '${remotePath}'`);
-      const proc = await this._adb.subprocess.noneProtocol.spawn(`cat '${remotePath}'`);
-      this._log('pull: draining output…');
-      const out = await _readAll(proc.output);
-      this._log(`pull: done (${(out.length/1024/1024).toFixed(1)} MB)`);
-      return out;
-    }
-
-    async close() {
-      try { await this._transport.close(); } catch {}
-    }
-
-    // ── Static factory ──────────────────────────────────────────────────────
-
-    // Open the browser USB picker, load the library, authenticate, return a
-    // ready Client.  logFn is optional — wizard passes addLog.
-    static async requestDevice(logFn = () => {}) {
-      const blocked = webUsbBlocked();
-      if (blocked) throw new Error(`${blocked.why} ${blocked.fix}`);
-
-      const { manager, Transport, Adb, defaultAuths } = await _load(logFn);
-
-      // Release any previous connection — calling connect() on an already-claimed
-      // interface hangs indefinitely. This happens on retry after a reboot.
-      if (_lastUsbDevice) {
-        try { await _lastUsbDevice.disconnect(); } catch {}
-        _lastUsbDevice = null;
-      }
-
-      logFn('Requesting USB device — select the Echo Dot from the picker…');
-      const usbDevice = await manager.BROWSER.requestDevice();
-      if (!usbDevice) throw new Error('No device selected.');
-      logFn(`Device selected: ${usbDevice.name ?? usbDevice.serial ?? 'unknown'}`);
-      _lastUsbDevice = usbDevice;
-
-      logFn('Opening USB connection…');
-      const connection = await usbDevice.connect();
-
-      logFn('Authenticating ADB…');
-      const transport = await Transport.authenticate({
-        serial:         usbDevice.serial ?? 'revoice',
-        connection,
-        authenticators: defaultAuths,
-      });
-      logFn('ADB authenticated.');
-
-      const adb = new Adb(transport);
-      const banner = adb.banner?.product ?? '(unknown)';
-      logFn(`Connected. Banner: ${banner}`);
-
-      return new Client(adb, transport, banner, usbDevice.serial ?? null);
-    }
-  }
-
-  return { Client };
-})();
-
-// ── AddDeviceTile ──
-
-function AddDeviceTile({ onClick }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <div
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        border: `2px dashed ${hover ? 'var(--text2)' : 'var(--border-hard)'}`,
-        // 12 -> 14 to match Card's corner. minHeight is only the floor for an
-        // empty fleet; with any device present the grid row sets the height.
-        borderRadius: 14, minHeight: 244, display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', gap: 8, cursor: 'pointer',
-        transition: 'border-color 0.15s, opacity 0.15s', opacity: hover ? 1 : 0.6,
-        userSelect: 'none',
-      }}
-    >
-      <div style={{ fontSize: 28, color: hover ? 'var(--text2)' : 'var(--border-hard)', lineHeight: 1 }}>+</div>
-      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: hover ? 'var(--text2)' : 'var(--border-hard)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Provision Device</div>
-    </div>
-  );
-}
-
-// ── ProvisionWizard ──
 
 const _ALEXA_PKGS = [
   'amazon.speech.davs.davcservice',
@@ -9103,6 +8881,561 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
 }
 
 
+// ─── The fleet page ───────────────────────────────────────────────────────
+//
+// The landing page is the fleet right now, not a form. Everything below
+// serves that: one sentence saying what is happening, the exception beside
+// it, and then one row per device with the same columns in the same places
+// so a column can be read straight down.
+
+// Number words up to nine, because "3 devices are ready" in a sentence reads
+// as a readout and the readouts are elsewhere. Above nine the digit wins —
+// "twelve" in a glance costs more than it saves.
+const _WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
+                'eight', 'nine'];
+function _word(n) { return _WORDS[n] || String(n); }
+function _cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+// The counts every part of this page is derived from, in one place so the
+// sentence, the readouts and the rows can never disagree about them.
+function fleetSummary(devices, release) {
+  const approved = devices.filter(d => d.approved);
+  return {
+    approved: approved.length,
+    online:   approved.filter(d => d.connected).length,
+    active:   approved.filter(d => d.speaking || d.listening || d.thinking).length,
+    playing:  approved.filter(d => deviceState(d).key === 'playing').length,
+    pending:  devices.filter(d => !d.approved).length,
+    updates:  approved.filter(d => d.firmware_ver && release?.version
+                                   && d.firmware_ver !== release.version).length,
+  };
+}
+
+// The fleet in one sentence. Pure, because it is the largest text on the
+// page and it is assembled rather than written.
+//
+// The first clause names the noun and the rest are bare numbers — "One
+// device is listening, one is playing music" — which is how somebody would
+// say it out loud.
+function fleetSentence(s) {
+  if (!s.approved) return s.pending ? 'Something new is waiting for you.'
+                                    : 'No devices yet.';
+  if (!s.online)   return s.approved === 1 ? 'Your device is offline.'
+                                           : 'Every device is offline.';
+  const clauses = [];
+  if (s.active)  clauses.push([s.active,  'listening']);
+  if (s.playing) clauses.push([s.playing, 'playing music']);
+  if (!clauses.length) {
+    return s.online === 1 ? 'One device is ready.'
+                          : `${_cap(_word(s.online))} devices are ready.`;
+  }
+  return clauses.map(([n, what], i) => {
+    const subject = i === 0
+      ? (n === 1 ? 'One device' : `${_cap(_word(n))} devices`)
+      : _word(n);
+    return `${subject} ${n === 1 ? 'is' : 'are'} ${what}`;
+  }).join(', ') + '.';
+}
+
+// How long ago, as a duration rather than an instant: "for 14 minutes", not
+// "14m ago". The sentence above it is about now, so the exception reads as a
+// continuing state rather than a past event.
+//
+// `nowMs` is a parameter so this is testable without a clock.
+function sinceText(ts, nowMs) {
+  if (!ts) return 'for an unknown time';
+  const d = Math.max(0, nowMs - ts * 1000);
+  if (d < 90000)   return 'just now';
+  if (d < 5400000) return `for ${Math.round(d / 60000)} minutes`;
+  if (d < 172800000) return `for ${Math.round(d / 3600000)} hours`;
+  return `for ${Math.round(d / 86400000)} days`;
+}
+
+// The one line under the sentence: what is NOT as it should be.
+//
+// Offline devices are named because a name is what somebody can act on; past
+// two they are counted, because a list long enough to wrap has stopped being
+// an exception and is the situation.
+function fleetException(devices, s, nowMs) {
+  const bits = [];
+  const off = devices.filter(d => d.approved && !d.connected);
+  off.slice(0, 2).forEach(d => bits.push(
+    `${d.label || d.device_id.slice(0, 8)} offline ${sinceText(d.last_seen, nowMs)}`));
+  if (off.length > 2) bits.push(`${off.length - 2} more offline`);
+  if (s.pending) bits.push(
+    `${s.pending} waiting for approval`);
+  if (s.updates) bits.push(
+    `${s.updates} on older firmware`);
+  return bits.join(' · ') || 'Nothing needs attention';
+}
+
+// The situation, in one sentence, with the exception under it and the
+// readouts beside it. Replaces the five LCD tiles: a count says how many,
+// and nothing said what was going on.
+//
+// Dense is not a smaller copy of the same block — it is one line. Somebody
+// who has asked for the dense layout is watching more devices than fit on a
+// screen, and a 34px sentence spends the room they asked to get back.
+function Situation({ devices, summary, dense }) {
+  const counts = [
+    ['Online', `${summary.online}/${summary.approved}`,
+      summary.online === summary.approved ? 'var(--voice)' : 'var(--warn)'],
+    ['In conversation', summary.active,
+      summary.active ? 'var(--voice)' : 'var(--faint)'],
+    ['Playing', summary.playing,
+      summary.playing ? 'var(--media)' : 'var(--faint)'],
+    ['Waiting', summary.pending,
+      summary.pending ? 'var(--warn)' : 'var(--faint)'],
+  ];
+  const label = { fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
+                  letterSpacing: '0.16em', textTransform: 'uppercase',
+                  color: 'var(--muted)' };
+  // Date.now() rather than a ticking clock: the page already re-renders on
+  // every device update and polls every five seconds, so the duration is
+  // never more than that stale, and a timer of its own would re-render the
+  // whole fleet to move one word.
+  const exception = fleetException(devices, summary, Date.now());
+
+  if (dense) {
+    return (
+      <div className="em-situation" style={{ display: 'flex', gap: 16,
+                    alignItems: 'baseline', flexWrap: 'wrap',
+                    padding: '14px 28px', borderBottom: '1px solid var(--line)' }}>
+        <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 15,
+                       fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text)' }}>
+          {fleetSentence(summary)}
+        </span>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                       color: 'var(--muted)', minWidth: 0, overflow: 'hidden',
+                       textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {exception}
+        </span>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+          {counts.map(([l, v, c]) => (
+            <span key={l} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 7 }}>
+              <span style={label}>{l}</span>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14,
+                             color: c }}>{v}</span>
+            </span>
+          ))}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="em-situation" style={{ display: 'flex', gap: 24,
+                  alignItems: 'flex-start', flexWrap: 'wrap',
+                  padding: '36px 28px 30px', borderBottom: '1px solid var(--line)' }}>
+      <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+        <h2 style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 34,
+                     fontWeight: 600, letterSpacing: '-0.03em', lineHeight: 1.15,
+                     color: 'var(--text)', textWrap: 'pretty', margin: 0 }}>
+          {fleetSentence(summary)}
+        </h2>
+        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                      color: 'var(--muted)', marginTop: 12, lineHeight: 1.6 }}>
+          {exception}
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+        {counts.map(([l, v, c]) => (
+          <div key={l} style={{ padding: '0 22px', borderLeft: '1px solid var(--line)' }}>
+            <div style={label}>{l}</div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 26,
+                          color: c, lineHeight: 1.3 }}>{v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── The mark ──────────────────────────────────────────────────────────────
+
+// The LED ring is the "o" in Revoice — no icon in front of the word.
+//
+// The segments are an OPTICAL size scale rather than one drawing scaled: at
+// 16px a segmented ring is a smudge, so it closes up and the core is punched
+// out in the ground colour instead. Below that there is nothing left to
+// show, so there is no step for it.
+function RingMark({ size = 24, color = 'var(--voice)', ground }) {
+  const [r, sw, dash] =
+      size > 40 ? [30, 9,  '11.8 4.9']
+    : size >= 32 ? [29, 11, '11.5 5.2']
+    : size >= 20 ? [28, 14, '22 9']
+    :              [27, 18, null];
+  return (
+    <svg width={size} height={size} viewBox="0 0 72 72" aria-hidden="true"
+         style={{ display: 'inline-block', verticalAlign: 'baseline', flexShrink: 0 }}>
+      <circle cx="36" cy="36" r={r} fill="none" stroke={color} strokeWidth={sw}
+              strokeDasharray={dash || undefined}
+              transform="rotate(-90 36 36)"/>
+      {dash
+        ? <circle cx="36" cy="36" r="11" fill={color}/>
+        /* Punched out of the ground rather than drawn in the ring colour:
+           at this size the two would touch and read as a filled disc. */
+        : <circle cx="36" cy="36" r="9" fill={ground || 'var(--bg)'}/>}
+    </svg>
+  );
+}
+
+function Wordmark({ size = 26, color = 'var(--text)', ring = 'var(--voice)', ground }) {
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: 1,
+                  fontFamily: "'Instrument Sans',sans-serif", fontWeight: 600,
+                  fontSize: size, letterSpacing: '-0.04em', color, lineHeight: 1 }}>
+      <span>Rev</span>
+      <RingMark size={Math.round(size * 0.8)} color={ring} ground={ground}/>
+      <span>ice</span>
+    </div>
+  );
+}
+
+// Who is signed in, as initials. The role is already printed beside it, so
+// this carries identity rather than information.
+function Avatar({ name }) {
+  const initials = (name || '?').trim().split(/[\s_.-]+/).slice(0, 2)
+    .map(w => w.charAt(0).toUpperCase()).join('') || '?';
+  return (
+    <div title={name} style={{
+      width: 30, height: 30, borderRadius: 9, flexShrink: 0,
+      background: 'var(--raised)', border: '1px solid var(--line)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: 'var(--text2)',
+    }}>{initials}</div>
+  );
+}
+
+// ── Shared row pieces ─────────────────────────────────────────────────────
+
+// A value in its own column: mono, right-aligned, fixed width. The width is
+// what makes a column readable down the fleet rather than a set of numbers
+// that happen to be near each other.
+function RowValue({ value, unit, width, color, title }) {
+  return (
+    <div title={title} style={{ flex: `0 0 ${width}px`, minWidth: 0, textAlign: 'right',
+                  fontFamily: "'IBM Plex Mono',monospace", fontSize: 13,
+                  color: value == null ? 'var(--empty)' : (color || 'var(--text)'),
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      {value == null ? '—' : value}
+      {value != null && unit && (
+        <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 2 }}>{unit}</span>
+      )}
+    </div>
+  );
+}
+
+// The state, as a pill. At `playing` the source rides behind a divider —
+// which source is playing is the question somebody has about a speaker, and
+// a submenu is the wrong place for it.
+function StateChip({ state }) {
+  const tint = {
+    playing: ['var(--media-bg)', 'var(--media-line)'],
+    pending: ['var(--warn-bg)',  'var(--warn-line)'],
+    offline: ['var(--error-bg)', 'var(--error-line)'],
+    muted:   ['var(--error-bg)', 'var(--error-line)'],
+  }[state.key] || (state.key === 'idle'
+    ? ['transparent', 'var(--line)']
+    : ['var(--voice-bg)', 'var(--voice-line)']);
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7,
+                  background: tint[0], border: `1px solid ${tint[1]}`,
+                  borderRadius: 999, padding: '4px 11px', minWidth: 0 }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                     background: state.color }}/>
+      <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                     color: 'var(--text2)' }}>{state.label}</span>
+      {state.source && (
+        <>
+          <span style={{ width: 1, height: 11, background: tint[1], flexShrink: 0 }}/>
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
+                         letterSpacing: '0.12em', color: 'var(--media)' }}>
+            {state.source}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+// What we can say about a playing device, which today is the source and the
+// volume and nothing else. The track — cover, title, artist, position — is
+// not on the wire at all (#172), so this is the design's own "source known,
+// title unknown" state rather than a placeholder for one.
+function PlaybackLine({ device, state }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0,
+                  padding: '12px 0 2px 48px' }}>
+      <div style={{ width: 38, height: 38, borderRadius: 8, flexShrink: 0,
+                    background: 'var(--raised)', border: '1px solid var(--line)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: "'IBM Plex Mono',monospace", fontSize: 9,
+                    letterSpacing: '0.1em', color: 'var(--empty)' }}>♪</div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
+                      color: 'var(--text2)', textWrap: 'pretty' }}>
+          This device is playing; it does not report what.
+        </div>
+        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                      color: 'var(--muted)', marginTop: 3, letterSpacing: '0.04em' }}>
+          {state.source}{device.volume != null ? ` · volume ${device.volume}%` : ''}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── A device, airy ────────────────────────────────────────────────────────
+
+function DeviceRow({ device, release, onClick }) {
+  const [hover, setHover] = useState(false);
+  const state = deviceState(device);
+  const ip = device.ip && device.ip !== '127.0.0.1' ? device.ip : null;
+  const needsUpdate = device.firmware_ver && release?.version
+                      && device.firmware_ver !== release.version;
+  return (
+    <div onClick={onClick}
+         onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+         style={{ borderTop: '1px solid var(--line)', cursor: 'pointer',
+                  padding: '16px 14px', userSelect: 'none',
+                  background: hover ? 'var(--surface)' : 'transparent',
+                  borderLeft: state.key === 'playing'
+                    ? '2px solid var(--media-card)' : '2px solid transparent',
+                  transition: 'background 0.12s, border-color 0.12s' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <LedRing state={state} size={34}/>
+        <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+          <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 16,
+                        fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text)',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {device.label || device.device_id.slice(0, 8)}
+          </div>
+          <div title={device.connected ? undefined : 'Last known address'}
+               style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                        color: device.connected ? 'var(--muted)' : 'var(--empty)',
+                        marginTop: 2 }}>
+            {ip || '—'}
+          </div>
+        </div>
+        <StateChip state={state}/>
+        {/* The three readouts wrap as ONE unit, which is what makes the
+            narrow layout two tidy rows rather than a staircase: wrapping
+            them individually let a row break between latency and firmware
+            on one device and after firmware on the next, so no column
+            lined up with the one above it — the whole point of fixed
+            widths. */}
+        <div className="em-rowvals" style={{ display: 'flex', alignItems: 'center',
+                      gap: 16, marginLeft: 'auto' }}>
+          <RowValue value={device.volume} unit="%" width={84} title="Volume"/>
+          <RowValue value={device.rttMs} unit="ms" width={72} title="Control-plane round trip"
+                    color={device.rttMs >= 200 ? 'var(--warn)' : undefined}/>
+          {/* 120, not the 88 the design specifies: that width was drawn
+              against upstream's version shape, and every version this fork
+              ships carries an -fx.N suffix — plus the update arrow, so
+              `v2.38.0-fx.1 ↑` is fourteen monospace characters. Truncating
+              hides the digit somebody is comparing. */}
+          <RowValue value={device.firmware_ver ? `${device.firmware_ver}${needsUpdate ? ' ↑' : ''}` : null}
+                    width={120} title={needsUpdate ? `Update available: ${release.version}` : 'Firmware'}
+                    color={needsUpdate ? 'var(--warn)' : 'var(--text2)'}/>
+        </div>
+      </div>
+      {state.key === 'playing' && <PlaybackLine device={device} state={state}/>}
+    </div>
+  );
+}
+
+// ── A device, dense ───────────────────────────────────────────────────────
+//
+// The same data as a table. Not a different page and not less information —
+// the same rows with the ring, the chip and the second line traded for
+// alignment, for somebody watching more devices than fit on a screen.
+
+// The firmware column is 120 rather than the design's 90, for the reason
+// the roomy row's is: an -fx.N suffix plus the update arrow is fourteen
+// monospace characters, and truncating hides the digit being compared.
+const _DENSE_COLS = 'minmax(0,2fr) 190px 90px 80px 120px 30px';
+
+function DenseHead() {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: _DENSE_COLS, gap: 12,
+                  padding: '0 14px 10px', fontFamily: "'IBM Plex Mono',monospace",
+                  fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase',
+                  color: 'var(--muted)' }}>
+      <div>Device</div>
+      <div>State</div>
+      <div style={{ textAlign: 'right' }}>Volume</div>
+      <div style={{ textAlign: 'right' }}>Latency</div>
+      <div style={{ textAlign: 'right' }}>Firmware</div>
+      <div/>
+    </div>
+  );
+}
+
+function DenseRow({ device, release, onClick }) {
+  const [hover, setHover] = useState(false);
+  const state = deviceState(device);
+  const ip = device.ip && device.ip !== '127.0.0.1' ? device.ip : null;
+  const needsUpdate = device.firmware_ver && release?.version
+                      && device.firmware_ver !== release.version;
+  const cell = { fontFamily: "'IBM Plex Mono',monospace", fontSize: 13,
+                 textAlign: 'right', color: 'var(--text2)', minWidth: 0,
+                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+  return (
+    <div onClick={onClick}
+         onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+         style={{ display: 'grid', gridTemplateColumns: _DENSE_COLS, gap: 12,
+                  alignItems: 'center', padding: '12px 14px', cursor: 'pointer',
+                  userSelect: 'none', borderTop: '1px solid var(--line)',
+                  background: hover ? 'var(--surface)' : 'transparent',
+                  transition: 'background 0.12s' }}>
+      <div style={{ minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
+                       fontWeight: 600, color: 'var(--text)', overflow: 'hidden',
+                       textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {device.label || device.device_id.slice(0, 8)}
+        </span>
+        <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                       color: 'var(--muted)', flexShrink: 0 }}>{ip || '—'}</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                       background: state.color }}/>
+        <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                       color: 'var(--text2)', overflow: 'hidden',
+                       textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{state.label}</span>
+        {state.source && (
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 9,
+                         letterSpacing: '0.1em', color: 'var(--media)', flexShrink: 0,
+                         background: 'var(--media-bg)', border: '1px solid var(--media-line)',
+                         borderRadius: 4, padding: '1px 5px' }}>{state.source}</span>
+        )}
+      </div>
+      <div style={cell}>{device.volume == null
+        ? <span style={{ color: 'var(--empty)' }}>—</span> : `${device.volume}%`}</div>
+      <div style={{ ...cell, color: device.rttMs >= 200 ? 'var(--warn)' : 'var(--text2)' }}>
+        {device.rttMs == null
+          ? <span style={{ color: 'var(--empty)' }}>—</span> : `${device.rttMs}ms`}</div>
+      <div style={{ ...cell, color: needsUpdate ? 'var(--warn)' : 'var(--text2)' }}>
+        {device.firmware_ver
+          ? `${device.firmware_ver}${needsUpdate ? ' ↑' : ''}`
+          : <span style={{ color: 'var(--empty)' }}>—</span>}</div>
+      <div style={{ textAlign: 'right', color: 'var(--muted)', fontSize: 15 }}>›</div>
+    </div>
+  );
+}
+
+// ── Waiting for you ───────────────────────────────────────────────────────
+//
+// Its own block above the list rather than a row in it: this is the only
+// thing on the page that asks the reader to do something.
+
+function PendingRow({ device, onClick }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+                  background: 'var(--surface)', border: '1px solid var(--line)',
+                  borderLeft: '2px solid var(--warn)', borderRadius: 12,
+                  padding: '14px 18px', marginBottom: 10 }}>
+      <LedRing state={deviceState(device)} size={34}/>
+      <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+        <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 16,
+                      fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text)',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {device.label || device.device_id}
+        </div>
+        {/* Where it came from, not what it is called — an unnamed device's
+            id is already the line above, and printing a truncated copy of
+            it here says the same thing twice and neither time completely. */}
+        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11,
+                      color: 'var(--muted)', marginTop: 3 }}>
+          {device.ip && device.ip !== '127.0.0.1' ? device.ip : 'address unknown'}
+          {device.first_seen ? ` · first seen ${relTime(device.first_seen)}` : ''}
+        </div>
+      </div>
+      <Pill accent onClick={onClick}>Name &amp; approve</Pill>
+    </div>
+  );
+}
+
+function AddDeviceRow({ onClick }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div onClick={onClick}
+         onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+         style={{ marginTop: 14, border: '1px dashed var(--line-strong)', borderRadius: 12,
+                  padding: '16px 18px', cursor: 'pointer', userSelect: 'none',
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  color: hover ? 'var(--voice)' : 'var(--muted)',
+                  borderColor: hover ? 'var(--voice)' : 'var(--line-strong)',
+                  transition: 'color 0.12s, border-color 0.12s' }}>
+      <span style={{ fontSize: 17, lineHeight: 1 }}>+</span>
+      <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14 }}>
+        Set up an Echo Dot
+      </span>
+    </div>
+  );
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────
+
+function SidebarSection({ title, children }) {
+  return (
+    <div style={{ padding: '26px 0', borderBottom: '1px solid var(--line)' }}>
+      <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
+                    letterSpacing: '0.16em', textTransform: 'uppercase',
+                    color: 'var(--muted)', marginBottom: 14 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+// Which of the four ways into this speaker is carrying sound right now.
+// Listed whether or not anything is using them, because "nothing is playing
+// on AirPlay" is an answer and an absent row is not.
+function NowPlaying({ devices }) {
+  const rows = [
+    ['SPOTIFY',  'spotify'],
+    ['AIRPLAY',  'airplay'],
+    ['SENDSPIN', 'sendspin'],
+    ['HA MEDIA', 'media'],
+  ].map(([label, key]) => {
+    const on = devices.filter(d => d.approved && d.audio?.active && d.audio.source === key);
+    return { label, on };
+  });
+  return (
+    <SidebarSection title="Now playing">
+      {rows.map(({ label, on }) => (
+        <div key={label} style={{ display: 'flex', alignItems: 'baseline', gap: 10,
+                                  marginTop: 9, minWidth: 0 }}>
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
+                         letterSpacing: '0.12em', color: on.length ? 'var(--media)' : 'var(--muted)',
+                         flex: '0 0 74px' }}>{label}</span>
+          <span style={{ flex: '1 1 auto', minWidth: 0,
+                         fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                         color: on.length ? 'var(--text2)' : 'var(--empty)',
+                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {on.length ? on.map(d => d.label || d.device_id.slice(0, 8)).join(', ') : '—'}
+          </span>
+        </div>
+      ))}
+    </SidebarSection>
+  );
+}
+
+// Airy or dense, remembered per browser. Beside the theme toggle because it
+// is the same kind of preference: it changes how this reader wants to look
+// at the page and nothing about what the page says.
+function DensityToggle({ dense, onChange }) {
+  return (
+    <IconButton
+      onClick={() => onChange(!dense)}
+      label={dense ? 'Switch to the roomy layout' : 'Switch to the dense layout'}>
+      {dense ? '▤' : '▥'}
+    </IconButton>
+  );
+}
+
+
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem('em_token'));
   const [role, setRole] = useState(() => localStorage.getItem('em_role'));
@@ -9131,6 +9464,18 @@ function App() {
   const [deployState, setDeployState] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [globalConfig, setGlobalConfig] = useState(null);
+  // Roomy or dense, remembered per browser. Read once at mount and written
+  // on change, the same shape ThemeToggle uses — and wrapped, because a
+  // browser with site data blocked throws on the read rather than returning
+  // null, and a layout preference is not worth a blank page.
+  const [dense, setDense] = useState(() => {
+    try { return localStorage.getItem('em-density') === 'dense'; }
+    catch (e) { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('em-density', dense ? 'dense' : 'roomy'); }
+    catch (e) { /* private mode */ }
+  }, [dense]);
   const wsRef = useRef(null);
 
   const isAdmin = role === 'admin';
@@ -9307,22 +9652,28 @@ function App() {
   // form (login vs first-run setup).
   if (!token) { location.replace('.'); return null; }
 
-  const online   = devices.filter(d => d.connected).length;
+  const summary  = fleetSummary(devices, release);
   const approved = devices.filter(d => d.approved);
   const pending  = devices.filter(d => !d.approved);
-  const updates  = approved.filter(d => d.firmware_ver && release?.version && d.firmware_ver !== release.version).length;
-  const active   = approved.filter(d => d.speaking || d.listening || d.thinking).length;
 
   const selectedDevice = selected ? devices.find(d => d.device_id === selected) : null;
 
+  const label = { fontFamily: "'IBM Plex Mono',monospace", fontSize: 10,
+                  letterSpacing: '0.16em', textTransform: 'uppercase',
+                  color: 'var(--muted)' };
+
   return (
-    <div className="em-page" style={{ minHeight: '100vh', padding: '32px 36px 60px' }}>
+    <div className="em-page" style={{ minHeight: '100vh', display: 'flex',
+                                      flexDirection: 'column' }}>
 
       {/* Header */}
-      <div className="em-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 36 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-          <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 28, color: 'var(--text)', fontWeight: 600, letterSpacing: '-0.02em' }}>Revoice</div>
-          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Device Management</div>
+      <div className="em-header" style={{ display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'center', gap: 16, flexWrap: 'wrap',
+                    padding: '18px 28px', borderBottom: '1px solid var(--line)' }}>
+        <Wordmark size={26}/>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <DensityToggle dense={dense} onChange={setDense}/>
+          <ThemeToggle/>
           {status?.controller_version && (
             /* Deliberately IN PLACE of the version rather than a banner beside
                it: this is the element that was lying, so it is the element
@@ -9330,27 +9681,25 @@ function App() {
             staleBundle ? (
               <button onClick={() => location.reload()}
                 title={`This page is running an older build than the controller (${status.controller_version}). Reload to update.`}
-                style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--warn)',
-                         background: 'none', border: '1px solid var(--warn)', borderRadius: 4,
-                         padding: '1px 6px', cursor: 'pointer' }}>
+                style={{ ...label, color: 'var(--warn)', fontSize: 11,
+                         background: 'none', border: '1px solid var(--warn)',
+                         borderRadius: 9, padding: '4px 10px', cursor: 'pointer' }}>
                 Controller {status.controller_version} · reload
               </button>
             ) : (
               /* "Controller" is not decoration. This number and the firmware
-                 number on every device card are two independently versioned
+                 number on every device row are two independently versioned
                  halves that never agree, and a bare version in the page
                  header reads as THE version of what you are looking at —
                  asked three times in one afternoon before the word was
-                 added. The tile below says "Latest Firmware Release" for the
-                 same reason. */
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)' }}>Controller {status.controller_version}</div>
+                 added. */
+              <div style={{ ...label, fontSize: 11, textTransform: 'none',
+                            letterSpacing: '0.04em' }}>
+                Controller {status.controller_version}
+              </div>
             )
           )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)' }}>{role}</div>
-          <ThemeToggle/>
-          <IconButton onClick={() => setShowSettings(true)} label="Settings">⚙</IconButton>
+          <Pill small onClick={() => setShowSettings(true)}>Settings</Pill>
           {/* No sign-out on a Home Assistant session: HA owns it, so signing
               out would land on the landing page and be re-authenticated
               immediately — a button that visibly does nothing. Keyed on how
@@ -9360,9 +9709,9 @@ function App() {
           {authVia !== 'ingress' && (
             <IconButton onClick={handleLogout} label="Sign out" danger><SignOutIcon/></IconButton>
           )}
+          <Avatar name={role}/>
         </div>
       </div>
-
 
       {/* Controller update notice.
           Rendered ONLY when a newer controller-v* tag exists, so it is an
@@ -9377,51 +9726,41 @@ function App() {
           to decide — and leaves the doing to them. */}
       {ctrlRelease?.available && ctrlRelease?.version && (
         <div className="em-ctrl-update" style={{
-          background: 'var(--notice-bg)',
-          border: '1px solid var(--notice-line)', borderRadius: 8,
-          padding: '14px 18px', marginBottom: 24,
+          background: 'var(--warn-bg)', borderBottom: '1px solid var(--warn-line)',
+          padding: '14px 28px',
         }}>
           <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
-            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:'var(--warn)',
-                           textTransform:'uppercase', letterSpacing:'0.15em' }}>
-              Controller update
-            </span>
-            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:14, color:'var(--warn)' }}>
+            <span style={{ ...label, color:'var(--warn)' }}>Controller update</span>
+            <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:14, color:'var(--warn)' }}>
               {ctrlRelease.version}
             </span>
-            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)' }}>
+            <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:11, color:'var(--muted)' }}>
               running {ctrlRelease.current || status?.controller_version || '—'}
             </span>
             {ctrlRelease.notes && (
-              <span onClick={() => setCtrlNotesOpen(o => !o)} style={{
-                fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)',
-                cursor:'pointer', userSelect:'none', marginLeft:'auto',
-                textTransform:'uppercase', letterSpacing:'0.15em',
-              }}>
+              <span onClick={() => setCtrlNotesOpen(o => !o)}
+                    style={{ ...label, cursor:'pointer', userSelect:'none', marginLeft:'auto' }}>
                 {ctrlNotesOpen ? '▾' : '▸'} What&apos;s in it
               </span>
             )}
           </div>
           {ctrlNotesOpen && (
-            <div style={{ marginTop:12, borderTop:'1px solid rgba(255,255,255,0.06)', paddingTop:12 }}>
+            <div style={{ marginTop:12, borderTop:'1px solid var(--warn-line)', paddingTop:12 }}>
               <pre style={{
-                fontFamily:"'DM Mono',monospace", fontSize:10, lineHeight:1.65,
+                fontFamily:"'IBM Plex Mono',monospace", fontSize:11, lineHeight:1.7,
                 color:'var(--text2)', whiteSpace:'pre-wrap', wordBreak:'break-word',
                 margin:0, maxHeight:320, overflowY:'auto',
               }}>{ctrlRelease.notes}</pre>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)',
-                            marginTop:14, lineHeight:1.6 }}>
+              <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:11,
+                            color:'var(--muted)', marginTop:14, lineHeight:1.6 }}>
                 Update it yourself, from wherever your compose file lives:
               </div>
-              <pre style={{
-                fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--lcd-green)',
-                background:'rgba(0,0,0,0.35)', border:'1px solid rgba(0,0,0,0.5)',
-                borderRadius:6, padding:'10px 12px', margin:'8px 0 0', overflowX:'auto',
-              }}>docker compose pull &amp;&amp; docker compose up -d</pre>
+              <pre className="em-console" style={{ fontSize:11, margin:'8px 0 0',
+                                                   overflowX:'auto' }}>docker compose pull &amp;&amp; docker compose up -d</pre>
               {ctrlRelease.release_url && (
                 <a href={ctrlRelease.release_url} target="_blank" rel="noreferrer"
-                   style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)',
-                            display:'inline-block', marginTop:10 }}>
+                   style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:11,
+                            color:'var(--muted)', display:'inline-block', marginTop:10 }}>
                   View tag on GitHub →
                 </a>
               )}
@@ -9430,132 +9769,144 @@ function App() {
         </div>
       )}
 
-      {/* Summary */}
-      <div className="em-summary" style={{ display: 'flex', gap: 10, marginBottom: 36 }}>
-        {[
-          ['Online', `${online}/${approved.length}`, online === approved.length ? 'var(--ok)' : 'var(--warn)'],
-          ['Active', active, active > 0 ? 'var(--accent)' : 'var(--muted)'],
-          ['Updates', updates, updates > 0 ? 'var(--warn)' : 'var(--muted)'],
-          ['Pending', pending.length, pending.length > 0 ? 'var(--accent-hi)' : 'var(--muted)'],
-        ].map(([label, val, c]) => (
-          <div key={label} className="em-inset" style={{ flex: 1 }}>
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 8, color: 'var(--lcd-dim)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 6 }}>{label}</div>
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 24, color: c, lineHeight: 1, textShadow: `0 0 12px ${c}66` }}>{val}</div>
-          </div>
-        ))}
-        {release && (
-          <div className="em-summary-release em-inset" style={{ flex: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 8, color: 'var(--lcd-dim)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 6 }}>Latest Firmware Release</div>
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 18, color: 'var(--lcd-green)', lineHeight: 1 }}>{release.version}</div>
-            </div>
-            {/* Actions as ONE flex child, not three.
-                space-between distributes across every child it has, so with
-                the version block, the check button and the deploy button all
-                as siblings it spread them evenly over a double-width panel —
-                the buttons ended up marooned in the middle. Grouping them
-                leaves two children: version left, actions right. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-            {isAdmin && (
-              <IconButton accent busy={checkingRelease}
-                label={checkingRelease ? 'Checking for updates…' : 'Check for updates'}
-                onClick={async () => {
-                setCheckingRelease(true);
-                try {
-                  // Same force-check route used by the Updates tab and
-                  // wizard (POST /api/releases/check) — bypasses the
-                  // cache so this is a genuine live GitHub check, not
-                  // just re-reading whatever was last polled.
-                  const rel = await API.post('/api/releases/check', {});
-                  setRelease(rel);
-                } catch(e) {
-                  alert(e.error || 'Release check failed');
-                }
-                setCheckingRelease(false);
-              }}><RefreshIcon/></IconButton>
-            )}
-            {isAdmin && (() => {
-              const byId = Object.fromEntries(devices.map(d => [d.device_id, d]));
-              const started = deployState ? (deployState.started || []) : [];
-              const done = started.filter(id => {
-                const d = byId[id];
-                return d && d.connected && d.firmware_ver === deployState.version;
-              }).length;
-              // Failures are terminal too — otherwise one aborted update
-              // pinned the pill at "Deploying…" until the page was reloaded.
-              const failed = started.filter(id => {
-                const d = byId[id];
-                return d && d.update_error &&
-                  !(d.connected && d.firmware_ver === deployState.version);
-              }).length;
-              const complete = started.length > 0 && done + failed === started.length;
-              // While a deploy is in flight the progress pill replaces the
-              // Deploy all button — both open the same modal, and offering a
-              // second deploy mid-run reads as a broken control. The button
-              // returns once the fleet is done (next release needs it).
-              const inFlight = deployState && !complete;
-              return (<>
-                {release && !inFlight && (
-                  <IconButton accent onClick={() => setShowDeployAll(true)}
-                              label="Deploy latest firmware to all devices"><DeployIcon/></IconButton>
-                )}
-                {deployState && (
-                  <Pill small onClick={() => setShowDeployAll(true)}>
-                    {complete
-                      ? (failed > 0
-                          ? `⚠ ${deployState.version}: ${done} ok, ${failed} failed`
-                          : `✓ Fleet on ${deployState.version}`)
-                      : `Deploying ${deployState.version} — ${done}/${started.length}`}
-                  </Pill>
-                )}
-              </>);
-            })()}
-            </div>
-          </div>
-        )}
-      </div>
+      <div className="em-fleet" style={{ display: 'grid',
+                    gridTemplateColumns: 'minmax(0,1fr) 340px',
+                    flex: '1 1 auto', minHeight: 0 }}>
 
-      {/* Pending devices */}
-      {pending.length > 0 && (
-        <>
-          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--accent-hi)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 14 }}>
-            Pending Approval · {pending.length}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gap: 12, marginBottom: 36 }}>
-            {pending.map(d => <Card key={d.device_id} device={d} onClick={() => setSelected(d.device_id)}/>)}
-          </div>
-        </>
-      )}
+        {/* ── Main column ── */}
+        <div style={{ minWidth: 0 }}>
 
-      {/* Device grid */}
-      {(approved.length > 0 || isAdmin) && (
-        <>
-          {approved.length > 0 && (
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 14 }}>
-              Devices · {approved.length}
+          <Situation devices={devices} summary={summary} dense={dense}/>
+
+          {/* Waiting for you */}
+          {pending.length > 0 && (
+            <div style={{ padding: '26px 28px 0' }}>
+              <div style={{ ...label, color: 'var(--warn)', marginBottom: 14 }}>
+                Waiting for you · {pending.length}
+              </div>
+              {pending.map(d => (
+                <PendingRow key={d.device_id} device={d}
+                            onClick={() => setSelected(d.device_id)}/>
+              ))}
             </div>
           )}
-          {/* gridAutoRows:1fr equalises every row to the tallest item, so the
-              provisioning tile is the same size as a device card instead of
-              collapsing to its own content when it wraps onto a row alone.
-              A matching height rather than a matching magic number — the card
-              can gain a row without this drifting. */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gridAutoRows: '1fr', gap: 12, marginBottom: 48 }}>
-            {approved.map(d => <Card key={d.device_id} device={d} onClick={() => setSelected(d.device_id)}/>)}
-            {isAdmin && <AddDeviceTile onClick={() => setShowWizard(true)}/>}
-          </div>
-        </>
-      )}
 
-      {devices.length === 0 && !loadError && !isAdmin && (
-        <div style={{ textAlign: 'center', padding: '60px 0', fontFamily: "'DM Mono',monospace", fontSize: 12, color: 'var(--muted)' }}>
-          No devices yet — power on a Revoice device to see it appear here
+          {/* The fleet */}
+          {(approved.length > 0 || isAdmin) && (
+            <div style={{ padding: '26px 28px 40px' }}>
+              {approved.length > 0 && (
+                <div style={{ ...label, marginBottom: dense ? 12 : 14 }}>
+                  Devices · {approved.length}
+                </div>
+              )}
+              {dense && approved.length > 0 && <DenseHead/>}
+              {approved.map(d => dense
+                ? <DenseRow key={d.device_id} device={d} release={release}
+                            onClick={() => setSelected(d.device_id)}/>
+                : <DeviceRow key={d.device_id} device={d} release={release}
+                             onClick={() => setSelected(d.device_id)}/>)}
+              {isAdmin && <AddDeviceRow onClick={() => setShowWizard(true)}/>}
+            </div>
+          )}
+
+          {devices.length === 0 && !loadError && !isAdmin && (
+            <div style={{ textAlign: 'center', padding: '60px 28px',
+                          fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
+                          color: 'var(--muted)' }}>
+              No devices yet — power on a Revoice device to see it appear here
+            </div>
+          )}
+
+          {loadError && (
+            <div style={{ textAlign: 'center', padding: '60px 28px',
+                          fontFamily: "'IBM Plex Mono',monospace", fontSize: 12,
+                          color: 'var(--error)' }}>{loadError}</div>
+          )}
         </div>
-      )}
 
-      {loadError && (
-        <div style={{ textAlign: 'center', padding: '60px 0', fontFamily: "'DM Mono',monospace", fontSize: 12, color: 'var(--error)' }}>{loadError}</div>
-      )}
+        {/* ── Sidebar ── */}
+        <aside className="em-side" style={{ borderLeft: '1px solid var(--line)',
+                      padding: '10px 28px 40px', minWidth: 0 }}>
+          <NowPlaying devices={devices}/>
+
+          <SidebarSection title="Firmware">
+            {release ? (
+              <>
+                <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 20,
+                              color: 'var(--text)', lineHeight: 1 }}>{release.version}</div>
+                <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                              color: 'var(--text2)', lineHeight: 1.6, marginTop: 10,
+                              textWrap: 'pretty' }}>
+                  {summary.updates
+                    ? `${summary.updates} of ${summary.approved} ${summary.approved === 1 ? 'device' : 'devices'} ${summary.updates === 1 ? 'is' : 'are'} on something older. An update reboots the device.`
+                    : 'Every device is on the latest release.'}
+                </div>
+                {isAdmin && (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
+                    <Pill small disabled={checkingRelease} onClick={async () => {
+                      setCheckingRelease(true);
+                      try {
+                        // Same force-check route used by the Updates tab and
+                        // wizard (POST /api/releases/check) — bypasses the
+                        // cache so this is a genuine live GitHub check, not
+                        // just re-reading whatever was last polled.
+                        const rel = await API.post('/api/releases/check', {});
+                        setRelease(rel);
+                      } catch(e) {
+                        alert(e.error || 'Release check failed');
+                      }
+                      setCheckingRelease(false);
+                    }}>{checkingRelease ? 'Checking…' : 'Check for updates'}</Pill>
+                    {(() => {
+                      const byId = Object.fromEntries(devices.map(d => [d.device_id, d]));
+                      const started = deployState ? (deployState.started || []) : [];
+                      const done = started.filter(id => {
+                        const d = byId[id];
+                        return d && d.connected && d.firmware_ver === deployState.version;
+                      }).length;
+                      // Failures are terminal too — otherwise one aborted
+                      // update pinned the pill at "Deploying…" until the page
+                      // was reloaded.
+                      const failed = started.filter(id => {
+                        const d = byId[id];
+                        return d && d.update_error &&
+                          !(d.connected && d.firmware_ver === deployState.version);
+                      }).length;
+                      const complete = started.length > 0 && done + failed === started.length;
+                      // While a deploy is in flight the progress pill replaces
+                      // the Deploy button — both open the same modal, and
+                      // offering a second deploy mid-run reads as a broken
+                      // control. The button returns once the fleet is done.
+                      const inFlight = deployState && !complete;
+                      return (<>
+                        {!inFlight && (
+                          <Pill small accent onClick={() => setShowDeployAll(true)}>
+                            Deploy to all
+                          </Pill>
+                        )}
+                        {deployState && (
+                          <Pill small onClick={() => setShowDeployAll(true)}>
+                            {complete
+                              ? (failed > 0
+                                  ? `⚠ ${done} ok, ${failed} failed`
+                                  : `✓ Fleet on ${deployState.version}`)
+                              : `Deploying — ${done}/${started.length}`}
+                          </Pill>
+                        )}
+                      </>);
+                    })()}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                            color: 'var(--empty)' }}>
+                No release information — the controller could not reach GitHub.
+              </div>
+            )}
+          </SidebarSection>
+        </aside>
+      </div>
 
       {/* Provisioning wizard */}
       {showWizard && (

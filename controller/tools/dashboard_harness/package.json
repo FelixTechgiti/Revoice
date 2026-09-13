@@ -1,0 +1,14 @@
+{
+  "name": "revoice-dashboard-harness",
+  "private": true,
+  "type": "module",
+  "description": "Render controller/static/dashboard.jsx headless, to look at it without a controller.",
+  "scripts": {
+    "build": "node build.mjs",
+    "shoot": "node shot.mjs"
+  },
+  "dependencies": {
+    "esbuild": "0.20.2",
+    "puppeteer-core": "23.11.1"
+  }
+}
