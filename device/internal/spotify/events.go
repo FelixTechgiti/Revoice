@@ -114,11 +114,34 @@ func ParseEvent(line string) (Event, bool) {
 //
 // `>>` rather than `>`: two events can overlap, and truncating a FIFO is
 // meaningless anyway.
+//
+// # `echo`, not `printf`, and that is the whole of why this never worked
+//
+// The first version used `printf '%s %s\n'`, which is correct everywhere the
+// author had ever run a shell and wrong here. **FireOS's `/system/bin/sh` is
+// mksh, which has no `printf` builtin, and `/system/bin/printf` does not
+// exist** — measured on hardware 2026-09-13:
+//
+//	/system/bin/sh -c 'printf "%s" A'  ->  printf: not found, exit 127
+//
+// So every event since this shipped ended as `On event program … returned
+// exit code 127` in librespot's log, at a WARN level nothing forwarded, and
+// the FIFO never saw a byte. Two features were dead behind it and both were
+// reported as fixed: the Spotify slider moving this device, and the music
+// flush that stops a pause taking the buffer's length to fall silent.
+//
+// **The rule is the platform, not the command.** This script runs under mksh
+// with `/system/bin` on PATH and no coreutils — so it may use shell builtins
+// and nothing else. `echo` is one; `printf`, `cat`, `date` and `tr` are not.
+// Pinned by test, because the failure is silent at every layer: the script
+// exits non-zero, librespot logs a warning, and the firmware simply never
+// hears an event it has no reason to expect.
 func eventScript(pipe string) string {
 	return "#!/system/bin/sh\n" +
 		"# Written by the Revoice firmware. librespot runs this on every player\n" +
 		"# event; it exists only to put one line on the FIFO the firmware reads.\n" +
-		"printf '%s %s\\n' \"$PLAYER_EVENT\" \"${VOLUME:-}\" >> " + pipe + " 2>/dev/null\n"
+		"# Builtins only: this shell has no printf and no coreutils.\n" +
+		"echo \"$PLAYER_EVENT ${VOLUME:-}\" >> " + pipe + " 2>/dev/null\n"
 }
 
 // writeEventPlumbing creates the FIFO and the script, and returns the value
