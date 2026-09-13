@@ -59,6 +59,8 @@ type fakePlane struct {
 	refused bool
 	claims  int
 	frees   int
+	ifFree  int
+	busy    bool
 }
 
 func (p *fakePlane) Claim() bool {
@@ -66,6 +68,20 @@ func (p *fakePlane) Claim() bool {
 	defer p.mu.Unlock()
 	p.claims++
 	if p.refused {
+		return false
+	}
+	p.held = true
+	return true
+}
+
+// ClaimIfFree is the arbiter's no-eviction claim. The fake models the only
+// distinction that matters to these tests: `busy` stands for a plane somebody
+// else holds, which an ordinary Claim takes and this one does not.
+func (p *fakePlane) ClaimIfFree() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ifFree++
+	if p.refused || p.busy {
 		return false
 	}
 	p.held = true

@@ -432,3 +432,58 @@ func TestOnChangeRunsOutsideTheLock(t *testing.T) {
 		t.Fatalf("callback read owner %v, want Spotify", seen)
 	}
 }
+
+func TestClaimIfFreeTakesAnIdlePlane(t *testing.T) {
+	var o Owner
+	if !o.ClaimIfFree(Spotify) {
+		t.Fatal("a free plane must be claimable")
+	}
+	if o.Owner() != Spotify {
+		t.Fatalf("owner is %v", o.Owner())
+	}
+}
+
+func TestClaimIfFreeWillNotEvictALiveSource(t *testing.T) {
+	// The measured case: AirPlay is playing, a Spotify context has just
+	// failed, and librespot's fallback track arrives at the plane.
+	var o Owner
+	var ss recorder
+	o.Register(AirPlay, ss.cb)
+	o.Claim(AirPlay)
+
+	if o.ClaimIfFree(Spotify) {
+		t.Fatal("took the plane from a source that was playing")
+	}
+	if o.Owner() != AirPlay {
+		t.Fatalf("owner changed to %v", o.Owner())
+	}
+	if got := ss.got(); len(got) != 0 {
+		t.Fatalf("evicted the live source anyway: %v", got)
+	}
+}
+
+func TestClaimIfFreeIsNotAnEventForTheSourceThatAlreadyHoldsIt(t *testing.T) {
+	var o Owner
+	o.Claim(Spotify)
+	var seen []Source
+	o.OnChange(func(s Source) { seen = append(seen, s) })
+	if !o.ClaimIfFree(Spotify) {
+		t.Fatal("a source must keep a plane it already holds")
+	}
+	if len(seen) != 0 {
+		t.Fatalf("reported a change that did not happen: %v", seen)
+	}
+}
+
+func TestClaimIfFreeOnAFreePlaneStillTellsTheObserver(t *testing.T) {
+	// Home Assistant's Audio Source entity is downstream of this, and the
+	// question it answers — "is this Echo making a sound" — does not care how
+	// the plane was claimed.
+	var o Owner
+	var seen []Source
+	o.OnChange(func(s Source) { seen = append(seen, s) })
+	o.ClaimIfFree(AirPlay)
+	if len(seen) != 1 || seen[0] != AirPlay {
+		t.Fatalf("observer saw %v", seen)
+	}
+}

@@ -12,6 +12,36 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.44.0-fx.1
+
+### Ein fehlgeschlagenes Spotify-Stück wirft AirPlay nicht mehr raus
+
+**Am Gerät verifiziert, 2026-09-13.** Der Besitzer hat es gemeldet und es ist
+genau so passiert: Spotify hat AirPlay mit in die Knie gezwungen.
+
+Was in vier Zeilen im Log steht, eine Sekunde auseinander: Ein DJ-Kontext von
+Spotify konnte nicht geladen werden. librespot hat trotzdem einen
+Ersatz-Titel gestartet. Dieser Ton hat die Musikebene beansprucht — und damit
+die **laufende** AirPlay-Sitzung verdrängt, wozu bei AirPlay das Beenden von
+shairport-sync gehört. Damit ist die Verbindung deines Handys endgültig weg;
+sie kommt absichtlich nicht von allein zurück. Fünf Sekunden später hat auch
+Spotify aufgehört. Ergebnis: aus einer Funktion, die ohnehin nicht geht, wurde
+eine zweite, die vorher lief.
+
+**Was sich ändert:** Wenn Spotify gerade gemeldet hat, dass es ein Stück nicht
+laden kann, darf es die Musikebene nur noch übernehmen, wenn sie **frei** ist.
+Läuft etwas anderes, bleibt es laufen. Sobald Spotify wieder einen echten
+Titel lädt, gilt wieder das Übliche: Wer zuletzt gestartet wurde, gewinnt.
+
+**Was sich NICHT ändert, und das ist Absicht:** Startest du normal etwas auf
+Spotify, während AirPlay läuft, übernimmt Spotify wie bisher. Das ist der
+Sinn der Sache und bleibt so.
+
+**Was du dafür tun musst:** nichts. Kein Neustart, keine Einstellung.
+
+**Was damit weiterhin nicht geht:** Spotify DJ selbst. Der bleibt unspielbar,
+und der Grund steht in 2.43.0-fx.1. Neu ist nur, dass er nichts mehr mitreißt.
+
 ## 2.43.0-fx.1
 
 ### Spotify DJ kann nicht abspielen, und das Log sagt es jetzt in einer Zeile
