@@ -282,8 +282,14 @@ function eventAccent(level) {
   return { info: 'var(--ok)', warn: 'var(--warn)', error: 'var(--error)' }[level] || 'var(--muted)';
 }
 
-// What each tab is called on screen. See the note beside TABS.
-const TAB_LABELS = {
+// What each of the device window's tabs is called on screen. See the note
+// beside TABS.
+//
+// Named for the window rather than just TAB_LABELS, because SettingsPanel
+// has a map of its own with the same job and different keys — one shadowing
+// the other means deleting the local one silently renders every settings
+// tab as `undefined` rather than failing.
+const DEVICE_TAB_LABELS = {
   status: 'Status', activity: 'Turns', config: 'Config',
   console: 'Console', updates: 'Updates', logs: 'Logs',
 };
@@ -441,6 +447,28 @@ function CircleButton({ onClick, title, color, children }) {
   );
 }
 
+// The name of a control and the sentence under it — Slider, Toggle,
+// TextField and NumberField all had the same pair typed out, in mono.
+//
+// `sub` is where the capability rule lands ("shown disabled WITH the
+// reason"), so it is the text most likely to be a real sentence and the
+// text least suited to a monospace face. One component so the four controls
+// cannot drift apart, and so the reason renders the same wherever it is a
+// reason rather than a hint.
+function ControlLabel({ label, sub, disabled }) {
+  return (<>
+    <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
+                  color: disabled ? 'var(--muted)' : 'var(--text)' }}>{label}</div>
+    {/* Under the label, not beside it. Several of these run to a sentence
+        or two — the capability rule puts the REASON a control is disabled
+        here — and set inline they pushed the control's own name to the left
+        of a three-line paragraph. */}
+    {sub && <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                          color: 'var(--muted)', lineHeight: 1.5, marginTop: 3,
+                          textWrap: 'pretty' }}>{sub}</div>}
+  </>);
+}
+
 function Slider({ label, sub, value, min, max, step = 1, unit = '', formatValue, onChange, disabled = false }) {
   const display = formatValue ? formatValue(value) : `${value}${unit}`;
   // minWidth: 0 (root + label div) and width: 100% on the range input for
@@ -452,8 +480,7 @@ function Slider({ label, sub, value, min, max, step = 1, unit = '', formatValue,
     <div style={{ marginBottom: 20, minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 7, minWidth: 0, gap: 8 }}>
         <div style={{ minWidth: 0 }}>
-          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: disabled ? 'var(--muted)' : 'var(--text2)' }}>{label}</span>
-          {sub && <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', marginLeft: 8 }}>{sub}</span>}
+          <ControlLabel label={label} sub={sub} disabled={disabled}/>
         </div>
         <Lcd value={display} size={12} />
       </div>
@@ -476,8 +503,7 @@ function TextField({ label, sub, value, onChange, placeholder, disabled = false 
   return (
     <div style={{ marginBottom: 20, minWidth: 0 }}>
       <div style={{ minWidth: 0, marginBottom: 6 }}>
-        <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: disabled ? 'var(--muted)' : 'var(--text2)' }}>{label}</span>
-        {sub && <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', marginLeft: 8 }}>{sub}</span>}
+        <ControlLabel label={label} sub={sub} disabled={disabled}/>
       </div>
       <input type="text" value={value ?? ''} disabled={disabled}
         placeholder={placeholder}
@@ -586,14 +612,13 @@ function Toggle({ label, sub, value, onChange, disabled = false }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, minWidth: 0, gap: 10 }}>
       <div style={{ minWidth: 0, flex: 1 }}>
-        <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: disabled ? 'var(--muted)' : 'var(--text2)' }}>{label}</span>
-        {sub && <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', marginLeft: 8 }}>{sub}</span>}
+        <ControlLabel label={label} sub={sub} disabled={disabled}/>
       </div>
       <div onClick={() => { if (!disabled) onChange(!value); }} style={{
         width: 36, height: 20, borderRadius: 10, cursor: disabled ? 'default' : 'pointer',
         position: 'relative', flexShrink: 0, opacity: disabled ? 0.45 : 1,
-        background: value ? 'var(--accent)' : 'var(--muted)',
-        border: value ? '1px solid var(--accent-deep)' : '1px solid var(--muted)',
+        background: value ? 'var(--voice)' : 'var(--line-strong)',
+        border: value ? '1px solid var(--voice)' : '1px solid var(--line-strong)',
         transition: 'background 0.15s',
       }}>
         <div style={{
@@ -2172,7 +2197,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   padding: '7px 14px', cursor: 'pointer',
                   color: tab === t ? 'var(--text)' : 'var(--muted)',
                   transition: 'background 0.12s, border-color 0.12s, color 0.12s',
-                }}>{TAB_LABELS[t] || t}</button>
+                }}>{DEVICE_TAB_LABELS[t] || t}</button>
               ))}
             </div>
           ) : (
@@ -7016,7 +7041,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
   // the flag set is a new page load, so there is nothing to invalidate.
   const usbBlocked = webUsbBlocked();
   const statusColors = { pending: 'var(--muted)', running: 'var(--accent)', done: 'var(--ok)', error: 'var(--warn)' };
-  const statusIcons  = { pending: '○', running: '◌', done: '●', error: '✕' };
+  const statusIcons  = { pending: '·', running: '▸', done: '✓', error: '✕' };
 
   function recoveryHint() {
     if (CONNECT.has(step)) {
@@ -7064,13 +7089,13 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
 
           {/* Step list + overall progress */}
-          <div style={{ width: 196, borderRight: '1px solid var(--border)', background: 'var(--hairline)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          <div style={{ width: 200, borderRight: '1px solid var(--line)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
             <div className="em-wizard-progress">
               <div className="em-wizard-progress__track">
                 <div className="em-wizard-progress__fill" style={{ width: `${progressPct}%` }}/>
               </div>
               <div className="em-wizard-progress__label">
-                {doneCount} of {STEPS.length} complete · step {step + 1}
+                {step + 1} / {STEPS.length}
               </div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0 12px' }}>
@@ -7103,7 +7128,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
               <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
                 {step + 1}. {cur.label}
               </div>
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.6 }}>{cur.desc}</div>
+              <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14, color: 'var(--text2)', lineHeight: 1.6, textWrap: 'pretty' }}>{cur.desc}</div>
             </div>
 
             {/* WebUSB pre-flight. Shown on step 0 rather than at the first
@@ -7144,15 +7169,15 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                     <div key={o.id} onClick={() => chooseFlow(o.id)}
                       style={{
                         flex: 1, cursor: 'pointer', padding: '9px 11px', borderRadius: 8,
-                        border: `1px solid ${flow === o.id ? 'var(--accent)' : 'var(--border-soft)'}`,
-                        background: flow === o.id ? 'var(--hairline)' : 'transparent',
+                        border: `1px solid ${flow === o.id ? 'var(--voice)' : 'var(--line)'}`,
+                        background: flow === o.id ? 'var(--voice-bg)' : 'transparent',
                       }}>
-                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600,
+                      <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14, fontWeight: 600,
                                     color: flow === o.id ? 'var(--text)' : 'var(--text2)' }}>
                         {o.name}{o.id === 'emos' && <span style={{ fontWeight: 400, color: 'var(--muted)' }}> · default</span>}
                       </div>
-                      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--text2)', marginTop: 3, lineHeight: 1.5 }}>{o.sub}</div>
-                      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--warn)', marginTop: 2, lineHeight: 1.5 }}>{o.warn}</div>
+                      <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--text2)', marginTop: 4, lineHeight: 1.5, textWrap: 'pretty' }}>{o.sub}</div>
+                      <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--warn)', marginTop: 3, lineHeight: 1.5, textWrap: 'pretty' }}>{o.warn}</div>
                     </div>
                   ))}
                 </div>
@@ -7703,7 +7728,7 @@ function EqSliders({ bands, onChange, disabled }) {
               renders fine but breaks drag gestures (pointer capture math
               stays in the untransformed axis, so only clicks land).
               orient="vertical" covers older Firefox. */}
-          <input type="range" min={-12} max={12} step={1} value={g} orient="vertical"
+          <input type="range" className="em-fader" min={-12} max={12} step={1} value={g} orient="vertical"
             onChange={e => { const nb = [...bands]; nb[i] = Number(e.target.value); onChange(nb); }}
             style={{ writingMode: 'vertical-lr', direction: 'rtl', WebkitAppearance: 'slider-vertical', width: 20, height: 76, cursor: 'pointer' }}/>
           <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 8, color: 'var(--muted)', marginTop: 2 }}>{FREQ_LABELS[i]}</div>
@@ -7830,11 +7855,14 @@ function Stage({ n, title, chips, desc, children, scope, dim, footer }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 6, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
           <span style={{ fontFamily: STAGE_MONO, fontSize: 10, color: 'var(--muted)' }}>{n}</span>
-          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{title}</span>
+          <span style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 17, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text)' }}>{title}</span>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>{chips}{scope}</div>
       </div>
-      <div style={{ fontFamily: STAGE_MONO, fontSize: 10, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 14 }}>{desc}</div>
+      {/* A paragraph, so it is set as one. These are the longest strings
+          in the dashboard — the Bluetooth section's runs to fifty words —
+          and a monospace face is the wrong tool for every one of them. */}
+      <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14, color: 'var(--text2)', lineHeight: 1.6, marginBottom: 18, textWrap: 'pretty' }}>{desc}</div>
       {/* dim: a section following the fleet is shown read-only rather than
           hidden, so you can still see what it is inheriting. */}
       <div style={dim}>{children}</div>
@@ -7849,7 +7877,7 @@ function Stage({ n, title, chips, desc, children, scope, dim, footer }) {
 
 function StageAdvanced({ open, onToggle, disabledStyle, children }) {
   return (
-    <div style={{ marginTop: 14, borderTop: '1px solid var(--hairline)', paddingTop: 10 }}>
+    <div style={{ marginTop: 16, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
       <div onClick={onToggle} style={{
         fontFamily: STAGE_MONO, fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase',
         letterSpacing: '0.15em', cursor: 'pointer', userSelect: 'none',
@@ -8134,7 +8162,7 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 run — so moving this slider did nothing until the device
                 restarted, and any real volume change overwrote it. Current
                 volume is now shown read-only on the Status tab. */}
-            <div style={{ marginTop: 8, fontFamily: mono, fontSize: 10, color: 'var(--muted)', lineHeight: 1.6 }}>
+            <div style={{ marginTop: 12, fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, textWrap: 'pretty' }}>
               Volume is remembered per device and restored after a reboot.
               Change it from Home Assistant or the device buttons; the current
               level is shown on the Status tab.
@@ -8831,7 +8859,7 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
   // Support is admin-only because the endpoint is: the bundle spans the whole
   // fleet, so a tab a non-admin can only be refused by is worse than no tab.
   const TABS = isAdmin ? ['fleet', 'users', 'account', 'support'] : ['fleet', 'account'];
-  const TAB_LABELS = { fleet: 'Config', users: 'Users', account: 'Account', support: 'Support' };
+  const SETTINGS_TAB_LABELS = { fleet: 'Config', users: 'Users', account: 'Account', support: 'Support' };
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(180,176,168,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, backdropFilter:'blur(8px)' }}
@@ -8850,7 +8878,15 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
               one tab style across the dashboard. */}
           <div className="em-tabs" style={{ display:'flex', gap:2 }}>
             {TABS.map(t => (
-              <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? 'linear-gradient(180deg,var(--raised),var(--surface))' : 'transparent', border: tab === t ? '1px solid var(--border-hard)' : '1px solid transparent', borderBottom: tab === t ? '1px solid var(--surface)' : '1px solid transparent', borderRadius: '6px 6px 0 0', fontFamily: "'DM Mono',monospace", fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', padding: '7px 14px', cursor: 'pointer', color: tab === t ? 'var(--text)' : 'var(--muted)', marginBottom: -1, transition: 'color 0.15s' }}>{TAB_LABELS[t]}</button>
+              <button key={t} onClick={() => setTab(t)} style={{
+                background: tab === t ? 'var(--raised)' : 'transparent',
+                border: `1px solid ${tab === t ? 'var(--line-strong)' : 'transparent'}`,
+                borderRadius: 9, fontFamily: "'Instrument Sans',sans-serif",
+                fontSize: 13, fontWeight: tab === t ? 600 : 400,
+                padding: '7px 14px', cursor: 'pointer',
+                color: tab === t ? 'var(--text)' : 'var(--muted)',
+                transition: 'background 0.12s, border-color 0.12s, color 0.12s',
+              }}>{SETTINGS_TAB_LABELS[t]}</button>
             ))}
           </div>
         </div>
@@ -8860,7 +8896,7 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
 
           {tab === 'fleet' && (
             <>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', marginBottom:20, lineHeight:1.6 }}>
+              <div style={{ fontFamily:"'Instrument Sans',sans-serif", fontSize:14, color:'var(--text2)', marginBottom:24, lineHeight:1.6, textWrap:'pretty' }}>
                 Default config applied to all devices unless overridden per-device.
               </div>
               <DeviceConfigForm config={config} onChange={setConf} disabled={false}
