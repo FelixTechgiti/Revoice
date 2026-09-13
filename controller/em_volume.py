@@ -15,6 +15,30 @@ above 127 apply positive digital gain to near-full-scale PCM and saturate
 inside the DAC — measured at 65% THD by index 153 (see
 device/internal/server/volume.go for the full measurement and why stock
 FireOS never touches this control).
+
+The ratio this module reports will NOT agree with a source's own slider, and
+that is a decided trade rather than a bug to fix. Measured against four pairs
+off one device: the Spotify slider at 14% arrives as level 93, which the ring,
+the dashboard and HA's `volume_level` all render as 73%. Both numbers are
+true. −17dB is 14% of full amplitude and 73% of the way up a 63.5dB scale;
+Spotify's slider is a linear amplitude fraction and this one is a position in
+dB.
+
+Showing the amplitude fraction instead (`10**((level-127)/40)`) would make the
+two agree and was declined by the device's owner, because the cost lands on
+the half that gets used every day: one press of the volume button down from
+full would move the ring from 100% to 63%, and the whole bottom of the scale
+would bunch into the last few pixels. A dB-linear arc moves evenly under a
+finger.
+
+The consequence to know about is that an HA automation reading `volume_level`
+inherits it — 0.8 there is a dB position, not four fifths of the amplitude.
+Anything comparing the two scales has to convert with `level_to_db` rather
+than assume they are the same number.
+
+Fixing this per-source is the option that looks obvious and is worse than
+either consistent answer: the ring would then mean something different
+depending on who last touched it.
 """
 
 # Codec unity gain. The mixer control accepts up to 175; everything above
