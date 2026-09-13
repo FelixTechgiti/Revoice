@@ -355,12 +355,52 @@
     input[type="checkbox"], input[type="radio"] {
       width: auto; padding: 0; accent-color: var(--voice);
     }
-    /* Range inputs carry their own geometry from the design (3px track,
-       14px handle) and must not take the box treatment either. */
+    /* Range inputs. Drawn rather than left to accent-color, because the
+       design gives them a geometry — a 3px track and a 14px handle — and
+       the native control is a 4-6px slab that differs per browser.
+
+       Both vendor prefixes are required and neither can be combined into
+       one rule: a selector list containing a prefix the browser does not
+       know is DROPPED WHOLE, so ::-webkit and ::-moz have to be written
+       out separately or one of the two engines gets nothing. */
     input[type="range"] {
+      -webkit-appearance: none; appearance: none;
       width: 100%; padding: 0; border: none; background: transparent;
-      accent-color: var(--voice);
+      height: 14px; cursor: pointer;
     }
+    /* The EQ faders are the one range input that runs VERTICALLY, via
+       writing-mode plus -webkit-appearance: slider-vertical. Every rule
+       above assumes a horizontal track, and a thumb rule that resets
+       appearance turns a vertical slider back into the browser's default —
+       which is how eight green faders became eight blue ones. They keep the
+       native control and take the palette through accent-color. */
+    input[type="range"].em-fader {
+      -webkit-appearance: slider-vertical; appearance: auto;
+      height: auto; accent-color: var(--voice);
+    }
+    input[type="range"]:disabled { cursor: not-allowed; }
+    input[type="range"]:not(.em-fader)::-webkit-slider-runnable-track {
+      height: 3px; border-radius: 2px; background: var(--track);
+    }
+    input[type="range"]:not(.em-fader)::-moz-range-track {
+      height: 3px; border-radius: 2px; background: var(--track);
+    }
+    input[type="range"]:not(.em-fader)::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--voice); border: none;
+      /* Centres the handle on a 3px track: half the handle minus half the
+         track. Webkit positions the thumb against the track box rather
+         than the input box, so without this it rides on top of the line. */
+      margin-top: -5.5px;
+    }
+    input[type="range"]:not(.em-fader)::-moz-range-thumb {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--voice); border: none;
+    }
+    input[type="range"]:not(.em-fader):disabled::-webkit-slider-thumb { background: var(--line-strong); }
+    input[type="range"]:not(.em-fader):disabled::-moz-range-thumb { background: var(--line-strong); }
+    input[type="range"]:focus-visible { outline: 2px solid var(--voice); outline-offset: 4px; }
 
     /* Small uppercase mono heading. */
     .em-label {
@@ -452,11 +492,11 @@
       transition: width 0.25s ease;
     }
     .em-wizard-progress__label {
-      font-family: 'DM Mono', monospace; font-size: 8px; color: var(--muted);
-      letter-spacing: 0.08em; text-transform: uppercase; margin-top: 6px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted);
+      letter-spacing: 0.14em; text-transform: uppercase; margin-top: 8px;
     }
     .em-wizard-step {
-      padding: 5px 12px; display: flex; align-items: flex-start; gap: 6px;
+      padding: 7px 12px; display: flex; align-items: flex-start; gap: 8px;
       border-left: 2px solid transparent;
     }
     .em-wizard-step--active {
@@ -465,14 +505,15 @@
     .em-wizard-step--done   { opacity: 0.75; }
     .em-wizard-step--error  { border-left-color: var(--warn); }
     .em-wizard-step__num {
-      font-family: 'DM Mono', monospace; font-size: 8px; color: var(--muted);
-      flex-shrink: 0; width: 14px; padding-top: 1px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted);
+      flex-shrink: 0; width: 16px; padding-top: 2px;
     }
     .em-wizard-step__icon {
-      font-family: 'DM Mono', monospace; font-size: 10px; flex-shrink: 0; width: 10px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px; flex-shrink: 0;
+      width: 12px; padding-top: 1px;
     }
     .em-wizard-step__label {
-      font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.04em;
+      font-family: 'Instrument Sans', sans-serif; font-size: 13px;
       line-height: 1.4;
     }
     .em-wizard-step--active .em-wizard-step__label { color: var(--text); font-weight: 600; }
@@ -482,7 +523,7 @@
       padding: 8px 12px; border-radius: 8px;
       background: var(--voice-bg);
       border: 1px solid var(--voice-line);
-      font-family: 'DM Mono', monospace; font-size: 10px; color: var(--text2);
+      font-family: 'Instrument Sans', sans-serif; font-size: 13px; color: var(--text2);
     }
     .em-wizard-status__dot {
       width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
@@ -505,17 +546,17 @@
     .em-wizard-upcoming__item { margin-top: 6px; }
     .em-wizard-upcoming__item:first-of-type { margin-top: 0; }
     .em-wizard-upcoming__name {
-      font-family: 'DM Mono', monospace; font-size: 9px; color: var(--text2);
-      letter-spacing: 0.06em; display: block;
+      font-family: 'Instrument Sans', sans-serif; font-size: 13px;
+      font-weight: 600; color: var(--text); display: block;
     }
     .em-wizard-upcoming__desc {
-      font-family: 'DM Mono', monospace; font-size: 9px; color: var(--muted);
-      line-height: 1.5; display: block; margin-top: 2px;
+      font-family: 'Instrument Sans', sans-serif; font-size: 13px; color: var(--muted);
+      line-height: 1.5; display: block; margin-top: 3px; text-wrap: pretty;
     }
     .em-wizard-recovery { margin-bottom: 12px; }
     .em-wizard-recovery__hint {
-      font-family: 'DM Mono', monospace; font-size: 10px; color: var(--text2);
-      line-height: 1.6; margin: 0 0 10px;
+      font-family: 'Instrument Sans', sans-serif; font-size: 13px; color: var(--text2);
+      line-height: 1.6; margin: 0 0 10px; text-wrap: pretty;
     }
     .em-wizard-recovery__actions { display: flex; gap: 8px; flex-wrap: wrap; }
 

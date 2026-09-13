@@ -78,6 +78,25 @@ async function openDevice(page, name) {
   await new Promise(r => setTimeout(r, 600));
 }
 
+// Click a button by its visible text. Used for the panels that are not a
+// device: the wizard and settings.
+async function clickText(page, text) {
+  await page.evaluate(s => {
+    // The label is often not the whole of the element's text — the setup
+    // row is a plus sign and a phrase — so match on containment, and keep
+    // the candidate short so a container holding the whole page does not
+    // win over the control itself.
+    const el = [...document.querySelectorAll('button,div')].find(e => {
+      const txt = e.innerText?.trim() || '';
+      return txt.includes(s) && txt.length < s.length + 8
+             && (e.tagName === 'BUTTON' || e.onclick);
+    });
+    if (!el) throw new Error(`nothing to click labelled ${s}`);
+    el.click();
+  }, text);
+  await new Promise(r => setTimeout(r, 900));
+}
+
 // Every state a screenshot can show: both themes, both densities, the width
 // where the sidebar goes under the list, and the two windows — a playing
 // device and one waiting to be approved.
@@ -88,10 +107,12 @@ const SHOTS = [
   ['dense',   'dark.html',  1440,  700, 'dense', null],
   ['device',  'dark.html',  1440,  900, null,    'Lounge'],
   ['approve', 'light.html', 1440,  900, null,    'G090LF1180570XYZ'],
+  ['settings', 'dark.html', 1440,  900, null,    null, 'Settings'],
+  ['wizard',   'dark.html', 1440,  900, null,    null, 'Set up an Echo Dot'],
 ];
 
 let problems = 0;
-for (const [name, page_, w, h, density, open] of SHOTS) {
+for (const [name, page_, w, h, density, open, click] of SHOTS) {
   const page = await browser.newPage();
   // Set every time, not only for the dense shot: localStorage is per ORIGIN
   // and these pages share one, so a preference left by an earlier shot
@@ -106,9 +127,10 @@ for (const [name, page_, w, h, density, open] of SHOTS) {
   await page.goto(`http://127.0.0.1:${port}/${page_}`, { waitUntil: 'networkidle0' });
   await new Promise(r => setTimeout(r, 1200));
   if (open) await openDevice(page, open);
+  if (click) await clickText(page, click);
   // A modal is position:fixed, so fullPage would shoot the page BEHIND it
   // at full height with the window floating over the first screenful.
-  await page.screenshot({ path: join(OUT, `shot-${name}.png`), fullPage: !open });
+  await page.screenshot({ path: join(OUT, `shot-${name}.png`), fullPage: !(open || click) });
 
   const text = await page.evaluate(() => document.getElementById('root').innerText);
   console.log(`\n── ${name} → out/shot-${name}.png`);
