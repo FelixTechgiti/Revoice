@@ -171,3 +171,81 @@ func TestMinDepthIgnoresTheTailOfAStream(t *testing.T) {
 		t.Fatalf("tail periods must not be sampled, got minDepth=%d", s.minDepth)
 	}
 }
+
+// The bug this file's dropQueue exists for, reproduced as its own story.
+//
+// Measured on hardware 2026-09-13: Spotify played, its track ended, AirPlay
+// took the plane, and nothing came out of the speaker for as long as
+// librespot's process lived. Every signal a person would check read healthy.
+func TestAFlushWithNoEndOfStreamSwallowsEverythingAfterIt(t *testing.T) {
+	s, _ := newTestStream(4)
+
+	// A producer mid-stream.
+	if ok, err := s.pump(make([]byte, 4), 4); !ok || err != nil {
+		t.Fatalf("first period: ok=%v err=%v", ok, err)
+	}
+	// It stops, and the firmware drops what is queued.
+	s.flush()
+
+	// A DIFFERENT producer takes over and writes. Without an end-of-stream
+	// from the first one, this is swallowed — and reported as success, which
+	// is the half that makes it invisible.
+	ok, err := s.pump(make([]byte, 4), 4)
+	if ok {
+		t.Fatal("the reproduction failed: the period was not swallowed")
+	}
+	if err != nil {
+		t.Fatalf("and it is swallowed SILENTLY, so err must be nil, got %v", err)
+	}
+}
+
+func TestDropQueueLeavesTheChannelAbleToPlay(t *testing.T) {
+	s, _ := newTestStream(4)
+	if ok, _ := s.pump(make([]byte, 4), 4); !ok {
+		t.Fatal("setup: first period refused")
+	}
+	s.dropQueue()
+
+	ok, err := s.pump(make([]byte, 4), 4)
+	if !ok || err != nil {
+		t.Fatalf("the next producer must be heard: ok=%v err=%v", ok, err)
+	}
+}
+
+// The half that matters on a device already in the state: it has to recover
+// without a restart, because nothing reachable over the network can fix a
+// fault in the path the audio takes.
+func TestDropQueueRepairsAChannelAlreadyDiscarding(t *testing.T) {
+	s, _ := newTestStream(4)
+	if ok, _ := s.pump(make([]byte, 4), 4); !ok {
+		t.Fatal("setup: first period refused")
+	}
+	s.flush() // the wrong call, as three call sites used to make it
+	if ok, _ := s.pump(make([]byte, 4), 4); ok {
+		t.Fatal("setup: expected the channel to be stuck")
+	}
+
+	s.dropQueue()
+
+	if ok, err := s.pump(make([]byte, 4), 4); !ok || err != nil {
+		t.Fatalf("a stuck channel must recover: ok=%v err=%v", ok, err)
+	}
+}
+
+// flush keeps its discard, because the controller DOES send an end-of-stream
+// and the remainder already in its socket has to be swallowed. Removing that
+// would be fixing this bug by reintroducing the one flush was written for.
+func TestFlushStillSwallowsTheRemainderItWasWrittenFor(t *testing.T) {
+	s, _ := newTestStream(4)
+	if ok, _ := s.pump(make([]byte, 4), 4); !ok {
+		t.Fatal("setup: first period refused")
+	}
+	s.flush()
+	if ok, _ := s.pump(make([]byte, 4), 4); ok {
+		t.Fatal("the network-buffered remainder must still be swallowed")
+	}
+	s.endStream() // the EOS the controller sends on the cancel path
+	if ok, err := s.pump(make([]byte, 4), 4); !ok || err != nil {
+		t.Fatalf("and the NEXT stream must play: ok=%v err=%v", ok, err)
+	}
+}

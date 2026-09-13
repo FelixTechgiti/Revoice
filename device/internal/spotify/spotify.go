@@ -127,7 +127,7 @@ var ErrNoBinary = errors.New("spotify: librespot is not installed on this device
 type MusicSink interface {
 	PumpMusic(data []byte) error
 	EndMusicStream()
-	FlushMusic()
+	DropMusicQueue()
 }
 
 // PlaneOwner is the arbitration. Same shape as the Sendspin client's, and

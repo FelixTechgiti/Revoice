@@ -235,6 +235,17 @@ func main() {
 	// controller believing a playing device went quiet.
 	dataClient.MusicPlane().OnChange(func(src musicplane.Source) {
 		controlClient.SendAudioSource(src.String())
+		// A new owner starts on a clean channel. Whatever the previous one
+		// left armed — a flush whose end-of-stream never came — was armed for
+		// ITS remainder, and the incoming audio is by definition not that.
+		//
+		// This is the belt to the braces below rather than a duplicate of
+		// them: the flushers were corrected one by one to the right call, and
+		// this makes the whole class of mistake unreachable no matter which
+		// one a future caller picks. It costs a lock and an empty channel
+		// drain per handover, against a failure that presents as a device
+		// with nothing wrong with it and no sound.
+		pcmSpeaker.DropMusicQueue()
 		// The handover is also the only moment that knows how deep the music
 		// plane should fill. A device-local producer writes to a pipe with no
 		// WiFi hop in front of it, so the ~1s cushion that protects a
@@ -371,7 +382,7 @@ func main() {
 			if dataClient.MusicPlane().Owner() != musicplane.Spotify {
 				return
 			}
-			pcmSpeaker.FlushMusic()
+			pcmSpeaker.DropMusicQueue()
 		},
 	}, pcmSpeaker, dataClient.MusicPlane().For(musicplane.Spotify))
 	dataClient.MusicPlane().Register(musicplane.Spotify, func(why musicplane.Reason) {

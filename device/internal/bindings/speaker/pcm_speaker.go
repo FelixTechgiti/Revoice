@@ -651,12 +651,28 @@ func (p *PcmSpeaker) EndMusicStream() { p.music.endStream() }
 // click/pop than it saves.
 func (p *PcmSpeaker) Flush() { p.voice.flush() }
 
-// FlushMusic stops music the same way. This is now reserved for the user
-// GENUINELY stopping or pausing playback: a voice turn ducks instead, which
-// is the whole point of holding the two planes apart. Flushing here would
-// throw away the buffered audio that makes ducking instant, and on a
-// non-seekable stream that audio cannot be recovered.
+// FlushMusic stops music the same way, for the CONTROLLER's stream and only
+// that one. This is reserved for the user GENUINELY stopping or pausing
+// playback: a voice turn ducks instead, which is the whole point of holding
+// the two planes apart. Flushing here would throw away the buffered audio
+// that makes ducking instant, and on a non-seekable stream that audio cannot
+// be recovered.
+//
+// **The controller is the one music producer that sends an end-of-stream**
+// (0x05, see client/data.go), which is what clears the discard this arms.
+// Every local producer must use DropMusicQueue instead — see audioStream's
+// dropQueue for what happens when one does not.
 func (p *PcmSpeaker) FlushMusic() { p.music.flush() }
+
+// DropMusicQueue throws away what is queued for a producer that will never
+// announce an end of stream — librespot and shairport-sync write to a pipe
+// and simply stop, and Sendspin's seek continues the same stream rather than
+// ending it.
+//
+// It also REPAIRS a channel left discarding by an earlier flush, which is why
+// the music plane's handover calls it: whatever the previous owner armed, the
+// next owner's audio is not the remainder it was armed for.
+func (p *PcmSpeaker) DropMusicQueue() { p.music.dropQueue() }
 
 // Close shuts the speaker down in the reverse of Init's bring-up: mute,
 // amp off, then tear the stream down. Muting first makes the PCM-close

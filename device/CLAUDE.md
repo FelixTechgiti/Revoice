@@ -1331,6 +1331,62 @@ tick yet, must not render as "not running". Accusing a working Echo for the
 first thirty seconds of every reconnect is how this becomes the line everyone
 learns to ignore.
 
+## A discard armed for a stream that never ends is silent, permanent, and looks healthy
+
+**The music plane has four flushers and three of them are local producers that
+never send an end-of-stream.** `audioStream.flush()` arms `discarding` so the
+remainder of a flushed stream is swallowed rather than played, and **nothing
+but `endStream()` clears it**. librespot and shairport-sync write to a pipe and
+simply stop; Sendspin's seek continues the same stream. None of them sends one,
+ever.
+
+Measured on hardware 2026-09-13, reported as "AirPlay volume does nothing and
+there is no sound":
+
+```
+Spotify plays, its track ends -> FlushMusic -> discarding = true
+AirPlay claims the plane, writes periods -> pump swallows every one
+  -> returns (false, nil), which is SUCCESS
+```
+
+and it holds until librespot's PROCESS exits, because that is the one path
+that reaches `EndMusicStream`.
+
+**Why it survived four separate investigations of the same symptom:** every
+signal a person would check reads healthy, because the one thing that went
+wrong reports itself as a normal outcome.
+
+| checked | read |
+|---|---|
+| plane owner | `airplay`, and the claim never lapsed — so audio WAS flowing |
+| `[airplay] PumpMusic:` | nothing, because a discarded period is success |
+| shairport-sync | 8.6% CPU, decoding continuously |
+| AirPlay volume events | arriving, and moving the codec — a different path |
+| speaker PCM | RUNNING, `hw_ptr` advancing at 48kHz in real time |
+| `[aec] far:` | **absent**, and that was the only tell |
+
+The AEC's far-end line is gated on `rms > 100`, so its silence was the one
+measurement that distinguished "audio flowing" from "audio audible". **Nothing
+reports the level of what the music plane actually carries**, which is why the
+diagnosis took a dozen probes instead of one log read (#167).
+
+**The fix is two things, and the second is the one that generalises:**
+
+- `dropQueue()` alongside `flush()`, for a producer with no end-of-stream — and
+  it CLEARS the flag rather than merely not setting it, so a device already
+  stuck repairs itself. That matters because a device in this state cannot be
+  talked out of it from the network: the fault is in the path the audio takes.
+- **The music plane's handover calls it.** Whatever the previous owner armed
+  was armed for ITS remainder, and the incoming audio is by definition not
+  that. The per-caller corrections make the current code right; this makes the
+  whole class of mistake unreachable no matter which call a future author
+  picks.
+
+`flush()` keeps its discard, and a test pins that: the controller does send an
+end-of-stream, and the remainder already in its socket still has to be
+swallowed. Fixing this by deleting the discard would reintroduce the bug
+`flush` was written for.
+
 ## A descriptor opened in C crosses every exec, and both ALSA devices did
 
 **librespot held the speaker.** Measured 2026-09-13: the firmware, librespot

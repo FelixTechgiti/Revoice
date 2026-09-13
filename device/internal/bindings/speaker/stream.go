@@ -180,6 +180,12 @@ func (s *audioStream) endStream() {
 //
 // eosPending is set so the drain the pump loop is about to see is accounted
 // as an end of stream rather than an underrun.
+//
+// **Only for a producer that will send an end-of-stream.** discarding is
+// cleared by nothing else, so a producer that simply stops writing leaves this
+// channel swallowing every period it is ever given again — silently, since
+// pump reports a discarded period as success. Use dropQueue where no EOS is
+// coming; see its comment for the four hours that rule cost.
 func (s *audioStream) flush() {
 	s.mu.Lock()
 	if s.active {
@@ -187,6 +193,44 @@ func (s *audioStream) flush() {
 	}
 	s.mu.Unlock()
 	s.eosPending.Store(true)
+	s.drainQueue()
+}
+
+// dropQueue throws away what is queued WITHOUT arming discard, for a producer
+// that has no end-of-stream to clear it with.
+//
+// # Why this exists
+//
+// Measured on hardware 2026-09-13. The music plane has four flushers and
+// three of them are local producers — librespot and shairport-sync write to a
+// pipe and simply stop; nothing sends an EOS, ever. `flush` armed discard for
+// them anyway, and `endStream` is the only thing that clears it, so:
+//
+//	Spotify plays, its track ends -> FlushMusic -> discarding = true
+//	AirPlay claims the plane, writes periods -> pump swallows every one
+//	-> returns (false, nil), which is SUCCESS
+//
+// so the claim never lapses, no error is logged, shairport keeps decoding at
+// full tilt, the AirPlay volume slider still moves the codec — and there is no
+// sound, for as long as librespot's PROCESS lives. That is the shape of it:
+// every signal a person would check says healthy, because the one thing that
+// went wrong reports itself as a normal outcome.
+//
+// # And it clears the flag rather than merely not setting it
+//
+// Deliberate: that repairs a channel already stuck, instead of only sparing
+// the next one. A device in this state cannot be talked out of it from the
+// network — the fault is in the path the audio takes.
+func (s *audioStream) dropQueue() {
+	s.mu.Lock()
+	s.discarding = false
+	s.mu.Unlock()
+	s.eosPending.Store(true)
+	s.drainQueue()
+}
+
+// drainQueue empties the ring without blocking.
+func (s *audioStream) drainQueue() {
 	for {
 		select {
 		case <-s.ch:

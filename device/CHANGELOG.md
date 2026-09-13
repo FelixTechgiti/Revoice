@@ -12,6 +12,36 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.46.0-fx.1
+
+### Nach Spotify kam von AirPlay kein Ton mehr — behoben
+
+**Am Gerät gefunden, 2026-09-13, genau während du es gemeldet hast.** Der
+Ablauf war jedes Mal derselbe: Spotify spielt, der Titel endet, du wechselst
+auf AirPlay — und es bleibt still. Die Lautstärkeregelung wirkte dabei auch
+tot, weil es schlicht nichts zu regeln gab.
+
+**Die Ursache:** Wenn Spotify aufhört zu spielen, wirft die Firmware die
+angesammelten Audiodaten weg. Dabei schaltete sie den Musikkanal in einen
+Zustand, der *alles Weitere* verwirft — gedacht für die Sprachausgabe, wo der
+Controller hinterher ein ausdrückliches „Stream zu Ende" schickt. Spotify und
+AirPlay schicken so etwas nie; sie hören einfach auf zu schreiben. Also blieb
+der Zustand bestehen, und der Kanal hat von da an jede Audioperiode
+weggeworfen — **ohne einen einzigen Fehler zu melden.**
+
+Deshalb sah von außen alles gesund aus: Das Gerät meldete, dass AirPlay
+spielt, shairport-sync arbeitete, der Lautsprecher lief, die Lautstärke kam
+an. Nur Ton kam keiner.
+
+**Was sich ändert:** Quellen ohne Stream-Ende verwerfen jetzt nur noch die
+Warteschlange und nicht mehr alles Kommende. Zusätzlich wird der Kanal bei
+jedem Besitzerwechsel der Musikebene sauber übergeben — damit ist dieser
+Fehler auch dann unmöglich, wenn später jemand die falsche Stelle erwischt.
+
+**Was du merkst:** AirPlay spielt nach Spotify wieder. Falls du in diesen
+Zustand geraten warst, half bisher nur ein Neustart des Spotify-Endpunkts;
+das ist jetzt nicht mehr nötig.
+
 ## 2.45.0-fx.1
 
 ### Die Firmware reicht ihre Audiogeräte nicht mehr an Unterprozesse weiter
