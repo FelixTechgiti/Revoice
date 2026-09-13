@@ -59,14 +59,14 @@ RUN mkdir -p /app/static/vendor/fonts && \
     curl -sfL -o /app/static/vendor/addon-fit.js \
       https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js && \
     curl -sfL -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-      -o /app/static/vendor/fonts/dm-sans.woff2 \
-      "https://fonts.gstatic.com/s/dmsans/v17/rP2Yp2ywxg089UriI5-g4vlH9VoD8Cmcqbu0-K4.woff2" && \
+      -o /app/static/vendor/fonts/instrument-sans.woff2 \
+      "https://fonts.gstatic.com/s/instrumentsans/v4/pxiTypc9vsFDm051Uf6KVwgkfoSxQ0GsQv8ToedPibnr0SZe1Q.woff2" && \
     curl -sfL -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-      -o /app/static/vendor/fonts/dm-mono-400.woff2 \
-      "https://fonts.gstatic.com/s/dmmono/v16/aFTR7PB1QTsUX8KYvumzEYOtbQ.woff2" && \
+      -o /app/static/vendor/fonts/plex-mono-400.woff2 \
+      "https://fonts.gstatic.com/s/ibmplexmono/v20/-F63fjptAgt5VM-kVkqdyU8n1i8q1w.woff2" && \
     curl -sfL -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-      -o /app/static/vendor/fonts/dm-mono-500.woff2 \
-      "https://fonts.gstatic.com/s/dmmono/v16/aFTU7PB1QTsUX8KYthqQBA.woff2"
+      -o /app/static/vendor/fonts/plex-mono-500.woff2 \
+      "https://fonts.gstatic.com/s/ibmplexmono/v20/-F6qfjptAgt5VM-kVkqdyU8n3twJwlBFgg.woff2"
 # Controller version — baked in by the controller-release workflow from the
 # controller-v* tag; "dev" for local builds (version.py falls back to git
 # describe only outside a container).

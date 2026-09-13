@@ -1531,7 +1531,33 @@ def refresh_audio_state(device: Device, force: bool = False) -> None:
     st = device.audio_state
     if st.update(_audio_inputs(device), time.monotonic()) or force:
         esphome.update_device_audio_state(device.device_id, st.active, st.source)
+        _push_audio_state(device)
     _arm_audio_holdoff(device)
+
+
+def _push_audio_state(device: Device) -> None:
+    """
+    Tell the dashboard what the HA entities were just told.
+
+    Beside each esphome.update_device_audio_state call rather than on the
+    _push_device_state funnel, because the hold-off expiring changes this
+    answer with nothing else moving: no turn ends, no flag flips, and there
+    is no later signal to ride. A device row left reading "Playing" over a
+    silent speaker is the thing this state gets judged by.
+
+    Spawned rather than awaited — refresh_audio_state is synchronous on
+    purpose (see its docstring) and every caller is already inside
+    something.
+    """
+    st = device.audio_state
+    _spawn(
+        api._push_event({
+            "type":      "device_update",
+            "device_id": device.device_id,
+            "state":     {"audio": {"active": st.active, "source": st.source}},
+        }),
+        f"audio push {device.device_id}",
+    )
 
 
 def _arm_audio_holdoff(device: Device) -> None:
@@ -1567,6 +1593,7 @@ def _arm_audio_holdoff(device: Device) -> None:
                     esphome.update_device_audio_state(
                         device.device_id, st.active, st.source
                     )
+                    _push_audio_state(device)
                     return
         except asyncio.CancelledError:
             pass

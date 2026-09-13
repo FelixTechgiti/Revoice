@@ -6,144 +6,242 @@
   <title>Revoice Device Management</title>
   <link rel="icon" type="image/svg+xml" href="static/favicon.svg" />
   <style>
-    @font-face { font-family: 'DM Sans'; font-weight: 400; src: url('static/vendor/fonts/dm-sans.woff2') format('woff2'); }
-    @font-face { font-family: 'DM Sans'; font-weight: 500; src: url('static/vendor/fonts/dm-sans.woff2') format('woff2'); }
-    @font-face { font-family: 'DM Sans'; font-weight: 600; src: url('static/vendor/fonts/dm-sans.woff2') format('woff2'); }
-    @font-face { font-family: 'DM Mono'; font-weight: 400; src: url('static/vendor/fonts/dm-mono-400.woff2') format('woff2'); }
-    @font-face { font-family: 'DM Mono'; font-weight: 500; src: url('static/vendor/fonts/dm-mono-500.woff2') format('woff2'); }
+    /* Instrument Sans for the interface, IBM Plex Mono for every value,
+       label and log line. Both SIL OFL, both fetched at image build time
+       into static/vendor/fonts (see controller/Dockerfile) — no CDN at
+       runtime.
+
+       Instrument Sans ships one variable latin file that serves 400, 500
+       and 600; Plex Mono needs a file per weight.
+
+       'DM Sans' and 'DM Mono' are declared as aliases of the same files.
+       They are not still installed — around 185 inline style objects in
+       dashboard.jsx name them, and re-typing those is the work of the
+       panes that follow rather than a prerequisite for the typeface
+       changing. The aliases retire with the last call site. */
+    @font-face { font-family: 'Instrument Sans'; font-weight: 400 600; src: url('static/vendor/fonts/instrument-sans.woff2') format('woff2'); }
+    @font-face { font-family: 'IBM Plex Mono'; font-weight: 400; src: url('static/vendor/fonts/plex-mono-400.woff2') format('woff2'); }
+    @font-face { font-family: 'IBM Plex Mono'; font-weight: 500; src: url('static/vendor/fonts/plex-mono-500.woff2') format('woff2'); }
+    @font-face { font-family: 'DM Sans'; font-weight: 400 600; src: url('static/vendor/fonts/instrument-sans.woff2') format('woff2'); }
+    @font-face { font-family: 'DM Mono'; font-weight: 400; src: url('static/vendor/fonts/plex-mono-400.woff2') format('woff2'); }
+    @font-face { font-family: 'DM Mono'; font-weight: 500; src: url('static/vendor/fonts/plex-mono-500.woff2') format('woff2'); }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     /* ── Tokens ───────────────────────────────────────────────────────
-       Every colour the dashboard chrome uses. Light values are EXACTLY
-       what was hardcoded before, so the light theme is unchanged except
-       where near-duplicates were deliberately merged (four reds doing one
-       job, three ambers, three greens).
+       Every colour the dashboard chrome uses.
 
-       Three things are deliberately NOT tokens, because theming them
-       would be wrong rather than merely unfinished:
-         - LedRing / DeviceDiagram: they depict the physical Echo Dot and
-           the ring's real LED colours. A device rendered in "dark mode"
-           would be a different device.
-         - The LED colour pickers in DeviceConfigForm: those hexes are
+       The palette is "Instrument im Wohnraum": a warm near-black (or warm
+       paper) ground, hairline borders, flat surfaces, and colour reserved
+       for state. Two signal colours carry the whole product, because one
+       Dot does two jobs and they must never be confused:
+
+         --voice   green   it is listening / thinking / answering
+         --media   blue    it is playing music
+
+       Every text level clears 4.5:1 on its own ground. --faint (#575249
+       dark, #ded7c9 light) is NOT a text colour — it is for strokes, dots
+       and the em-dash placeholder. Putting words in it is the one way to
+       break the contrast rule while everything still looks deliberate.
+
+       There are no shadow or gradient tokens any more. --shadow-*, --sheen
+       and the rest survive as none/transparent so the call sites that still
+       name them stay valid while the panes are converted; a new call site
+       should not reach for them.
+
+       Three things are deliberately NOT themed, because theming them would
+       be wrong rather than merely unfinished:
+         - the LED colour pickers in DeviceConfigForm: those hexes are
            values sent to the hardware, not styling.
          - Shell's xterm theme: a 16-colour contract terminal programs
            address by index.
+         - the console ground and its role colours (--console-*): the
+           console stays a lit dark panel in BOTH themes, so its text has
+           to be light-on-dark even while the page around it is paper.
+           That is why they are separate tokens rather than aliases of
+           --voice/--warn/--error, which invert with the theme.
 
-       Adding a value at a call site instead of here is how this got to
-       126 distinct hexes. Add it here. */
+       LedRing and DeviceDiagram used to be on that list. They no longer
+       draw the black plastic of an Echo Dot — they are chrome now, so
+       their colours belong here.
+
+       Adding a value at a call site instead of here is how this once got
+       to 126 distinct hexes. Add it here. */
     :root, :root[data-theme="light"] {
-      /* Surfaces, lightest to darkest */
-      --raised:    #e8e4de;
-      --card:      #e0dcd4;
-      --surface:   #d8d4cc;
-      --sunken:    #d0ccc4;
-      --bg:        #ccc8c0;
+      /* Ground and surfaces */
+      --bg:          #f7f4ee;
+      --surface:     #fffdf8;
+      --surface-alt: #f9f6f0;
+      --raised:      #ebe6db;
 
-      /* Borders */
-      --border:      #b8b4ac;
-      --border-soft: #c0bdb6;
-      --border-hard: #b0aca4;
+      /* Borders. Two weights: the hairline everything is divided by, and
+         the one an active or emphasised element is drawn with. */
+      --line:        #ded7c9;
+      --line-strong: #c9c1b0;
 
-      /* Text */
-      --text:   #1e1c18;
-      --text2:  #4a4844;
-      --muted:  #8a8680;
-      --faint:  #a8a49c;
+      /* Text, loudest to quietest. --faint is strokes only. */
+      --text:   #1b1a17;
+      --text2:  #53504a;
+      --muted:  #6d6860;
+      --faint:  #ded7c9;
+      --empty:  #8c8478;
 
-      /* Semantic state — one value each */
-      --ok:     #286040;
-      --warn:   #c0601a;
-      --error:  #9a3020;
-      --error-deep: #782020;
-      --on-error:   #f0d8d8;
+      /* Voice — listening, thinking, speaking; and the primary action. */
+      --voice:      #0d6e4f;
+      --voice-hi:   #0a5a41;
+      --voice-bg:   #e4f0ea;
+      --voice-line: #b9d8ca;
 
-      /* Amber-tinted dark notice (the controller-update banner). */
-      --notice-bg:   linear-gradient(160deg,#2e2a1e,#221e14);
-      --notice-line: #3a3220;
+      /* Media — the music plane. */
+      --media:      #245fbf;
+      --media-bg:   #e7eefb;
+      --media-line: #b6cbeb;
+      --media-card: #c9d8ef;
+      --media-face: #f6f8fc;
 
-      /* Accent */
-      --accent:      #405878;
-      --accent-hi:   #6080a8;
-      --accent-deep: #304860;
-      --accent-lit:  #8ab0d0;
-      --accent-tint: #dde8f4;
-      --accent-line: #ccd8ec;
+      /* Waiting for you, update available. */
+      --warn:      #9a5a0c;
+      --warn-bg:   #fdf6ea;
+      --warn-line: #e6d3b0;
 
-      /* Inset dark regions: the LCD readouts, the console, the wizard
-         transcript. These stay dark in BOTH themes — they are meant to
-         read as a lit panel set into the surface. */
-      --lcd-bg:    #1e2219;
-      --lcd-green: #9aba80;
-      --lcd-amber: #c8a040;
-      --lcd-dim:   #7a9a68;
-      --lcd-line:  #1a1c18;
-      --lcd-face:  #2a2e28;
-      --lcd-deep:  #1c1f18;
-      --lcd-faint: #3a4a30;
+      /* Muted, offline, refused. */
+      --error:      #a8372a;
+      --error-bg:   #fbeae6;
+      --error-line: #eec3b8;
 
-      /* Shadows. Tokenised because a drop shadow tuned for a light ground
-         reads as a black smear on a dark one. */
-      --shadow-card:  0 4px 16px rgba(0,0,0,0.12), 0 1px 0 rgba(255,255,255,0.7) inset;
-      --shadow-hover: 0 8px 28px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.7) inset;
-      --shadow-inset: inset 0 2px 4px rgba(0,0,0,0.5);
-      --sheen:        rgba(255,255,255,0.4);
-      --hairline:     rgba(0,0,0,0.06);
-      --track:        rgba(0,0,0,0.10);
+      /* Text on a --voice ground. */
+      --on-accent: #f7f4ee;
+
+      /* Bar tracks and meter grounds. */
+      --track: #e4ddcf;
+
+      /* The console / log surface. Dark in both themes — see the note
+         above; these are the only role colours that do not invert. */
+      --console-bg:     #0c0d0c;
+      --console-line:   #1e201d;
+      --console-line-2: #2c2f2b;
+      --console-text:   #b8b2a8;
+      --console-dim:    #7d7770;
+      --console-voice:  #4ad9a4;
+      --console-media:  #7fb3ff;
+      --console-warn:   #e8a13c;
+      --console-error:  #e8705c;
+
+      /* ── Compatibility aliases ──────────────────────────────────────
+         The old token names, re-pointed at the new palette so the panes
+         that still use them come across with it instead of stranding on
+         the previous one. They are retired pane by pane; nothing new
+         should name them. */
+      --card:        var(--surface);
+      --sunken:      var(--bg);
+      --border:      var(--line);
+      --border-soft: var(--line);
+      --border-hard: var(--line-strong);
+      --ok:          var(--voice);
+      --error-deep:  var(--error-line);
+      --on-error:    var(--error);
+      --notice-bg:   var(--warn-bg);
+      --notice-line: var(--warn-line);
+      --accent:      var(--media);
+      --accent-hi:   var(--media);
+      --accent-deep: var(--media-line);
+      --accent-lit:  var(--media);
+      --accent-tint: var(--media-bg);
+      --accent-line: var(--media-line);
+      --lcd-bg:    var(--console-bg);
+      --lcd-face:  var(--console-bg);
+      --lcd-deep:  var(--console-bg);
+      --lcd-line:  var(--console-line);
+      --lcd-faint: var(--console-line-2);
+      --lcd-green: var(--console-voice);
+      --lcd-amber: var(--console-warn);
+      --lcd-dim:   var(--console-dim);
+      --shadow-card:  none;
+      --shadow-hover: none;
+      --shadow-inset: none;
+      --sheen:        transparent;
+      --hairline:     var(--surface-alt);
     }
 
-    /* Dark theme. Not an inversion — the warm grey is the product's
-       identity, so this is the same hue family taken down past the LCD
-       rather than a neutral charcoal. Semantic colours are lifted, since
-       #286040 on a dark ground is unreadable. */
+    /* Dark. Not an inversion — the warm near-black is this product's own
+       identity, and the signal colours are lifted rather than reused:
+       #0d6e4f on this ground is unreadable, #4ad9a4 on paper is a
+       highlighter. */
     :root[data-theme="dark"] {
-      --raised:    #2b3024;
-      --card:      #22261c;
-      --surface:   #1b1e16;
-      --sunken:    #171a12;
-      --bg:        #14160f;
+      --bg:          #12110f;
+      --surface:     #1a1917;
+      --surface-alt: #1e1c1a;
+      --raised:      #221f1c;
 
-      --border:      #343a2b;
-      --border-soft: #2c3124;
-      --border-hard: #414736;
+      --line:        #2c2926;
+      --line-strong: #3a3632;
 
-      --text:   #ddd9d1;
-      --text2:  #b2ada4;
-      --muted:  #83807a;
-      --faint:  #6d6a64;
+      --text:   #f2efe9;
+      --text2:  #b8b2a8;
+      --muted:  #a39c91;
+      --faint:  #575249;
+      --empty:  #575249;
 
-      --ok:     #6fa877;
-      --warn:   #d08a3a;
-      --error:  #cf7a68;
-      --error-deep: #8f4436;
-      --on-error:   #2a1512;
+      --voice:      #4ad9a4;
+      --voice-hi:   #7ce9c0;
+      --voice-bg:   #163026;
+      --voice-line: #24503f;
 
-      --notice-bg:   linear-gradient(160deg,#2a2718,#1b1810);
-      --notice-line: #3f3722;
+      --media:      #7fb3ff;
+      --media-bg:   #182333;
+      --media-line: #2f4a70;
+      --media-card: #2f3a4d;
+      --media-face: #161b24;
 
-      --accent:      #7397bd;
-      --accent-hi:   #8fb0d0;
-      --accent-deep: #4a6a8c;
-      --accent-lit:  #a8c8e4;
-      --accent-tint: #1f2c3a;
-      --accent-line: #2f4054;
+      --warn:      #e8a13c;
+      --warn-bg:   #2a1d1a;
+      --warn-line: #4a2f28;
 
-      /* The panel has to stay distinguishable from a ground that is now
-         nearly as dark, so it goes slightly darker still and leans on its
-         own border. */
-      --lcd-bg:    #12150e;
-      --lcd-green: #9aba80;
-      --lcd-amber: #c8a040;
-      --lcd-dim:   #7a9a68;
-      --lcd-line:  #0c0e08;
-      --lcd-face:  #1e2219;
-      --lcd-deep:  #14170f;
-      --lcd-faint: #3a4a30;
+      --error:      #e8705c;
+      --error-bg:   #2e1b18;
+      --error-line: #5a332b;
 
-      --shadow-card:  0 4px 16px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.05) inset;
-      --shadow-hover: 0 8px 28px rgba(0,0,0,0.6),  0 1px 0 rgba(255,255,255,0.05) inset;
-      --shadow-inset: inset 0 2px 4px rgba(0,0,0,0.6);
-      --sheen:        rgba(255,255,255,0.05);
-      --hairline:     rgba(255,255,255,0.07);
-      --track:        rgba(0,0,0,0.35);
+      --on-accent: #0b1a14;
+
+      --track: #2c2926;
+
+      --console-bg:     #0c0d0c;
+      --console-line:   #1e201d;
+      --console-line-2: #2c2f2b;
+      --console-text:   #b8b2a8;
+      --console-dim:    #7d7770;
+      --console-voice:  #4ad9a4;
+      --console-media:  #7fb3ff;
+      --console-warn:   #e8a13c;
+      --console-error:  #e8705c;
+
+      --card:        var(--surface);
+      --sunken:      var(--bg);
+      --border:      var(--line);
+      --border-soft: var(--line);
+      --border-hard: var(--line-strong);
+      --ok:          var(--voice);
+      --error-deep:  var(--error-line);
+      --on-error:    var(--error);
+      --notice-bg:   var(--warn-bg);
+      --notice-line: var(--warn-line);
+      --accent:      var(--media);
+      --accent-hi:   var(--media);
+      --accent-deep: var(--media-line);
+      --accent-lit:  var(--media);
+      --accent-tint: var(--media-bg);
+      --accent-line: var(--media-line);
+      --lcd-bg:    var(--console-bg);
+      --lcd-face:  var(--console-bg);
+      --lcd-deep:  var(--console-bg);
+      --lcd-line:  var(--console-line);
+      --lcd-faint: var(--console-line-2);
+      --lcd-green: var(--console-voice);
+      --lcd-amber: var(--console-warn);
+      --lcd-dim:   var(--console-dim);
+      --shadow-card:  none;
+      --shadow-hover: none;
+      --shadow-inset: none;
+      --sheen:        transparent;
+      --hairline:     var(--surface-alt);
     }
 
     html, body { height: 100%; background: var(--bg); }
@@ -164,128 +262,152 @@
     .em-iconbtn {
       display: inline-flex; align-items: center; justify-content: center;
       width: 30px; height: 30px; padding: 0;
-      background: var(--surface); border: 1px solid var(--border);
+      background: var(--surface); border: 1px solid var(--line);
       border-radius: 50%; cursor: pointer;
-      font-family: 'DM Mono', monospace; font-size: 13px; line-height: 1;
+      font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1;
       color: var(--text2);
-      box-shadow: 0 1px 0 var(--sheen) inset;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
     }
-    .em-iconbtn:hover:not(:disabled) { background: var(--raised); border-color: var(--border-hard); color: var(--text); }
-    .em-iconbtn:active:not(:disabled) { background: var(--sunken); }
-    .em-iconbtn:disabled { cursor: default; }
+    .em-iconbtn:hover:not(:disabled) { background: var(--raised); border-color: var(--voice); color: var(--voice); }
+    .em-iconbtn:active:not(:disabled) { background: var(--raised); }
+    .em-iconbtn:disabled { cursor: default; opacity: 0.5; }
     /* Accent variant for the two actions that DO something to the fleet
        (check for updates, deploy) as against the three that only change
        what you are looking at. */
     .em-iconbtn--accent {
-      background: linear-gradient(180deg, var(--accent-hi), var(--accent));
-      border-color: var(--accent-deep); color: var(--accent-tint);
+      background: var(--voice); border-color: var(--voice); color: var(--on-accent);
     }
     .em-iconbtn--accent:hover:not(:disabled) {
-      background: linear-gradient(180deg, var(--accent-lit), var(--accent-hi));
-      border-color: var(--accent-deep); color: var(--accent-tint);
+      background: var(--voice-hi); border-color: var(--voice-hi); color: var(--on-accent);
     }
     /* Busy state. An icon-only button has no room for "Checking…", so the
        glyph itself carries the progress. */
     .em-iconbtn--busy > svg { animation: em-spin 0.9s linear infinite; }
     @keyframes em-spin { to { transform: rotate(360deg); } }
-    @media (prefers-reduced-motion: reduce) {
-      .em-iconbtn--busy > svg { animation: none; opacity: 0.55; }
-    }
 
     /* Buttons. The variants are additive classes so a call site reads as
        what it is (accent, danger, small) rather than as a ternary chain. */
     .em-pill {
-      background: linear-gradient(180deg, var(--surface), var(--border-soft));
-      color: var(--text); border: 1px solid var(--faint); border-radius: 20px;
-      font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 500;
-      padding: 7px 20px; cursor: pointer; white-space: nowrap;
-      transition: all 0.1s;
-      box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, 0 2px 4px rgba(0,0,0,0.2);
+      background: var(--raised);
+      color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+      font-family: 'Instrument Sans', sans-serif; font-size: 13px; font-weight: 500;
+      padding: 8px 18px; cursor: pointer; white-space: nowrap;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
     }
-    .em-pill--small { font-size: 11px; padding: 5px 14px; }
-    .em-pill--big   { font-size: 14px; font-weight: 600; padding: 11px 28px; }
+    .em-pill:hover:not(:disabled) { border-color: var(--voice); color: var(--voice); }
+    .em-pill--small { font-size: 12px; padding: 6px 14px; border-radius: 9px; }
+    .em-pill--big   { font-size: 14px; font-weight: 600; padding: 11px 26px; }
     .em-pill--accent {
-      background: linear-gradient(180deg, var(--accent-hi), var(--accent));
-      color: var(--accent-tint); border-color: var(--accent-deep);
+      background: var(--voice); color: var(--on-accent); border-color: var(--voice);
+    }
+    .em-pill--accent:hover:not(:disabled) {
+      background: var(--voice-hi); border-color: var(--voice-hi); color: var(--on-accent);
     }
     .em-pill--danger {
-      background: linear-gradient(180deg, var(--error), var(--error-deep));
-      color: var(--on-error); border-color: var(--error-deep);
+      background: var(--error-bg); color: var(--error); border-color: var(--error-line);
     }
+    .em-pill--danger:hover:not(:disabled) { border-color: var(--error); color: var(--error); }
     /* :disabled last so it wins over every variant without !important. */
     .em-pill:disabled {
-      background: linear-gradient(180deg, var(--sunken), var(--border));
-      color: var(--muted); border-color: var(--border-hard);
-      cursor: not-allowed; box-shadow: none;
+      background: var(--surface);
+      color: var(--muted); border-color: var(--line);
+      cursor: not-allowed;
     }
 
     /* Bordered card grouping related controls. */
     .em-panel {
-      background: linear-gradient(170deg, var(--raised), var(--card));
-      border: 1px solid var(--border); border-radius: 10px;
-      padding: 14px 16px 16px;
-      box-shadow: 0 1px 0 var(--sheen) inset;
+      background: var(--surface);
+      border: 1px solid var(--line); border-radius: 14px;
+      padding: 18px 22px 22px;
     }
 
     /* Small uppercase mono heading. */
     .em-label {
-      font-family: 'DM Mono', monospace; font-size: 9px; color: var(--muted);
-      text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 12px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.16em; margin-bottom: 12px;
     }
 
-    /* Lit readout panel. */
+    /* Readout. Was a lit LCD tile; it is now a value in a column, because
+       a number the eye has to find twice is not a readout. */
     .em-lcd {
-      background: linear-gradient(160deg, var(--lcd-face), var(--lcd-bg));
-      border: 1px solid var(--lcd-line); border-radius: 5px;
-      padding: 5px 10px; min-width: 54px;
-      box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+      background: transparent;
+      border: none; border-radius: 0;
+      padding: 0; min-width: 54px;
     }
     .em-lcd__label {
-      font-family: 'DM Mono', monospace; font-size: 8px; color: var(--lcd-dim);
-      text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 3px;
+      font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.16em; margin-bottom: 5px;
     }
 
-    /* Dark inset surface. Five sites re-typed the same four declarations —
-       the LCD panel enlarged. --em-inset-pad/--em-inset-radius let a site
-       vary the two things that actually differed between them. */
+    /* Inset region: the wizard transcript, the readout strips. A recessed
+       surface rather than a lit panel — same job, no gradient. */
     .em-inset {
-      background: linear-gradient(160deg, var(--lcd-face), var(--lcd-bg));
-      border: 1px solid var(--lcd-line);
-      border-radius: var(--em-inset-radius, 8px);
-      padding: var(--em-inset-pad, 12px 18px);
-      box-shadow: inset 0 2px 6px rgba(0,0,0,0.5);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--em-inset-radius, 12px);
+      padding: var(--em-inset-pad, 14px 18px);
     }
 
-    /* Scrolling log/transcript output. */
+    /* Scrolling log/transcript output. This one stays dark in both themes —
+       it is a console, and its role colours are the --console-* tokens. */
     .em-console {
-      background: linear-gradient(160deg, var(--lcd-face), var(--lcd-bg));
-      border: 1px solid var(--lcd-line); border-radius: 8px;
-      box-shadow: var(--shadow-inset);
-      font-family: 'DM Mono', monospace; font-size: 10px; line-height: 1.7;
-      padding: 10px 14px; overflow-y: auto;
+      background: var(--console-bg);
+      border: 1px solid var(--console-line); border-radius: 10px;
+      color: var(--console-text);
+      font-family: 'IBM Plex Mono', monospace; font-size: 11px; line-height: 1.85;
+      padding: 14px 18px; overflow-y: auto;
     }
     .em-console__line--head {
-      color: var(--accent-lit); letter-spacing: 0.12em; font-weight: 600;
+      color: var(--console-media); letter-spacing: 0.12em; font-weight: 500;
       margin-top: 10px; padding-top: 6px;
-      border-top: 1px solid var(--lcd-faint);
+      border-top: 1px solid var(--console-line-2);
     }
     .em-console__line--head:first-child { margin-top: 0; padding-top: 0; border-top: none; }
-    .em-console__line--error { color: var(--error); font-weight: 500; }
-    .em-console__line--ok    { color: var(--ok); }
-    .em-console__line--warn  { color: var(--warn); }
-    .em-console__line--wait  { color: var(--accent-lit); font-style: italic; }
-    .em-console__line--adb   { color: var(--lcd-dim); font-size: 9px; }
-    .em-console__line--detail { color: var(--lcd-green); opacity: 0.85; }
-    .em-console__line--info  { color: var(--lcd-green); }
+    .em-console__line--error { color: var(--console-error); }
+    .em-console__line--ok    { color: var(--console-voice); }
+    .em-console__line--warn  { color: var(--console-warn); }
+    .em-console__line--wait  { color: var(--console-media); font-style: italic; }
+    .em-console__line--adb   { color: var(--console-dim); font-size: 10px; }
+    .em-console__line--detail { color: var(--console-text); opacity: 0.85; }
+    .em-console__line--info  { color: var(--console-voice); }
+
+    /* ── State ring ───────────────────────────────────────────────────
+       The four motions of LedRing. Keyframes have to live here — an
+       inline style object can name an animation but cannot define one.
+
+       Each says one thing and says it slowly enough to be read across a
+       room: rotation is listening, the core pulse is a turn in progress,
+       the breath is something waiting for a person, the bars are music.
+       All four stop under prefers-reduced-motion and freeze at 0.7
+       opacity rather than vanishing, so a state that only motion
+       distinguishes is still distinguishable. */
+    @keyframes em-ring-spin { to { transform: rotate(360deg); } }
+    @keyframes em-ring-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.35; transform: scale(0.78); }
+    }
+    @keyframes em-ring-breathe {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.4; }
+    }
+    @keyframes em-ring-eq {
+      0%, 100% { transform: scaleY(0.3); }
+      50%      { transform: scaleY(1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .em-iconbtn--busy > svg,
+      .em-ring-spin, .em-ring-pulse, .em-ring-breathe, .em-ring-eq {
+        animation: none !important; opacity: 0.7;
+      }
+    }
 
     /* Provisioning wizard chrome. */
     .em-wizard-progress { padding: 10px 14px 8px; border-bottom: 1px solid var(--border); }
     .em-wizard-progress__track {
-      height: 4px; background: var(--sunken); border-radius: 2px; overflow: hidden;
+      height: 3px; background: var(--track); border-radius: 2px; overflow: hidden;
     }
     .em-wizard-progress__fill {
-      height: 100%; background: var(--accent); border-radius: 2px;
+      height: 100%; background: var(--voice); border-radius: 2px;
       transition: width 0.25s ease;
     }
     .em-wizard-progress__label {
@@ -297,7 +419,7 @@
       border-left: 2px solid transparent;
     }
     .em-wizard-step--active {
-      background: var(--hairline); border-left-color: var(--accent);
+      background: var(--surface); border-left-color: var(--voice);
     }
     .em-wizard-step--done   { opacity: 0.75; }
     .em-wizard-step--error  { border-left-color: var(--warn); }
@@ -317,13 +439,13 @@
     .em-wizard-status {
       display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
       padding: 8px 12px; border-radius: 8px;
-      background: color-mix(in srgb, var(--accent) 12%, var(--hairline));
-      border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+      background: var(--voice-bg);
+      border: 1px solid var(--voice-line);
       font-family: 'DM Mono', monospace; font-size: 10px; color: var(--text2);
     }
     .em-wizard-status__dot {
       width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-      background: var(--accent);
+      background: var(--voice);
       animation: em-wizard-pulse 1.4s ease-in-out infinite;
     }
     .em-wizard-status--wait .em-wizard-status__dot { background: var(--warn); }
@@ -336,7 +458,7 @@
     }
     .em-wizard-upcoming {
       margin-bottom: 12px; padding: 10px 12px;
-      background: var(--hairline); border: 1px solid var(--border-soft);
+      background: var(--surface); border: 1px solid var(--line);
       border-radius: 8px;
     }
     .em-wizard-upcoming__item { margin-top: 6px; }
@@ -360,7 +482,7 @@
        until now there was no focus ring anywhere in the dashboard. */
     .em-iconbtn:focus-visible,
     .em-pill:focus-visible {
-      outline: 2px solid var(--accent-hi); outline-offset: 2px;
+      outline: 2px solid var(--voice); outline-offset: 2px;
     }
 
     /* Mobile layout — the dashboard is inline-styled, so phone-width
