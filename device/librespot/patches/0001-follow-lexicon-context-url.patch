@@ -1,51 +1,8 @@
---- a/core/src/spclient.rs
-+++ b/core/src/spclient.rs
-@@ -896,6 +896,42 @@
-         Ok(ctx?)
-     }
- 
-+    /// Resolve a context whose tracks are served by the lexicon session
-+    /// provider, rather than by `/context-resolve/v1`.
-+    ///
-+    /// Spotify DJ is the case this exists for. `/context-resolve/v1` answers
-+    /// for `spotify:playlist:37i9dQZF1EYkqdzj48dyYq` with a single page
-+    /// holding no tracks and no `page_url`, and names the real source in the
-+    /// context metadata as `lexicon_context_url`. Without following it, DJ is
-+    /// simply unplayable: `update_context` rejects the empty context before it
-+    /// ever looks at a page url, so there is nothing to follow either.
-+    ///
-+    /// The URL arrives as `hm://lexicon-session-provider/...`; `get_next_page`
-+    /// already establishes that stripping `hm:/` leaves an spclient endpoint.
-+    pub async fn get_lexicon_context(&self, hm_url: &str) -> Result<Context, Error> {
-+        let endpoint = hm_url.trim_start_matches("hm:/");
-+
-+        let res = self
-+            .request_with_options(&Method::GET, endpoint, None, None, &NO_METRICS_AND_SALT)
-+            .await?;
-+        let ctx_json = String::from_utf8(res.to_vec())?;
-+        if ctx_json.is_empty() {
-+            Err(SpClientError::NoData)?
-+        }
-+
-+        // Logged at INFO, not TRACE, and deliberately: this endpoint is not
-+        // documented anywhere and the response shape is the whole question.
-+        // A device that can reach it is the only place the answer exists.
-+        info!("lexicon context response ({} bytes): {ctx_json}", ctx_json.len());
-+
-+        let ctx = protobuf_json_mapping::parse_from_str::<Context>(&ctx_json);
-+        if ctx.is_err() {
-+            warn!("failed parsing lexicon context: {ctx_json}")
-+        }
-+
-+        Ok(ctx?)
-+    }
-+
-     pub async fn get_autoplay_context(
-         &self,
-         context_request: &AutoplayContextRequest,
+diff --git a/connect/src/context_resolver.rs b/connect/src/context_resolver.rs
+index 1bc0c16..e8a66fe 100644
 --- a/connect/src/context_resolver.rs
 +++ b/connect/src/context_resolver.rs
-@@ -215,6 +215,27 @@
+@@ -215,6 +215,27 @@ impl ContextResolver {
          match next.update {
              ContextType::Default => {
                  let mut ctx = self.session.spclient().get_context(resolve_uri).await;
@@ -73,3 +30,64 @@
                  if let Ok(ctx) = ctx.as_mut() {
                      ctx.uri = Some(next.context_uri().to_string());
                      ctx.url = ctx.uri.as_ref().map(|s| format!("context://{s}"));
+diff --git a/core/src/spclient.rs b/core/src/spclient.rs
+index 6eaa33c..4c80a4f 100644
+--- a/core/src/spclient.rs
++++ b/core/src/spclient.rs
+@@ -896,6 +896,56 @@ impl SpClient {
+         Ok(ctx?)
+     }
+ 
++    /// Resolve a context whose tracks are served by the lexicon session
++    /// provider, rather than by `/context-resolve/v1`.
++    ///
++    /// Spotify DJ is the case this exists for. `/context-resolve/v1` answers
++    /// for `spotify:playlist:37i9dQZF1EYkqdzj48dyYq` with a single page
++    /// holding no tracks and no `page_url`, and names the real source in the
++    /// context metadata as `lexicon_context_url`. Without following it, DJ is
++    /// simply unplayable: `update_context` rejects the empty context before it
++    /// ever looks at a page url, so there is nothing to follow either.
++    ///
++    /// The URL arrives as `hm://lexicon-session-provider/...`; `get_next_page`
++    /// already establishes that stripping `hm:/` leaves an spclient endpoint.
++    pub async fn get_lexicon_context(&self, hm_url: &str) -> Result<Context, Error> {
++        let endpoint = hm_url.trim_start_matches("hm:/");
++
++        let res = self
++            .request_with_options(&Method::GET, endpoint, None, None, &NO_METRICS_AND_SALT)
++            .await?;
++        let ctx_json = String::from_utf8(res.to_vec())?;
++        if ctx_json.is_empty() {
++            Err(SpClientError::NoData)?
++        }
++
++        // The body is 64KB for a DJ session, so it is logged at INFO only as a
++        // SHAPE — the count of what came back — and in full only when parsing
++        // fails, which is the one case where the bytes are the diagnosis.
++        //
++        // It was an unconditional INFO dump for exactly one measurement, and
++        // that measurement is the reason this function exists: the endpoint is
++        // undocumented, so the first response had to be read whole off a
++        // device with a session. It answered the question (the same Context
++        // JSON the ordinary path returns) and stopped being worth 64KB a
++        // selection the moment it did.
++        let ctx = protobuf_json_mapping::parse_from_str::<Context>(&ctx_json);
++        match ctx.as_ref() {
++            Ok(c) => info!(
++                "lexicon context: {} bytes, {} page(s), {} track(s) on the first",
++                ctx_json.len(),
++                c.pages.len(),
++                c.pages.first().map(|p| p.tracks.len()).unwrap_or(0),
++            ),
++            Err(why) => warn!(
++                "failed parsing lexicon context ({}): {ctx_json}",
++                why
++            ),
++        }
++
++        Ok(ctx?)
++    }
++
+     pub async fn get_autoplay_context(
+         &self,
+         context_request: &AutoplayContextRequest,
