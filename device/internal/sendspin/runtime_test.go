@@ -31,7 +31,7 @@ func (s *fakeSink) PumpMusic(data []byte) error {
 	return nil
 }
 func (s *fakeSink) EndMusicStream() { s.mu.Lock(); s.ended++; s.mu.Unlock() }
-func (s *fakeSink) FlushMusic()     { s.mu.Lock(); s.flushed++; s.mu.Unlock() }
+func (s *fakeSink) DropMusicQueue() { s.mu.Lock(); s.flushed++; s.mu.Unlock() }
 func (s *fakeSink) PlaybackDelay() (int64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

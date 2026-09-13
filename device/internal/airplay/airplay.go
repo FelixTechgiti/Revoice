@@ -124,7 +124,7 @@ var ErrNoBinary = errors.New("airplay: shairport-sync is not installed on this d
 type MusicSink interface {
 	PumpMusic(data []byte) error
 	EndMusicStream()
-	FlushMusic()
+	DropMusicQueue()
 }
 
 // PlaneOwner is the arbitration.

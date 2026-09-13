@@ -43,8 +43,10 @@ type MusicSink interface {
 	// EndMusicStream marks the stream complete so a drain is not counted as
 	// an underrun.
 	EndMusicStream()
-	// FlushMusic discards what is queued — a seek, or leaving the group.
-	FlushMusic()
+	// DropMusicQueue discards what is queued — a seek, or leaving the
+	// group. Not FlushMusic: this producer sends no end-of-stream, and the
+	// discard that one arms would then never be cleared.
+	DropMusicQueue()
 	// PlaybackDelay reports frames queued and not yet played, and whether
 	// the hardware is actually running. Not valid until it is: before the
 	// prime gate releases there is nothing to measure against.
@@ -201,7 +203,7 @@ func (r *Runtime) OnStreamStart(s StreamStart) {
 // continues, and treating this as an end would leave the device quiet for the
 // rest of the track.
 func (r *Runtime) OnStreamClear() {
-	r.sink.FlushMusic()
+	r.sink.DropMusicQueue()
 	r.mu.Lock()
 	r.pending = r.pending[:0]
 	r.anchored = false
@@ -394,7 +396,7 @@ func (r *Runtime) correctLocked(pcm []byte, playAt, now int64, rate int) []byte 
 
 	if plan.HardResync {
 		log.Printf("[sendspin] hard resync: %dms out of position", -errMicros/1000)
-		r.sink.FlushMusic()
+		r.sink.DropMusicQueue()
 		r.pending = r.pending[:0]
 		r.anchored = false
 		return pcm

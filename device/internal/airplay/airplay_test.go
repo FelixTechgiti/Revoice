@@ -29,7 +29,7 @@ func (s *fakeSink) PumpMusic(d []byte) error {
 	return nil
 }
 func (s *fakeSink) EndMusicStream() { s.mu.Lock(); s.ends++; s.mu.Unlock() }
-func (s *fakeSink) FlushMusic()     {}
+func (s *fakeSink) DropMusicQueue() {}
 func (s *fakeSink) bytes() int      { s.mu.Lock(); defer s.mu.Unlock(); return len(s.pushed) }
 
 type fakePlane struct {
