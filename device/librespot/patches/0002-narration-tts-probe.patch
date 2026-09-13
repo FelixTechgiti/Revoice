@@ -1,0 +1,269 @@
+diff --git a/connect/src/context_resolver.rs b/connect/src/context_resolver.rs
+index e8a66fe..acb0379 100644
+--- a/connect/src/context_resolver.rs
++++ b/connect/src/context_resolver.rs
+@@ -227,6 +227,7 @@ impl ContextResolver {
+                             info!("context resolved empty; following lexicon_context_url");
+                             match self.session.spclient().get_lexicon_context(&url).await {
+                                 Ok(lex) if !lex.pages.iter().all(|p| p.tracks.is_empty()) => {
++                                    probe_narration(&self.session, &lex).await;
+                                     ctx = Ok(lex)
+                                 }
+                                 Ok(_) => warn!("lexicon context had no tracks either"),
+@@ -365,3 +366,65 @@ impl ContextResolver {
+         true
+     }
+ }
++
++
++/// Ask the TTS service for one narration line and report what it says.
++///
++/// **A measurement, not a feature.** Nothing plays: this establishes whether
++/// Spotify answers a third-party client at `/client-tts/v1/fulfill` at all,
++/// which is not something to assume before building playback on it. One call
++/// per DJ context resolve — bounded by how often a user picks DJ — and every
++/// failure is a log line rather than anything the session notices.
++async fn probe_narration(session: &Session, ctx: &Context) {
++    let Some(track) = ctx
++        .pages
++        .iter()
++        .flat_map(|p| p.tracks.iter())
++        .find(|t| t.metadata.contains_key("narration.intro.ssml"))
++    else {
++        return;
++    };
++
++    let meta = &track.metadata;
++    let Some(ssml) = meta.get("narration.intro.ssml") else {
++        return;
++    };
++    let voice = meta
++        .get("narration.intro.voice")
++        .and_then(|v| v.strip_prefix("VOICE"))
++        .and_then(|v| v.parse::<i32>().ok())
++        .unwrap_or(0);
++    let provider = match meta.get("narration.intro.tts_provider").map(String::as_str) {
++        Some("CLOUD_TTS") => 1,
++        Some("READSPEAKER") => 2,
++        Some("POLLY") => 3,
++        Some("WELL_SAID") => 4,
++        Some("SONANTIC_FAST") => 6,
++        Some("OPENAI") => 7,
++        Some("SONANTIC_LARGE") => 8,
++        // Anything else goes as unset rather than as a guess: the service
++        // choosing its own default is a better failure than us naming the
++        // wrong provider and getting a voice nobody asked for.
++        _ => 0,
++    };
++    let sample_rate = meta
++        .get("narration.intro.sample_rate")
++        .and_then(|v| v.parse::<i32>().ok())
++        .unwrap_or(44100);
++
++    info!(
++        "narration probe: {} chars of ssml, voice {}, provider {}, {}Hz",
++        ssml.len(),
++        voice,
++        provider,
++        sample_rate
++    );
++    match session
++        .spclient()
++        .narration_url(ssml, voice, provider, sample_rate)
++        .await
++    {
++        Ok(url) => info!("narration probe: got audio url {url}"),
++        Err(why) => warn!("narration probe: {why}"),
++    }
++}
+diff --git a/core/src/spclient.rs b/core/src/spclient.rs
+index 4c80a4f..20f463d 100644
+--- a/core/src/spclient.rs
++++ b/core/src/spclient.rs
+@@ -32,7 +32,7 @@ use futures_util::future::IntoStream;
+ use http::{Uri, header::HeaderValue};
+ use hyper::{
+     HeaderMap, Method, Request,
+-    header::{ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HeaderName, RANGE},
++    header::{ACCEPT, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HeaderName, LOCATION, RANGE},
+ };
+ use hyper_util::client::legacy::ResponseFuture;
+ use protobuf::{Enum, EnumOrUnknown, Message, MessageFull};
+@@ -946,6 +946,88 @@ impl SpClient {
+         Ok(ctx?)
+     }
+ 
++    /// Turn a DJ narration script into the url of its synthesised audio.
++    ///
++    /// # What this is
++    ///
++    /// Spotify DJ's spoken lines are not audio in the play context. Each
++    /// narrated track carries `narration.intro.ssml` plus the parameters to
++    /// render it — `tts_provider`, `voice`, `sample_rate` — and nothing that
++    /// points at a file. The client synthesises the speech itself, through
++    /// this endpoint.
++    ///
++    /// Wire format and endpoint are from devgianlu/go-librespot, which
++    /// implements this, rather than from probing:
++    /// `POST /client-tts/v1/fulfill`, body a `TtsRequest`, answered **303 with
++    /// an empty body** and the audio url in `Location`.
++    ///
++    /// # Two things that make this longer than it looks
++    ///
++    /// `HttpClient::request` turns every non-2xx into an error before a caller
++    /// can read a header — and the answer here IS a redirect. So this goes
++    /// through `request_fut`, which is the layer below that check, and
++    /// assembles the auth and client-token headers the way
++    /// `request_with_options` does.
++    ///
++    /// The body is encoded by hand rather than through the protocol crate.
++    /// Five fields, all scalar, against a schema that is somebody's extraction
++    /// rather than a published spec — `VOICE81` arrives from the metadata and
++    /// the known enum stops at `VOICE40`, which is exactly the kind of thing
++    /// a generated type would reject and an open proto3 enum carries fine.
++    pub async fn narration_url(
++        &self,
++        ssml: &str,
++        voice: i32,
++        provider: i32,
++        sample_rate_hz: i32,
++    ) -> Result<String, Error> {
++        let body = encode_tts_request(ssml, TTS_FORMAT_PCM, voice, provider, sample_rate_hz);
++
++        let mut url = self.base_url().await?;
++        url.push_str("/client-tts/v1/fulfill");
++
++        let mut request = Request::builder()
++            .method(&Method::POST)
++            .uri(url)
++            .header(CONTENT_LENGTH, body.len())
++            .header(CONTENT_TYPE, "application/x-protobuf")
++            .body(Bytes::from(body))?;
++
++        let token = self.session().login5().auth_token().await?;
++        let headers_mut = request.headers_mut();
++        headers_mut.insert(
++            AUTHORIZATION,
++            HeaderValue::from_str(&format!("{} {}", token.token_type, token.access_token))?,
++        );
++        match self.client_token().await {
++            Ok(client_token) => {
++                let _ = headers_mut.insert(CLIENT_TOKEN, HeaderValue::from_str(&client_token)?);
++            }
++            Err(e) => warn!("narration: no client token: {e} — trying without"),
++        }
++
++        let response = self.session().http_client().request_fut(request)?.await?;
++        let status = response.status();
++        let location = response
++            .headers()
++            .get(LOCATION)
++            .and_then(|v| v.to_str().ok())
++            .map(str::to_string);
++
++        match location {
++            Some(url) if status.is_redirection() => {
++                info!("narration: {} -> audio url ({} bytes)", status, url.len());
++                Ok(url)
++            }
++            _ => {
++                warn!("narration: {status} with no usable Location header");
++                Err(Error::failed_precondition(format!(
++                    "client-tts answered {status} without a Location"
++                )))
++            }
++        }
++    }
++
+     pub async fn get_autoplay_context(
+         &self,
+         context_request: &AutoplayContextRequest,
+@@ -1008,3 +1090,88 @@ impl SpClient {
+         .await
+     }
+ }
++
++
++/// `ResolveRequest.AudioFormat.PCM`. Raw samples rather than MP3 because the
++/// device this runs on plays PCM and decodes nothing — asking for a container
++/// would mean shipping a decoder to avoid asking for what the service already
++/// offers.
++const TTS_FORMAT_PCM: i32 = 2;
++
++/// Encode a `TtsRequest` by hand.
++///
++/// Field numbers from spotify/narration/client_tts.proto:
++/// `1 text | 2 ssml`, `3 audio_format`, `4 language`, `5 tts_voice`,
++/// `6 tts_provider`, `7 sample_rate_hz`. `language` is left out: the SSML
++/// carries `xml:lang` itself, and a second opinion about the language is a
++/// second thing that can disagree.
++fn encode_tts_request(
++    ssml: &str,
++    audio_format: i32,
++    voice: i32,
++    provider: i32,
++    sample_rate_hz: i32,
++) -> Vec<u8> {
++    let mut out = Vec::with_capacity(ssml.len() + 32);
++    // field 2, wire type 2 (length-delimited)
++    out.push(2 << 3 | 2);
++    put_varint(&mut out, ssml.len() as u64);
++    out.extend_from_slice(ssml.as_bytes());
++    for (field, value) in [
++        (3u8, audio_format),
++        (5, voice),
++        (6, provider),
++        (7, sample_rate_hz),
++    ] {
++        if value <= 0 {
++            continue; // proto3 does not put a default on the wire
++        }
++        out.push(field << 3); // wire type 0 (varint)
++        put_varint(&mut out, value as u64);
++    }
++    out
++}
++
++fn put_varint(out: &mut Vec<u8>, mut v: u64) {
++    loop {
++        let mut byte = (v & 0x7f) as u8;
++        v >>= 7;
++        if v != 0 {
++            byte |= 0x80;
++        }
++        out.push(byte);
++        if v == 0 {
++            return;
++        }
++    }
++}
++
++#[cfg(test)]
++mod narration_tests {
++    use super::*;
++
++    #[test]
++    fn a_tts_request_encodes_the_fields_the_schema_names() {
++        let got = encode_tts_request("<speak/>", 2, 81, 8, 44100);
++        let want = vec![
++            0x12, 8, b'<', b's', b'p', b'e', b'a', b'k', b'/', b'>', // 2: ssml
++            0x18, 2,          // 3: audio_format = PCM
++            0x28, 81,         // 5: tts_voice = 81 (past the known enum, deliberately)
++            0x30, 8,          // 6: tts_provider = SONANTIC_LARGE
++            // 7: sample_rate_hz = 44100. Written out because this is the one
++            // field whose encoding is not obvious by eye, and the first
++            // version of this line was wrong — 0xe4,0xd6,0x02 decodes to
++            // 43876, and the test is what said so.
++            0x38, 0xc4, 0xd8, 0x02,
++        ];
++        assert_eq!(got, want);
++    }
++
++    #[test]
++    fn a_zero_field_is_left_off_the_wire() {
++        // proto3 omits defaults, and a service that distinguishes "unset" from
++        // "zero" would read a written 0 as a deliberate UNSPECIFIED.
++        let got = encode_tts_request("x", 0, 0, 0, 0);
++        assert_eq!(got, vec![0x12, 1, b'x']);
++    }
++}
