@@ -66,13 +66,29 @@ und ein neu hinzugefügtes Gerät ein neues ist. **Wähle „Migrieren".**
 
 ## Bevor du anfängst
 
-1. **amonet-biscuit v1.1.0, nicht v2.0.0.** v2.0.0 (10. September 2026)
-   ersetzt die Bootloader, und danach bootet FireOS 5 nicht mehr — und damit
-   auch emOS nicht, das den FireOS-5-Kernel benutzt. Ist v2.0.0 schon drauf:
-   **versuche nicht, durch Flashen von FireOS 5 oder eines älteren amonet
-   zurückzukommen.** Das heißt Bootloader von Hand schreiben, und genau so
-   wird ein Echo hart gebrickt. Einzelheiten ganz oben in
-   [rooting.md](rooting.md).
+1. **Welches amonet dein Echo entsperrt hat, entscheidet, was hier passiert.**
+   Der Assistent liest das selbst aus und sagt es dir im Protokoll — du musst
+   es nicht vorher wissen, aber es hilft zu verstehen, was du siehst.
+
+   - **v1.1.0** (der Weg mit Abstand der meisten Gerätestunden): dein Echo
+     läuft FireOS 5, der Assistent baut ein 64-Bit-Image. Das ist der Ablauf,
+     der unten beschrieben ist, und der, der auf Hardware durchgelaufen ist.
+   - **v2.0.0** (10. September 2026): v2.0.0 ersetzt die Bootloader, danach
+     bootet FireOS 5 nicht mehr — dein Echo ist auf FireOS 6. **Das ist keine
+     Sackgasse mehr:** emOS läuft seit 0.5 auch auf dessen 32-Bit-Kernel, der
+     Assistent erkennt das und baut ein passendes Image. Zwei ehrliche
+     Einschränkungen: der Boot ist auf **einem** Gerät gemessen worden
+     (12. September 2026), und **noch kein v2-Echo ist vollständig durch den
+     Assistenten gelaufen.** Schritt 3 ist dein Rückweg — leg die Datei
+     woanders ab als auf dem Gerät.
+   - **Ist v2.0.0 schon drauf und du willst zurück auf FireOS 5:
+     versuche es nicht.** Das heißt Bootloader von Hand schreiben, und genau
+     so wird ein Echo hart gebrickt. Einzelheiten ganz oben in
+     [rooting.md](rooting.md).
+
+   **Der FireOS-Ablauf des Assistenten verweigert ein v2-Gerät** und nennt den
+   Grund — er startet Android 5, das dort nicht mehr bootet. Nimm den
+   emOS-Ablauf; er ist ohnehin die Voreinstellung.
 2. **Bring die Firmware zuerst auf den aktuellen Stand.** Ab v2.33.0-fx.1
    sind alle Android-Aufrufe der Firmware auf emOS abgestimmt — davor läuft
    sie dort zwar, aber der WLAN-Wechsel aus dem Dashboard lehnt jedes Mal ab.
@@ -81,9 +97,15 @@ und ein neu hinzugefügtes Gerät ein neues ist. **Wähle „Migrieren".**
    spricht per WebUSB und WebSerial mit dem Gerät.
 4. **Ein USB-Kabel und ein paar Minuten Zeit.** Der Ablauf läuft komplett in
    TWRP; das Gerät ist währenddessen nicht erreichbar.
-5. **Status 0.4: auf der Werkbank bewährt, nicht im Feld.** Eine Handvoll
+5. **Status 0.5: auf der Werkbank bewährt, nicht im Feld.** Eine Handvoll
    Geräte über eine Handvoll Tage. Die bekannten Lücken stehen in
    [`emos/README.md`](../emos/README.md).
+6. **Die Uhr stellt sich von selbst.** Ein Echo hat keine Uhr, die einen
+   Stromausfall überlebt, und startet im Jahr 2010; unter FireOS korrigiert
+   Android das irgendwann, unter emOS nichts. Der Controller schickt die
+   Zeit deshalb bei jeder Verbindung mit. Du musst nichts tun — aber wenn du
+   in den ersten Sekunden eines Boots Logzeilen aus 2010 siehst, ist das der
+   Grund und kein Fehler.
 
 ## Der Ablauf
 

@@ -8,23 +8,36 @@ It is a distribution in the ordinary sense: it does not include a kernel of its
 own. It pairs the device's existing MediaTek 3.18 kernel with our own PID 1,
 busybox, and bionic and tinyalsa mounted read-only from the device's `/system`.
 
-> **⚠️ emOS needs the FireOS 5 kernel, so do not install amonet-biscuit
-> v2.0.0.** Version 2.0.0 of the unlock (10 September 2026) replaces the
-> Echo's bootloaders, and after that FireOS 5, and with it emOS, no longer
-> boots. The emOS init is also a 64-bit (aarch64) binary, which FireOS 6's
-> 32-bit kernel cannot run. Unlock with **v1.1.0**. If you have already
-> installed v2.0.0, **do not try to go back by flashing FireOS 5 or an older
+> **⚠️ Do not install amonet-biscuit v2.0.0 on an Echo that is running
+> today.** Version 2.0.0 of the unlock (10 September 2026) replaces the Echo's
+> bootloaders, and after that FireOS 5 no longer boots — a working device stops
+> working, and there is no safe way back. Unlock a new Echo with **v1.1.0**,
+> which is the path with by far the most device-hours behind it.
+>
+> **A device already on v2.0.0 is not shut out.** It runs FireOS 6, and emOS
+> runs on that kernel as of 0.5: `build.sh` and the wizard read the reference
+> kernel's architecture and build a matching init, 64-bit for FireOS 5 and
+> 32-bit for FireOS 6. The boot was measured on hardware on 2026-09-12; **no
+> v2.0.0 device has been through the wizard end to end yet.**
+>
+> Either way, **do not try to go back by flashing FireOS 5 or an older
 > amonet**: that rewrites bootloaders by hand, which is how an Echo gets
 > hard-bricked. See the top of [`docs/rooting.md`](../docs/rooting.md).
 
-**Status: 0.4, bench-proven, not field-proven.** Still a small number of
+**Status: 0.5, bench-proven, not field-proven.** Still a small number of
 devices over a handful of days. A complete voice turn has run on it — wake word
 scored on-device, Home Assistant pipeline, spoken answer — along with WiFi, the
 9-channel mic array, hardware AEC, the BLE proxy, buttons, ambient light, jack
 detect and the LED ring. The known gaps are listed at the bottom and none of
 them is a research problem.
 
-Three things changed since 0.1 that are worth knowing before you try it:
+**On FireOS 6 that sentence does not yet apply.** 0.5 boots there and the
+wizard can now build an image for it, but only the boot has been watched on
+hardware (a spare, 2026-09-12, under amonet v2.0.0); nothing has been through
+the install end to end. FireOS 5 is where the field devices are, and its paths
+are unchanged by the port.
+
+Four things changed since 0.1 that are worth knowing before you try it:
 
 - **The provisioning wizard has now run end to end**, on a device restored to
   genuine stock. It failed at four different steps first, and every one of
@@ -37,10 +50,15 @@ Three things changed since 0.1 that are worth knowing before you try it:
   a device that is in TWRP — so emOS → recovery → re-provision is a path that
   works, without powering the device off and holding the mute button in the
   dark. New in 0.4, confirmed on hardware 2026-09-10.
+- **emOS runs on FireOS 6's kernel too**, so a device unlocked with
+  amonet-biscuit v2.0.0 is no longer shut out. The init is built for the
+  architecture of the kernel it will run under, and the release publishes both.
+  New in 0.5; the boot is measured, the install is not.
 
-`emos-v0.4` is tagged and published so the wizard can fetch the init, which is
-the only part of an image that can be distributed. **A tag is not a claim that
-this is finished.** Try it on a spare Echo, and read the Known gaps first.
+`emos-v0.5.0-fx.1` is tagged and published so the wizard can fetch the init and
+emOS's own WiFi tools, which are the only parts of an image that can be
+distributed. **A tag is not a claim that this is finished.** Try it on a spare
+Echo, and read the Known gaps first.
 
 ## Why
 
@@ -95,21 +113,41 @@ with `git describe --match 'emos-v*'`, so without those tags it stamps
 whatever tag is nearest — a controller release number, which is worse than
 "unknown" because it looks plausible. The namespace also keeps emOS out of the
 firmware OTA's way: `_fetch_latest_release` selects a tag starting `v` with a
-`server` asset, and `emos-v0.4` matches neither.
+`server` asset, and `emos-v0.5.0-fx.1` matches neither.
+
+**On this fork the tag is made by `cut-release.yml`, not by hand.** A session's
+credential is refused with `403` on any push to `refs/tags/*`, annotated or
+not, and a lightweight tag made in the web UI loses the annotation the release
+body is built from. Write the `## <version>` entry in `CHANGELOG.md` first —
+the workflow refuses without it — then dispatch it:
 
 ```sh
-git tag -a --cleanup=verbatim emos-v0.4 -m "..."   # -a always; the annotation IS the notes
-git push origin emos-v0.4
+gh workflow run cut-release.yml \
+  -f kind=emos -f version=0.5.0-fx.1 -f ref=main
 ```
 
-`emos-release.yml` compiles the init with the pinned NDK, asserts it is
-aarch64 and static, runs the ring and password checks against the source being
-published, and attaches **`init` and nothing else**.
+The version carries three components where upstream uses two (`0.5.0-fx.1`
+against upstream's `emos-v0.5`), so that the shape check in `cut-release.yml`
+and `tests/test_changelog_headings.py` both hold unchanged. `CHANGELOG.md`
+says so at the top.
 
-**Only the init is published, and it cannot be otherwise.** A bootable image
+`emos-release.yml` then compiles the init with the pinned NDK for **both**
+architectures — aarch64 for FireOS 5, armv7a for FireOS 6 — asserts each is
+static and is the architecture it claims, builds emOS's own `wpa_supplicant`
+and `wpa_cli`, and runs the ring, password, timeout and WPA checks against the
+source being published.
+
+What it attaches is `emos-payload.zip` — `init`, `init32`, `wpa_supplicant`,
+`wpa_cli` and `em-wifi` under a manifest of sha256s — plus the loose `init`
+beside it. **That second copy is compatibility, not duplication**: a controller
+already in the field selects an emOS release by matching that exact asset name,
+so dropping it would strand every fielded controller.
+
+**No bootable image is published, and it cannot be otherwise.** An image
 contains the device's own kernel and device trees, so shipping one would mean
-redistributing Amazon's code. The init is ours; the image is assembled from
-the boot partition each user reads off their own device.
+redistributing Amazon's code. Everything in the bundle is ours — the init is
+repo source, hostap is BSD and libnl-tiny LGPL — and the image is assembled
+from the boot partition each user reads off their own device.
 
 Once emOS is running and on the network, flashing no longer needs TWRP:
 `curl` the image onto the device and `dd` it, about thirty seconds a cycle.
@@ -797,14 +835,29 @@ is not proof it rebooted — compare uptime or a build fingerprint.
 
 ## Known gaps
 
-- **The clock is wrong** (reads 2010), so every timestamp is uncorrelatable.
-  `ntpd` cannot use a hostname because **bionic resolves through Android's
-  property service, not `/etc/resolv.conf`** — no bionic-linked binary has DNS
-  here, though Go binaries are fine since Go carries its own resolver. Pointed
-  at the gateway, which does not serve NTP on the network tested. **The agreed
-  direction is for the controller to tell the device the time**, over the
-  authenticated outbound link it already trusts: no DNS, no listener, no
-  external dependency.
+- ~~**The clock is wrong** (reads 2010), so every timestamp is
+  uncorrelatable.~~ **Done.** The controller sends `time_ms` on the ack of
+  every connection and the firmware steps `CLOCK_REALTIME` to it when the two
+  disagree by 30 seconds or more (`device/internal/clock`,
+  `em_controller.py`). That threshold is sized against the link rather than
+  against ambition: the ack carries no delay compensation over a network
+  measured at 1-2s RTT excursions, so the answer is good to about a second and
+  no better.
+
+  The route matters as much as the fix. `ntpd` cannot use a hostname here
+  because **bionic resolves through Android's property service, not
+  `/etc/resolv.conf`** — no bionic-linked binary on this system has DNS at all,
+  though Go binaries are fine since Go carries its own resolver — and pointing
+  it at the gateway works only on networks whose router happens to serve NTP.
+  The authenticated outbound link the device already trusts needs no DNS, no
+  listening socket and nothing outside the user's own network.
+
+  **It changes no measurement, and must not.** Every RTT, wake-crossing age
+  and stall gap is taken with `time.Since` against Go's monotonic clock, which
+  `clock_settime` does not perturb, and the device never sends a timestamp. It
+  does not touch TLS either: the device clamps its verification clock to the
+  firmware build time precisely because it cannot trust its own clock at dial
+  time, and this runs only after a connection exists.
 - ~~Line out plays the left channel only.~~ **Fixed 2026-09-04.** A plug-out
   and plug-in cycle now moves audio between the external speaker and the
   internal driver in both directions with no interruption, verified against
@@ -858,13 +911,19 @@ is not proof it rebooted — compare uptime or a build fingerprint.
   board. `/system` and `/data` are likewise hardcoded to p13 and p16; those
   were checked on a FireOS 6 device under amonet v2 and are still correct
   there, but nothing enforces it.
-- **The provisioning wizard cannot install a FireOS 6 image yet.** It fetches
-  the `init` asset from the emOS release and hands it to the controller's
-  packer; the supplicant and `wpa_cli` need the same road — a second release
-  asset, an endpoint, and a passthrough. The packer half already accepts
-  them. A locally built image installs today. Publishing them is allowed for
-  the same reason `init` is: they are our build (hostap is BSD, libnl-tiny
-  LGPL) and contain no Amazon code, unlike a boot image.
+- ~~**The provisioning wizard cannot install a FireOS 6 image yet.**~~ **The
+  publishing half is done as of 0.5.0-fx.1**: the release carries `init32`,
+  `wpa_supplicant`, `wpa_cli` and `em-wifi` in `emos-payload.zip`, the
+  controller reads the bundle and verifies it against the manifest's sha256s,
+  and `build.sh` and the packer both pick the architecture off the reference
+  kernel rather than being told it.
+
+  **What is left is a device.** No FireOS 6 Echo has been through the wizard
+  end to end — the boot was watched on a spare on 2026-09-12, the install was
+  not — so this is untested rather than unbuilt, and those want different
+  responses. An older release with no bundle still serves FireOS 5 from its
+  loose `init` and refuses FireOS 6 by name (`no_payload_bundle`), which is
+  the answer that says what to do about it.
 - **WPA3 is one layer away, not three.** Asked of the driver rather than
   inferred from kernel strings: userspace is solved, since emOS now ships a
   supplicant with SAE; **PMF is not blocked** — the driver advertises
