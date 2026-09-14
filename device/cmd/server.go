@@ -242,10 +242,14 @@ func main() {
 		// This is the belt to the braces below rather than a duplicate of
 		// them: the flushers were corrected one by one to the right call, and
 		// this makes the whole class of mistake unreachable no matter which
-		// one a future caller picks. It costs a lock and an empty channel
-		// drain per handover, against a failure that presents as a device
-		// with nothing wrong with it and no sound.
-		pcmSpeaker.DropMusicQueue()
+		// one a future caller picks.
+		//
+		// AllowMusic, not DropMusicQueue — the first version of this used the
+		// latter, and it cost an audible delay on every source change. That
+		// call also marks an end of stream, which re-arms the prime gate; a
+		// handover is not a producer saying it has finished. All this hook
+		// owes the incoming source is that nothing is still swallowing audio.
+		pcmSpeaker.AllowMusic()
 		// The handover is also the only moment that knows how deep the music
 		// plane should fill. A device-local producer writes to a pipe with no
 		// WiFi hop in front of it, so the ~1s cushion that protects a

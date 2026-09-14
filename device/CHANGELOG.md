@@ -12,6 +12,32 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.47.0-fx.1
+
+### Die Verzögerung beim Quellenwechsel ist weg — sie war meine
+
+**In 2.46.0-fx.1 habe ich einen Fehler behoben und dabei einen neuen
+eingebaut.** Der alte war schlimmer (nach Spotify kam von AirPlay gar kein
+Ton), der neue war hörbar: Jeder Wechsel der Tonquelle hat den Lautsprecher
+dazu gebracht, den Musikstrom für beendet zu erklären — und danach wartet er
+erst wieder, bis sein Puffer gefüllt ist, bevor etwas zu hören ist.
+
+Gemeldet als „AirPlay nach Spotify hat gedauert, bis Ton kam" und „Spotify ist
+beim Titelwechsel verzögert". Im Log stand es deutlich: fünf Strom-Enden in
+einer Minute, wo eines hingehört.
+
+**Die Ursache:** Der Reparaturgriff, den 2.46 bei jedem Besitzerwechsel
+aufruft, macht zwei Dinge auf einmal — er löst die Sperre, die den Ton
+verschluckt, UND meldet den Strom als beendet. Gebraucht wird bei einer
+Übergabe nur das Erste. Ein Wechsel der Quelle ist nicht dasselbe wie ein
+Abspielprogramm, das sagt, es sei fertig.
+
+**Was du merkst:** Der Wechsel zwischen Spotify und AirPlay geht wieder
+zügig, und ein Titelwechsel auch. Die Behebung aus 2.46 bleibt vollständig
+erhalten — nach Spotify kommt von AirPlay weiterhin Ton.
+
+**Was du dafür tun musst:** nichts.
+
 ## 2.46.0-fx.1
 
 ### Nach Spotify kam von AirPlay kein Ton mehr — behoben
