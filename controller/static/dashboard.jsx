@@ -3527,9 +3527,14 @@ const _TESTED_FIREOS_NAME  = 'Fire OS 5.5.5.4';
 
 // Was this Echo unlocked with amonet-biscuit v2.0.0 or later? v2.0.0
 // (R0rt1z2, 10 Sep 2026) writes a newer preloader, LK and TrustZone, and
-// FireOS 5 does not boot on them — so neither does Revoice, emOS included,
-// since emOS runs the FireOS 5 kernel. Provisioning such a device ends in a
-// flash that cannot boot, so the connect step refuses it up front.
+// FireOS 5 does not boot on them.
+//
+// This answers WHETHER, never what to do about it, and the two flows want
+// opposite answers: the FireOS flow patches and boots the device's own
+// Android 5 and so still refuses, while the emOS flow accepts — emOS runs on
+// FireOS 6's 32-bit kernel as of 0.5, which is the only FireOS v2 boots. The
+// split lives at the call site in `connect_android`, which is also where the
+// reasoning for it is written down. Nothing here should grow a refusal.
 //
 // Decided from EVIDENCE of v2, never from the absence of v1. A probe that
 // fails to run returns empty strings, and empty must read as "no evidence":

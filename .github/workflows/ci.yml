@@ -504,8 +504,10 @@ jobs:
       # under a 64-bit boot chain (see the LibreEcho notes), and build.sh picks
       # the architecture from the reference image for the same reason.
       #
-      # Only the aarch64 init is published today (emos-release.yml); the armv7a
-      # compile is here so the 32-bit build cannot quietly rot before it ships.
+      # Both are published as of emos-v0.5.0-fx.1 (emos-release.yml), so this
+      # compiles what ships rather than guarding a build that had not shipped
+      # yet. It still only BUILDS: the release job is what asserts the two are
+      # not the same binary published under two names.
       #
       # -static is the part that has to keep working. Three boots with a
       # busybox script init produced no output at all, which is

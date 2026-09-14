@@ -2442,12 +2442,23 @@ throughout — so the rules below are all one rule seen from different angles.
   passed only because v1's TWRP 3.2.3 happens to report 5.1.1. In recovery
   the release now comes from `/system` (`readFireosBuild().release`), and an
   unknown one skips the check rather than guessing.
-- **A device unlocked with amonet-biscuit v2.0.0 is refused at the connect
+- **A device unlocked with amonet-biscuit v2.0.0 is detected at the connect
   step, on EVIDENCE, never on absence** (`_unlockVerdict`). v2.0.0 (R0rt1z2,
-  10 Sep 2026) writes a newer preloader, LK and TrustZone, FireOS 5 does not
-  boot on them, and neither does emOS, which runs the FireOS 5 kernel — so
-  without this the emOS flow would escrow, build and flash an image that
-  cannot boot. Any one of three signs refuses: an MTK image header
+  10 Sep 2026) writes a newer preloader, LK and TrustZone, and FireOS 5 does
+  not boot on them.
+
+  **The verdict answers WHETHER; the two flows answer what to do, in opposite
+  directions.** The FireOS flow patches and boots the device's own Android 5
+  and so refuses. The emOS flow **accepts** — it did refuse, because emOS ran
+  the FireOS 5 kernel only, and since emOS 0.5 it runs FireOS 6's 32-bit
+  kernel too, which is the only FireOS v2 boots. Refusing there would refuse
+  exactly the devices emOS newly supports, and no step of the emOS sequence is
+  FireOS-5-specific: it reads the device's own boot image, rebuilds it with an
+  init matching that image's kernel, and writes it back. What it does instead
+  is say so loudly before the escrow step, because no v2 device has been
+  through the wizard and the escrow is the way back.
+
+  Any one of three signs is evidence: an MTK image header
   (`88168858`) at the start of `expdb`, where v2's preloader exploit loads LK
   from (amonet-koboreru's `LK_PART_NAME`); TWRP 3.7 or later (v2 ships
   3.7.0_9-0, v1 3.2.3-0); or Android 6+ as the release that matters. A probe

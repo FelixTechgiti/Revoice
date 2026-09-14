@@ -22,6 +22,121 @@ stamps `git describe` into `/etc/os-release` and
 Newest first. Written for the person deciding whether to write this to the
 boot partition of a device they rely on.
 
+## 0.5.0-fx.1
+
+**The first emOS release of this fork that publishes everything an image
+needs.** 0.4.0-fx.1 attached one asset, the aarch64 `init`, which is enough
+for a FireOS 5 device and nothing else. This release adds the payload
+bundle — `init`, `init32`, `wpa_supplicant`, `wpa_cli` and `em-wifi`, with a
+manifest of sha256s — so the provisioning wizard can build an image for
+FireOS 6 as well, and so a FireOS 5 device stops fetching an init that predates
+850-odd lines of changes to `init.c`.
+
+Upstream's 0.5 line plus what the 2026-09-14 sync carried past its tag. The
+fork's own changes remain the rename and the paths that moved with it.
+
+### emOS boots on FireOS 6
+
+amonet-biscuit v2.0.0 boots only FireOS 6, so until now a device unlocked with
+it had no emOS at all — the wizard refused it at the connect step, correctly,
+because the aarch64 init cannot run under a 32-bit kernel.
+
+FireOS 6 is the same Linux 3.18.19 compiled as 32-bit ARM, so the port is
+paths and an architecture rather than drivers:
+
+- `build.sh` reads the reference kernel's architecture and builds a matching
+  init. An init of the wrong architecture boots to **nothing at all**, with no
+  output, which is indistinguishable from a kernel that never started — so it
+  is detected rather than configured.
+- FireOS 6 is system-as-root: the real tree sits in a nested `system/`, so
+  every absolute `/system/...` path is one directory short there. The nested
+  tree is bind-mounted over the mountpoint, which leaves every path in `init.c`
+  alone. A prefix cannot work — `vendor` and `etc` inside that partition are
+  absolute symlinks that would then point at themselves.
+- `wmt_loader`, the combo-chip launcher and `busybox` are resolved by what is
+  present, and every caller falls back to the FireOS 5 path. **A device on
+  FireOS 5 therefore resolves to exactly the paths it used before.**
+
+### emOS brings its own WiFi userspace
+
+Amazon's `wpa_supplicant` aborts under emOS before `main()` — it opens
+`/dev/binder` — so a FireOS 6 image needs one of ours or it has no network and
+no way to say so but a cable. `wpa_supplicant` and `wpa_cli` are built from
+pinned sources (hostap by sha256, libnl-tiny by commit) in the same
+digest-pinned toolchain as the init, and ship static ARM32.
+
+**They are installed only into a FireOS 6 image**, and that restraint is
+deliberate: init prefers `/sbin/wpa_supplicant` the moment one exists, so
+including them in a FireOS 5 image would move the whole fleet off Amazon's
+working supplicant as a side effect of an unrelated change.
+
+`em-wifi` rides with them — a console tool that scans, joins and then **waits
+to see the device actually associate**, so a device that is on emOS but not on
+the network can be put on it over the serial cable alone.
+
+### One bundle rather than five assets
+
+Everything above travels as `emos-payload.zip` with a manifest of sha256s,
+because five assets fetched in sequence can each fail on their own and hand a
+build a mismatched set of parts. The format lives in
+`controller/em_emos_build.py` and the release reads its own output back through
+that same reader, so a release cannot publish a bundle its own consumer would
+refuse.
+
+The loose `init` is still published beside it, and that is compatibility rather
+than duplication: a controller already in the field selects an emOS release by
+matching that exact asset name.
+
+### The device numbers now come from the kernel
+
+`/dev/input/*` and `/dev/snd/*` are resolved through
+`/sys/class/<cls>/<name>/dev` and fall back to the compiled-in table only where
+sysfs is silent. Sysfs wins when the two disagree, because it describes the
+running kernel while the table describes the board it was read off.
+
+The `stage=mounts` line of the boot trail now says which happened —
+`nodes=<from sysfs>/<total>`, with `differ=` counting the rows where kernel and
+table disagreed. On biscuit `differ=0` is the expected reading.
+
+The **block** nodes are still numbered by hand, and for those init **reports
+rather than acts**: the same line carries the partition labels read off the GPT
+(`gpt=`, `p10=`, `p13=`, `p15=`, `p16=`). Nothing acts on them yet. p16 is
+`/data`, the one partition whose loss a remote user cannot undo, and choosing it
+with code nobody has watched run on hardware is not a trade worth making for
+tidiness.
+
+### Smaller things
+
+- The console's login records survive the project rename in both directions,
+  so a device that crosses a rename boundary is not locked out of its own
+  console.
+- Three more off-target checks — `nodecheck`, `pathcheck`, `wpacheck` — each
+  driving a parser whose failure is silent on hardware. They `#include init.c`
+  whole and drive the real functions rather than reimplementing them, and they
+  run in CI and again against the exact source being published here.
+
+### What it costs, stated plainly
+
+**FireOS 6 support has not run on hardware through the wizard.** The boot
+itself was measured on a spare on 2026-09-12 under amonet v2.0.0, and the image
+builder and the release assets are what was missing; that path is now complete
+but unproven end to end. FireOS 5 is where the field devices are and is
+unchanged in its paths.
+
+**Status 0.5: bench-proven, not field-proven.** The known gaps are in
+`emos/README.md`. `/data` survives a boot-partition write, so a device crossing
+from FireOS keeps its Revoice install, its link credentials, its remembered
+controller and its WiFi configuration. **Keep the boot image the wizard hands
+you**: it is the undo, and restoring it takes about ten seconds.
+
+> **⚠️ Do not install amonet-biscuit v2.0.0 on an Echo that is running
+> today.** v2.0.0 replaces the Echo's bootloaders and FireOS 5 no longer boots
+> after it, so a working device stops working. Unlock a new Echo with v1.1.0.
+> A device that is **already** on v2.0.0 runs FireOS 6, and that is what this
+> release's `init32` is for — it is no longer a dead end. Either way, **do not
+> try to go back** by flashing FireOS 5 or an older amonet: that rewrites
+> bootloaders by hand, which is how an Echo gets hard-bricked.
+
 ## 0.4.0-fx.1
 
 **This fork's first published emOS init.** The code is upstream's 0.4 with

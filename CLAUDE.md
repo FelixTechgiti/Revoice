@@ -505,17 +505,22 @@ drift reconciler, the debloat payload, the pm-hide list, `svc wifi`.
 What forbids it today is not any of that:
 
 - **emOS cannot ship a bootable image** — one carries the device's own kernel
-  and DTBs, so only the `init` is published and each user assembles the image
-  from their own boot partition. Dropping FireOS replaces a flash with a build
-  step, for everybody.
-- **amonet-biscuit v2.0.0 (10 September 2026) closes the door from outside.**
-  It replaces the bootloaders, after which FireOS 5 does not boot — and emOS
-  with it, since emOS pairs our init with the FireOS 5 kernel; the init is
-  aarch64 and FireOS 6's kernel is 32-bit. Somebody following a third party's
-  current instructions today lands where emOS cannot run at all. **This is the
-  decisive one**, and it is the reason the answer can change without anything
-  in this repository changing.
-- **emOS is 0.4 — bench-proven, not field-proven.**
+  and DTBs, so only our own parts are published (the init, and emOS's WiFi
+  tools) and each user assembles the image from their own boot partition.
+  Dropping FireOS replaces a flash with a build step, for everybody.
+- **amonet-biscuit v2.0.0 (10 September 2026) no longer closes the door, and
+  that changed under us.** It replaces the bootloaders, after which FireOS 5
+  does not boot. Until 0.5 emOS went with it, since our init was aarch64 and
+  FireOS 6's kernel is 32-bit; emOS now builds for the architecture of the
+  kernel it will run under and runs on both. So somebody following a third
+  party's current instructions lands somewhere emOS supports — **on one
+  measured boot and no completed install**, which is a different kind of
+  answer from FireOS 5's.
+
+  **This entry is worth re-reading before leaning on it**: it was the decisive
+  argument for keeping the FireOS base, it stopped being true within four
+  days, and nothing in this repository would have said so.
+- **emOS is 0.5 — bench-proven, not field-proven.**
 
 Two consequences for judging a change, and they are the whole point of writing
 this down:
