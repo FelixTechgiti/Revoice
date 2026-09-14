@@ -249,3 +249,70 @@ func TestFlushStillSwallowsTheRemainderItWasWrittenFor(t *testing.T) {
 		t.Fatalf("and the NEXT stream must play: ok=%v err=%v", ok, err)
 	}
 }
+
+// The handover hook's whole job, and the one thing it must NOT do.
+//
+// Calling dropQueue here instead cost an audible delay on every source change:
+// it marks an end of stream, the speaker declares the music complete, and the
+// prime gate re-arms so the incoming source waits for the buffer to refill.
+func TestClearDiscardLiftsTheSwallowWithoutEndingTheStream(t *testing.T) {
+	s, _ := newTestStream(4)
+	if ok, _ := s.pump(make([]byte, 4), 4); !ok {
+		t.Fatal("setup: first period refused")
+	}
+	s.flush() // the previous owner armed a discard
+	if ok, _ := s.pump(make([]byte, 4), 4); ok {
+		t.Fatal("setup: expected the channel to be swallowing")
+	}
+
+	// Captured rather than asserted absolutely: flush() above already set it,
+	// so what this pins is that clearDiscard CHANGES nothing about the
+	// stream's end — the first version of this line asserted the flag was
+	// false and was testing the setup, not the function.
+	eosBefore := s.eosPending.Load()
+
+	s.clearDiscard()
+
+	if ok, err := s.pump(make([]byte, 4), 4); !ok || err != nil {
+		t.Fatalf("the incoming source must be heard: ok=%v err=%v", ok, err)
+	}
+	if s.eosPending.Load() != eosBefore {
+		t.Error("a handover is not a producer saying it has finished")
+	}
+}
+
+// And the direction that actually regressed: on a stream nobody ended, the
+// handover hook must not end it either.
+func TestClearDiscardOnALiveStreamMarksNoEndOfStream(t *testing.T) {
+	s, _ := newTestStream(4)
+	if ok, _ := s.pump(make([]byte, 4), 4); !ok {
+		t.Fatal("setup: first period refused")
+	}
+	if s.eosPending.Load() {
+		t.Fatal("setup: nothing should have ended this stream")
+	}
+
+	s.clearDiscard()
+
+	if s.eosPending.Load() {
+		t.Error("the handover ended a stream that was still playing — this is " +
+			"what re-arms the prime gate and delays the next source")
+	}
+}
+
+func TestClearDiscardLeavesAQueuedPeriodAlone(t *testing.T) {
+	// The queue is not this hook's business: the arbiter has already evicted
+	// whoever filled it, and dropping it here would be a second opinion about
+	// something already decided.
+	s, _ := newTestStream(4)
+	if ok, _ := s.pump(make([]byte, 4), 4); !ok {
+		t.Fatal("setup: first period refused")
+	}
+	before := s.queuedPeriods()
+
+	s.clearDiscard()
+
+	if got := s.queuedPeriods(); got != before {
+		t.Errorf("queued periods went from %d to %d", before, got)
+	}
+}

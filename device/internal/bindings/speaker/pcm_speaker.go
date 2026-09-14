@@ -674,6 +674,14 @@ func (p *PcmSpeaker) FlushMusic() { p.music.flush() }
 // next owner's audio is not the remainder it was armed for.
 func (p *PcmSpeaker) DropMusicQueue() { p.music.dropQueue() }
 
+// AllowMusic lifts a discard left by a previous owner, and does nothing else.
+//
+// For the music plane's handover. See audioStream.clearDiscard for why this is
+// not DropMusicQueue: that one also marks an end of stream, and doing so on
+// every handover re-arms the prime gate, so the incoming source waits for the
+// buffer to refill before anything is heard.
+func (p *PcmSpeaker) AllowMusic() { p.music.clearDiscard() }
+
 // Close shuts the speaker down in the reverse of Init's bring-up: mute,
 // amp off, then tear the stream down. Muting first makes the PCM-close
 // transient inaudible, and leaving the amp off means an idle DAC can't

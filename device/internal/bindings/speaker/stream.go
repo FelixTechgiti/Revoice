@@ -229,6 +229,26 @@ func (s *audioStream) dropQueue() {
 	s.drainQueue()
 }
 
+// clearDiscard lifts a discard WITHOUT touching the queue or the stream.
+//
+// This is the whole of what a plane handover needs, and the distinction cost
+// a regression to learn: dropQueue also marks an end of stream, so calling it
+// on every handover made the speaker declare the music complete each time a
+// source changed — which re-arms the prime gate, and the next source waits for
+// the buffer to refill before a sound comes out. Measured as "AirPlay after
+// Spotify took a while", and as five stream completions in one minute.
+//
+// What a handover has to undo is exactly one thing: a discard the PREVIOUS
+// owner armed, which was armed for its remainder and not for the audio now
+// arriving. The queue is not this hook's business — the arbiter has already
+// evicted whoever filled it — and there is no stream ending, because the plane
+// changing hands is not a producer saying it has finished.
+func (s *audioStream) clearDiscard() {
+	s.mu.Lock()
+	s.discarding = false
+	s.mu.Unlock()
+}
+
 // drainQueue empties the ring without blocking.
 func (s *audioStream) drainQueue() {
 	for {
