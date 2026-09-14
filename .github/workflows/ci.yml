@@ -529,7 +529,7 @@ jobs:
             echo "::error::emOS init is not statically linked"; exit 1; }
       - name: Build the emOS init (armv7a, static)
         run: |
-          docker run --rm -v "$PWD/emos":/emos -w /emos echomuse-compiler bash -lc \
+          docker run --rm -v "$PWD/emos":/emos -w /emos revoice-compiler bash -lc \
             '/opt/android/ndk/21.4.7075529/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang \
                -static -O2 -Wall -o build/init32 init/init.c'
       - name: Check it is a static 32-bit ARM binary
