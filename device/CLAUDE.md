@@ -1556,10 +1556,11 @@ if context.pages.iter().all(|p| p.tracks.is_empty()) {
     Err(StateError::ContextHasNoTracks)?;
 ```
 
-**There is nothing to fix on this side and no pin that fixes it** — it is a
-protocol librespot does not speak, not a version behind. What the device does
-about it is say so: `internal/spotify/logfilter.go` collapses that `{:#?}`
-dump to one line and adds one that names the finding.
+**No pin fixes it** — it is a protocol librespot does not speak, not a version
+behind. It is fixed here instead, in `device/librespot/patches/`: `0001`
+follows `lexicon_context_url` when every page is trackless, which is the whole
+of what DJ needed to play at all. `internal/spotify/logfilter.go` stays,
+because the dump is what a NEW unimplemented provider will look like.
 
 **Three things about that filter are deliberate, and each is the general form
 of something that cost time here:**
@@ -1582,6 +1583,72 @@ grepping the WHOLE log for every occurrence of the error together with the
 context each one named — seven failures, one context. A single occurrence
 cannot distinguish "this context is broken" from "this feature is flaky", and
 "flaky" is the answer that gets written down when nobody counts.
+
+## The DJ speaks, and the speech is a file the client has to make itself
+
+**A DJ line is not audio in the play context.** Each narrated track carries
+`narration.intro.ssml` (and sometimes `narration.outro.ssml`) plus the
+parameters to render it — `voice`, `tts_provider`, `sample_rate`, `loudness`,
+`true_peak` — and nothing that points at a file. The client synthesises the
+speech: `POST /client-tts/v1/fulfill` with a `TtsRequest`, answered **303 with
+an empty body** and the audio url in `Location`. `0002` does that call, `0003`
+plays what comes back.
+
+**The answer is MP3 even though the request asks for PCM.** Measured on
+hardware 2026-09-14: `audio_format = PCM` going out, a url reading
+`/v2/generate/sonantic_large/pcm/44100/dj-final-de/…` coming back, and `FF FB`
+— an MPEG-1 Layer III frame header — in the first two bytes of the body. The
+field describes what was asked for, not what was sent; **read the bytes.**
+Decoding it costs nothing, because symphonia is already in `playback`'s
+dependencies with its `mp3` feature on.
+
+**Four rules the playback follows, all of them from devgianlu/go-librespot**,
+which is the only other implementation of this and had settled each one:
+
+- **Sequential, never mixed.** The official client reports
+  `ms_narration_overlapping = 0`.
+- **A failing line costs only itself.** `NarratedDecoder` returns an error only
+  from the track; a clip that will not decode is dropped with a warning. Losing
+  the music because the DJ could not be synthesised would be a worse device
+  than one that does not talk.
+- **The position stays the track's while a clip plays.** A clip's own timeline
+  would send a progress bar back to zero and then jump.
+- **Absent loudness is reported, not defaulted.** Taking a missing value as `0`
+  means normalising against 0 LUFS, which attenuates the clip to nothing — a
+  silent DJ that looks like a working one.
+
+**A seek must put playback back on the TRACK, in both directions.** Forwards
+that is the documented rule — a listener who scrubs wants the music, not the
+rest of the sentence. Backwards is the half that bites: librespot repeats a
+track by keeping the finished decoder and seeking it to 0, so a wrapper that
+only rewinds an intro stays parked past its last part and answers the repeat
+with **silence**. Caught by reading the diff rather than by a test, and pinned
+by one since. The general form: a wrapper that tracks a position of its own has
+to answer a seek from every position it can be in, not from the one the feature
+was designed around.
+
+**Two things are ours rather than ported, and both are about this device:**
+
+- **The gain is DIVIDED by the track's.** librespot applies one normalisation
+  factor — the track's — to everything a decoder hands it, and the DJ is
+  mastered separately, which is why the metadata carries its own loudness at
+  all. Pre-dividing makes the player's own multiplication land on the clip's.
+  The general form: when a wrapper sits under a stage that will scale its
+  output, it has to undo that stage, not ignore it.
+- **Rendering is bounded at 8s per clip**
+  (`NARRATION_RENDER_TIMEOUT`). It is two round trips to services the rest of
+  playback never touches, and they sit in front of the first note; without a
+  limit a slow synthesis is indistinguishable from a device that did not react
+  to being pressed.
+
+**The narration rides the LOAD command, and preload had to carry it too.**
+The player does not know the context, so `PlayerCommand::Load` and
+`PlayerCommand::Preload` both gained `Option<Narration>` and `PlayerState::
+Loading` keeps a copy — a scrub arriving before the load finishes restarts it,
+and without the copy that silently drops the line. Missing the preload half
+would have been the interesting bug: it only shows on auto-advance, which is
+every track after the first, so the feature would have worked exactly once per
+click and looked like flakiness.
 
 ## A refused Spotify credential must be DELETED, not retried
 

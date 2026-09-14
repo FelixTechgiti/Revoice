@@ -1,5 +1,5 @@
 diff --git a/core/src/spclient.rs b/core/src/spclient.rs
-index 4c80a4f..20f463d 100644
+index 4c80a4f..1171fd9 100644
 --- a/core/src/spclient.rs
 +++ b/core/src/spclient.rs
 @@ -32,7 +32,7 @@ use futures_util::future::IntoStream;
@@ -11,7 +11,7 @@ index 4c80a4f..20f463d 100644
  };
  use hyper_util::client::legacy::ResponseFuture;
  use protobuf::{Enum, EnumOrUnknown, Message, MessageFull};
-@@ -946,6 +946,88 @@ impl SpClient {
+@@ -946,6 +946,114 @@ impl SpClient {
          Ok(ctx?)
      }
  
@@ -97,10 +97,36 @@ index 4c80a4f..20f463d 100644
 +        }
 +    }
 +
++    /// Fetch one synthesised narration clip from the url `narration_url` gave.
++    ///
++    /// **Deliberately without the Authorization header the rest of this client
++    /// sends.** The url carries its own signature and points at a CDN, not at
++    /// Spotify's API; no Spotify id, audio key or PlayPlay is involved. Sending
++    /// our bearer token to a host the service nominated would hand it out for
++    /// nothing.
++    ///
++    /// What comes back is **MP3 regardless of the format requested** — measured
++    /// on hardware 2026-09-14, with `audio_format = PCM` in the request and an
++    /// `FF FB` frame header in the answer. The caller decodes by the bytes.
++    pub async fn narration_audio(&self, url: &str) -> Result<Bytes, Error> {
++        let request = Request::builder()
++            .method(&Method::GET)
++            .uri(url)
++            .body(Bytes::new())?;
++
++        let audio = self.session().http_client().request_body(request).await?;
++        if audio.is_empty() {
++            return Err(Error::unavailable("narration audio is empty"));
++        }
++
++        debug!("narration: fetched {} bytes of audio", audio.len());
++        Ok(audio)
++    }
++
      pub async fn get_autoplay_context(
          &self,
          context_request: &AutoplayContextRequest,
-@@ -1008,3 +1090,88 @@ impl SpClient {
+@@ -1008,3 +1116,88 @@ impl SpClient {
          .await
      }
  }

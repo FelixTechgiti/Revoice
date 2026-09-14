@@ -1,0 +1,1032 @@
+diff --git a/connect/src/spirc.rs b/connect/src/spirc.rs
+index 3f9a06f..430cd49 100644
+--- a/connect/src/spirc.rs
++++ b/connect/src/spirc.rs
+@@ -32,6 +32,7 @@ use crate::{
+     },
+ };
+ use futures_util::StreamExt;
++use librespot_playback::narration::Narration;
+ use librespot_protocol::context_page::ContextPage;
+ use protobuf::MessageField;
+ use std::{
+@@ -1562,7 +1563,9 @@ impl SpircTask {
+         }
+ 
+         if let Some(track_id) = self.connect_state.preview_next_track() {
+-            self.player.preload(track_id);
++            // Read after the preview, which is what settles which track is next.
++            let narration = self.connect_state.preview_next_narration();
++            self.player.preload(track_id, narration);
+         }
+     }
+ 
+@@ -1773,7 +1776,13 @@ impl SpircTask {
+ 
+         let current_uri = self.connect_state.current_track(|t| &t.uri);
+         let id = SpotifyUri::from_uri(current_uri)?;
+-        self.player.load(id, start_playing, position_ms);
++        // Spotify DJ's spoken lines ride on the track's own metadata rather
++        // than being audio in the context; every other track has none and this
++        // is `None`.
++        let narration = self
++            .connect_state
++            .current_track(|t| Narration::from_metadata(&t.metadata));
++        self.player.load(id, start_playing, position_ms, narration);
+ 
+         self.connect_state
+             .update_position(position_ms, self.now_ms());
+diff --git a/connect/src/state/tracks.rs b/connect/src/state/tracks.rs
+index 8619035..59f06db 100644
+--- a/connect/src/state/tracks.rs
++++ b/connect/src/state/tracks.rs
+@@ -8,6 +8,7 @@ use crate::{
+         provider::{IsProvider, Provider},
+     },
+ };
++use librespot_playback::narration::Narration;
+ use protobuf::MessageField;
+ use rand::Rng;
+ 
+@@ -362,6 +363,19 @@ impl<'ct> ConnectState {
+         SpotifyUri::from_uri(next).ok()
+     }
+ 
++    /// The DJ's lines for the track `preview_next_track` just named.
++    ///
++    /// Deliberately a second call rather than folded into that one: it has to
++    /// be read AFTER the preview, because filling the context up is what
++    /// decides which track is next.
++    pub fn preview_next_narration(&self) -> Option<Narration> {
++        if self.repeat_track() {
++            self.current_track(|t| Narration::from_metadata(&t.metadata))
++        } else {
++            Narration::from_metadata(&self.next_tracks().first()?.metadata)
++        }
++    }
++
+     pub fn has_next_tracks(&self, min: Option<usize>) -> bool {
+         if let Some(min) = min {
+             self.next_tracks().len() >= min
+diff --git a/examples/play.rs b/examples/play.rs
+index 32a8606..a6d8bf3 100644
+--- a/examples/play.rs
++++ b/examples/play.rs
+@@ -43,7 +43,7 @@ async fn main() {
+         backend(None, audio_format)
+     });
+ 
+-    player.load(track, true, 0);
++    player.load(track, true, 0, None);
+ 
+     println!("Playing...");
+ 
+diff --git a/playback/src/lib.rs b/playback/src/lib.rs
+index a637f00..82b4d08 100644
+--- a/playback/src/lib.rs
++++ b/playback/src/lib.rs
+@@ -12,6 +12,7 @@ pub mod decoder;
+ pub mod dither;
+ mod local_file;
+ pub mod mixer;
++pub mod narration;
+ pub mod player;
+ mod symphonia_util;
+ 
+diff --git a/playback/src/narration.rs b/playback/src/narration.rs
+new file mode 100644
+index 0000000..67f458b
+--- /dev/null
++++ b/playback/src/narration.rs
+@@ -0,0 +1,536 @@
++//! Spotify DJ's spoken lines, played around the track they belong to.
++//!
++//! # What the service gives us, and what it does not
++//!
++//! The narration is not audio in the play context. Each narrated track carries
++//! `narration.intro.ssml` (and sometimes `narration.outro.ssml`) plus the
++//! parameters to render it, and nothing that points at a file: the client
++//! synthesises the speech itself through `/client-tts/v1/fulfill`, which
++//! answers `303` with a signed CDN url. That url is fetched with a plain
++//! unauthenticated GET — it carries its own token, and no Spotify id, audio
++//! key or PlayPlay is involved.
++//!
++//! **What comes back is MP3, not what was asked for.** The request carries
++//! `audio_format = PCM` and the url the service hands back reads
++//! `/v2/generate/sonantic_large/pcm/44100/dj-final-de/…`, so the request was
++//! understood — and the first bytes are `FF FB`, an MPEG-1 Layer III frame
++//! header. Measured on hardware 2026-09-14. Do not trust that field; look at
++//! the bytes.
++//!
++//! Decoding it costs nothing here: symphonia is already a dependency of this
++//! crate with its `mp3` feature enabled, and `SymphoniaDecoder::new` takes any
++//! `MediaSource`, so an in-memory cursor over the clip is the whole of it.
++//! That also inherits its 44100Hz-stereo-only check, which is the same
++//! restriction devgianlu/go-librespot enforces on narration and ships with.
++//!
++//! # Sequential, never mixed
++//!
++//! The official client reports `ms_narration_overlapping = 0`, and this follows
++//! it: the DJ finishes before the music starts. The shape is a port of
++//! devgianlu/go-librespot's `NarratedSource`, which is the only other
++//! implementation of this and had already settled the questions below.
++
++use std::collections::HashMap;
++use std::io::Cursor;
++
++use symphonia::core::probe::Hint;
++
++use crate::decoder::{
++    AudioDecoder, AudioPacket, AudioPacketPosition, DecoderError, DecoderResult, SymphoniaDecoder,
++};
++
++/// Cap on what is pulled into memory for one clip.
++///
++/// Narration runs a couple of seconds and weighs a few hundred kilobytes;
++/// anything wildly larger means something other than a narration clip is on
++/// the other end, and this runs on a device with 256MB of RAM.
++pub const MAX_CLIP_BYTES: usize = 8 << 20;
++
++/// The `tts_provider` name as it appears in the metadata, as the enum value the
++/// service expects.
++///
++/// Anything unrecognised goes as unset rather than as a guess: the service
++/// choosing its own default is a better failure than naming the wrong provider
++/// and getting a voice nobody asked for.
++fn provider_id(name: Option<&str>) -> i32 {
++    match name {
++        Some("CLOUD_TTS") => 1,
++        Some("READSPEAKER") => 2,
++        Some("POLLY") => 3,
++        Some("WELL_SAID") => 4,
++        Some("SONANTIC_FAST") => 6,
++        Some("OPENAI") => 7,
++        Some("SONANTIC_LARGE") => 8,
++        _ => 0,
++    }
++}
++
++/// The loudness a narration clip declares, so it can be matched to the music.
++///
++/// **Absence is reported rather than defaulted, and that is load-bearing.**
++/// Taking a missing value as `0` would mean normalising against 0 LUFS, which
++/// attenuates the clip to nothing — a silent DJ that looks like a working one.
++fn levels(metadata: &HashMap<String, String>, prefix: &str) -> Option<(f64, f64)> {
++    let loudness = metadata.get(&format!("{prefix}.loudness"))?.parse().ok()?;
++    let true_peak = metadata.get(&format!("{prefix}.true_peak"))?.parse().ok()?;
++    Some((loudness, true_peak))
++}
++
++/// One spoken line, as read off a track's metadata: everything needed to ask
++/// the service to render it, and the levels to play it back at.
++#[derive(Clone, Debug, PartialEq)]
++pub struct NarrationClip {
++    pub ssml: String,
++    pub voice: i32,
++    pub provider: i32,
++    pub sample_rate: i32,
++    /// `(loudness, true_peak)` in dB, absent when the metadata does not say.
++    pub levels: Option<(f64, f64)>,
++}
++
++impl NarrationClip {
++    /// Read the clip under one metadata prefix, e.g. `narration.intro`.
++    ///
++    /// Only the script is required. Everything else has a defensible default,
++    /// and a clip that renders in the wrong voice is still a DJ that talks.
++    pub fn from_metadata(metadata: &HashMap<String, String>, prefix: &str) -> Option<Self> {
++        let ssml = metadata.get(&format!("{prefix}.ssml"))?;
++        if ssml.is_empty() {
++            return None;
++        }
++
++        Some(Self {
++            ssml: ssml.clone(),
++            voice: metadata
++                .get(&format!("{prefix}.voice"))
++                .and_then(|v| v.strip_prefix("VOICE"))
++                .and_then(|v| v.parse().ok())
++                .unwrap_or(0),
++            provider: provider_id(
++                metadata
++                    .get(&format!("{prefix}.tts_provider"))
++                    .map(String::as_str),
++            ),
++            sample_rate: metadata
++                .get(&format!("{prefix}.sample_rate"))
++                .and_then(|v| v.parse().ok())
++                .unwrap_or(44100),
++            levels: levels(metadata, prefix),
++        })
++    }
++}
++
++/// The DJ's lines for one track. Either may be absent; a track with neither
++/// produces no `Narration` at all, so the ordinary path stays untouched for
++/// every track that is not part of a DJ context.
++#[derive(Clone, Debug, PartialEq)]
++pub struct Narration {
++    pub intro: Option<NarrationClip>,
++    pub outro: Option<NarrationClip>,
++}
++
++impl Narration {
++    pub fn from_metadata(metadata: &HashMap<String, String>) -> Option<Self> {
++        let intro = NarrationClip::from_metadata(metadata, "narration.intro");
++        let outro = NarrationClip::from_metadata(metadata, "narration.outro");
++        if intro.is_none() && outro.is_none() {
++            return None;
++        }
++        Some(Self { intro, outro })
++    }
++}
++
++/// Decode one narration clip from the bytes fetched off the CDN, at a fixed
++/// gain.
++///
++/// The whole clip is buffered rather than streamed: it runs a couple of
++/// seconds, and the decoder seeks.
++pub fn decode_clip(clip: Vec<u8>, gain: f64) -> DecoderResult<GainDecoder<SymphoniaDecoder>> {
++    let mut hint = Hint::new();
++    // Named rather than probed blind: the service mislabels the format in its
++    // own url (see the module comment), so the extension asserted here is what
++    // the BYTES were measured to be.
++    hint.with_extension("mp3");
++    Ok(GainDecoder::new(
++        SymphoniaDecoder::new(Cursor::new(clip), hint)?,
++        gain,
++    ))
++}
++
++/// A decoder that scales what it passes on.
++///
++/// This exists because the player applies ONE normalisation factor — the
++/// track's — to everything a decoder hands it, and the DJ's clip is mastered
++/// to its own loudness. The caller therefore pre-divides by the track's factor
++/// so that the player's own multiplication lands on the clip's. There is no
++/// other place to put it: `AudioDecoder` is the whole of what the player sees.
++pub struct GainDecoder<D> {
++    inner: D,
++    gain: f64,
++}
++
++impl<D> GainDecoder<D> {
++    pub fn new(inner: D, gain: f64) -> Self {
++        Self { inner, gain }
++    }
++}
++
++impl<D: AudioDecoder> AudioDecoder for GainDecoder<D> {
++    fn seek(&mut self, position_ms: u32) -> Result<u32, DecoderError> {
++        self.inner.seek(position_ms)
++    }
++
++    fn next_packet(&mut self) -> DecoderResult<Option<(AudioPacketPosition, AudioPacket)>> {
++        match self.inner.next_packet()? {
++            Some((position, AudioPacket::Samples(mut samples))) => {
++                if self.gain != 1.0 {
++                    for sample in samples.iter_mut() {
++                        *sample *= self.gain;
++                    }
++                }
++                Ok(Some((position, AudioPacket::Samples(samples))))
++            }
++            // Raw is the passthrough decoder's packet, which narration never
++            // is. Pass it on untouched rather than failing.
++            other => Ok(other),
++        }
++    }
++}
++
++/// A track with the DJ talking around it — an introduction before and a closing
++/// remark after, either of which may be absent.
++///
++/// Position stays the track's throughout, so a listener sees the song as not
++/// yet started while the DJ introduces it. That is what the official client
++/// shows, and it is also the only answer that does not make a seek bar jump
++/// backwards when the music finally begins.
++pub struct NarratedDecoder {
++    parts: Vec<Box<dyn AudioDecoder + Send>>,
++    /// Index of the track itself among the parts.
++    main: usize,
++    cur: usize,
++    /// The track's own position, reported while a clip is playing.
++    main_position_ms: u32,
++}
++
++impl NarratedDecoder {
++    /// Wrap a track with its narration. Either clip may be absent, in which
++    /// case this is the track and nothing else.
++    ///
++    /// `start_position_ms` is where the track itself has already been seeked
++    /// to, and is what an introduction reports while it plays.
++    pub fn new(
++        intro: Option<Box<dyn AudioDecoder + Send>>,
++        main: Box<dyn AudioDecoder + Send>,
++        outro: Option<Box<dyn AudioDecoder + Send>>,
++        start_position_ms: u32,
++    ) -> Self {
++        let mut parts: Vec<Box<dyn AudioDecoder + Send>> = Vec::with_capacity(3);
++        if let Some(intro) = intro {
++            parts.push(intro);
++        }
++        let main_idx = parts.len();
++        parts.push(main);
++        if let Some(outro) = outro {
++            parts.push(outro);
++        }
++        Self {
++            parts,
++            main: main_idx,
++            cur: 0,
++            main_position_ms: start_position_ms,
++        }
++    }
++
++    /// Whether anything is wrapped at all, so a caller can skip this entirely.
++    pub fn is_narrated(&self) -> bool {
++        self.parts.len() > 1
++    }
++}
++
++impl AudioDecoder for NarratedDecoder {
++    /// Seeking puts playback back on the track, wherever it was.
++    ///
++    /// **Both directions matter, and only one of them is obvious.** Forwards
++    /// it abandons an introduction still playing, because a listener who
++    /// scrubs wants the music and not the rest of the sentence. Backwards it
++    /// matters more: the player reuses a finished decoder to repeat a track,
++    /// and a wrapper left standing past its last part answers the repeat with
++    /// silence — a track that plays once and then goes quiet on every loop.
++    /// A closing remark follows either way, since it belongs to the end of the
++    /// track rather than to a position within it.
++    fn seek(&mut self, position_ms: u32) -> Result<u32, DecoderError> {
++        self.cur = self.main;
++        let reached = self.parts[self.main].seek(position_ms)?;
++        self.main_position_ms = reached;
++        Ok(reached)
++    }
++
++    fn next_packet(&mut self) -> DecoderResult<Option<(AudioPacketPosition, AudioPacket)>> {
++        while self.cur < self.parts.len() {
++            let is_main = self.cur == self.main;
++            match self.parts[self.cur].next_packet() {
++                Ok(Some((mut position, packet))) => {
++                    if is_main {
++                        self.main_position_ms = position.position_ms;
++                    } else {
++                        // A clip's own timeline is not the track's, and the
++                        // track's is what everything downstream reports.
++                        position.position_ms = self.main_position_ms;
++                    }
++                    return Ok(Some((position, packet)));
++                }
++                // This part is done; fall through to the next one rather than
++                // reporting the end of the whole thing.
++                Ok(None) => self.cur += 1,
++                Err(e) => {
++                    // **A failing track is a real error; a failing narration is
++                    // not.** Losing the music because the DJ could not be
++                    // decoded would be a worse device than one that simply
++                    // does not talk.
++                    if is_main {
++                        return Err(e);
++                    }
++                    warn!("narration playback failed, skipping it: {e}");
++                    self.cur += 1;
++                }
++            }
++        }
++        Ok(None)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// A decoder that hands out a fixed script of outcomes, so the sequencing
++    /// rules can be driven without any audio.
++    struct Fake {
++        /// One entry per call: `Some(position_ms)` a packet, `None` the end.
++        packets: Vec<Option<u32>>,
++        /// Fail on this call instead of following the script.
++        fail_at: Option<usize>,
++        calls: usize,
++        #[allow(dead_code)]
++        seeked_to: Option<u32>,
++    }
++
++    impl Fake {
++        fn playing(positions: &[u32]) -> Self {
++            Self {
++                packets: positions.iter().map(|p| Some(*p)).collect(),
++                fail_at: None,
++                calls: 0,
++                seeked_to: None,
++            }
++        }
++
++        fn failing() -> Self {
++            Self {
++                packets: vec![],
++                fail_at: Some(0),
++                calls: 0,
++                seeked_to: None,
++            }
++        }
++
++        fn boxed(self) -> Box<dyn AudioDecoder + Send> {
++            Box::new(self)
++        }
++    }
++
++    impl AudioDecoder for Fake {
++        fn seek(&mut self, position_ms: u32) -> Result<u32, DecoderError> {
++            self.seeked_to = Some(position_ms);
++            // A real decoder plays again from where it was seeked to, so the
++            // script restarts. Without this a test cannot tell a wrapper that
++            // resumed from one that merely returned a number.
++            self.calls = 0;
++            Ok(position_ms)
++        }
++
++        fn next_packet(&mut self) -> DecoderResult<Option<(AudioPacketPosition, AudioPacket)>> {
++            let call = self.calls;
++            self.calls += 1;
++            if self.fail_at == Some(call) {
++                return Err(DecoderError::SymphoniaDecoder("fake failure".into()));
++            }
++            match self.packets.get(call) {
++                Some(Some(position_ms)) => Ok(Some((
++                    AudioPacketPosition {
++                        position_ms: *position_ms,
++                        skipped: false,
++                    },
++                    AudioPacket::Samples(vec![0.5, 0.5]),
++                ))),
++                _ => Ok(None),
++            }
++        }
++    }
++
++    fn drain(decoder: &mut dyn AudioDecoder) -> Vec<u32> {
++        let mut out = Vec::new();
++        while let Some((position, _)) = decoder.next_packet().expect("decoding failed") {
++            out.push(position.position_ms);
++        }
++        out
++    }
++
++    #[test]
++    fn plays_the_parts_in_order() {
++        let mut d = NarratedDecoder::new(
++            Some(Fake::playing(&[0, 20]).boxed()),
++            Fake::playing(&[0, 10, 20]).boxed(),
++            Some(Fake::playing(&[0]).boxed()),
++            0,
++        );
++        assert!(d.is_narrated());
++        // Six packets: two of intro, three of track, one of outro.
++        assert_eq!(drain(&mut d).len(), 6);
++    }
++
++    #[test]
++    fn a_clip_reports_the_tracks_position_not_its_own() {
++        // The intro runs 0..20ms of its own timeline while the track is to
++        // start at 30000ms. Reporting the clip's timeline would send the
++        // listener's progress bar back to the beginning and then jump.
++        let mut d = NarratedDecoder::new(
++            Some(Fake::playing(&[0, 20]).boxed()),
++            Fake::playing(&[30000, 30010]).boxed(),
++            Some(Fake::playing(&[0, 20]).boxed()),
++            30000,
++        );
++        assert_eq!(drain(&mut d), vec![30000, 30000, 30000, 30010, 30010, 30010]);
++    }
++
++    #[test]
++    fn a_failing_narration_costs_only_itself() {
++        let mut d = NarratedDecoder::new(Some(Fake::failing().boxed()), Fake::playing(&[0, 10]).boxed(), None, 0);
++        assert_eq!(drain(&mut d), vec![0, 10]);
++    }
++
++    #[test]
++    fn a_failing_outro_does_not_fail_the_track() {
++        let mut d = NarratedDecoder::new(None, Fake::playing(&[0, 10]).boxed(), Some(Fake::failing().boxed()), 0);
++        assert_eq!(drain(&mut d), vec![0, 10]);
++    }
++
++    #[test]
++    fn a_failing_track_is_a_real_error() {
++        let mut d = NarratedDecoder::new(None, Fake::failing().boxed(), None, 0);
++        assert!(d.next_packet().is_err());
++    }
++
++    #[test]
++    fn seeking_abandons_an_intro_but_keeps_the_outro() {
++        let mut d = NarratedDecoder::new(
++            Some(Fake::playing(&[0, 20]).boxed()),
++            Fake::playing(&[5000]).boxed(),
++            Some(Fake::playing(&[0]).boxed()),
++            0,
++        );
++        // One packet of intro, then a scrub.
++        assert!(d.next_packet().unwrap().is_some());
++        assert_eq!(d.seek(5000).unwrap(), 5000);
++        // The track's packet and the outro's, and nothing more of the intro.
++        assert_eq!(drain(&mut d), vec![5000, 5000]);
++    }
++
++    #[test]
++    fn a_finished_decoder_plays_again_when_it_is_seeked_back() {
++        // How the player repeats a track: it keeps the decoder and seeks it to
++        // 0. A wrapper left standing past its last part would answer that with
++        // silence.
++        let mut d = NarratedDecoder::new(
++            Some(Fake::playing(&[0]).boxed()),
++            Fake::playing(&[0, 10]).boxed(),
++            Some(Fake::playing(&[0]).boxed()),
++            0,
++        );
++        assert_eq!(drain(&mut d).len(), 4);
++        // Every part is exhausted. The seek has to put playback back on the
++        // track, or the repeat is silence.
++        assert_eq!(d.seek(0).unwrap(), 0);
++        assert_eq!(drain(&mut d), vec![0, 10]);
++    }
++
++    #[test]
++    fn without_clips_it_is_the_track_and_nothing_else() {
++        let mut d = NarratedDecoder::new(None, Fake::playing(&[0, 10]).boxed(), None, 0);
++        assert!(!d.is_narrated());
++        assert_eq!(drain(&mut d), vec![0, 10]);
++    }
++
++    #[test]
++    fn gain_scales_the_samples() {
++        let mut d = GainDecoder::new(Fake::playing(&[0]), 0.5);
++        let (_, packet) = d.next_packet().unwrap().unwrap();
++        assert_eq!(packet.samples().unwrap(), &[0.25f64, 0.25]);
++    }
++
++    fn meta(pairs: &[(&str, &str)]) -> HashMap<String, String> {
++        pairs
++            .iter()
++            .map(|(k, v)| (k.to_string(), v.to_string()))
++            .collect()
++    }
++
++    #[test]
++    fn reads_a_clip_off_the_metadata() {
++        let m = meta(&[
++            ("narration.intro.ssml", "<speak>Hallo</speak>"),
++            ("narration.intro.voice", "VOICE7"),
++            ("narration.intro.tts_provider", "SONANTIC_LARGE"),
++            ("narration.intro.sample_rate", "44100"),
++            ("narration.intro.loudness", "-14.5"),
++            ("narration.intro.true_peak", "0.98"),
++        ]);
++        let clip = NarrationClip::from_metadata(&m, "narration.intro").unwrap();
++        assert_eq!(clip.voice, 7);
++        assert_eq!(clip.provider, 8);
++        assert_eq!(clip.sample_rate, 44100);
++        assert_eq!(clip.levels, Some((-14.5, 0.98)));
++    }
++
++    #[test]
++    fn levels_are_absent_rather_than_zero() {
++        // Zero would mean normalising against 0 LUFS, which attenuates the
++        // clip to silence — a DJ that looks like it is working.
++        let m = meta(&[("narration.intro.ssml", "<speak>Hallo</speak>")]);
++        let clip = NarrationClip::from_metadata(&m, "narration.intro").unwrap();
++        assert_eq!(clip.levels, None);
++        // A half-written pair is no pair.
++        let m = meta(&[
++            ("narration.intro.ssml", "<speak>Hallo</speak>"),
++            ("narration.intro.loudness", "-14.5"),
++        ]);
++        assert_eq!(
++            NarrationClip::from_metadata(&m, "narration.intro")
++                .unwrap()
++                .levels,
++            None
++        );
++    }
++
++    #[test]
++    fn an_unknown_provider_goes_unset_rather_than_guessed() {
++        assert_eq!(provider_id(Some("SOMETHING_NEW")), 0);
++        assert_eq!(provider_id(None), 0);
++    }
++
++    #[test]
++    fn a_track_without_narration_produces_none() {
++        assert!(Narration::from_metadata(&meta(&[("some.other.key", "x")])).is_none());
++        // An empty script is not a line to speak.
++        assert!(Narration::from_metadata(&meta(&[("narration.intro.ssml", "")])).is_none());
++    }
++
++    #[test]
++    fn an_outro_alone_is_a_narration() {
++        let n = Narration::from_metadata(&meta(&[("narration.outro.ssml", "<speak>Das war's</speak>")]))
++            .unwrap();
++        assert!(n.intro.is_none());
++        assert!(n.outro.is_some());
++    }
++}
+diff --git a/playback/src/player.rs b/playback/src/player.rs
+index 9c09be5..823360d 100644
+--- a/playback/src/player.rs
++++ b/playback/src/player.rs
+@@ -29,6 +29,7 @@ use crate::{
+     local_file::{LocalFileLookup, create_local_file_lookup},
+     metadata::audio::{AudioFileFormat, AudioFiles, AudioItem},
+     mixer::VolumeGetter,
++    narration::{NarratedDecoder, Narration, NarrationClip, decode_clip},
+ };
+ use futures_util::{
+     StreamExt, TryFutureExt, future, future::FusedFuture,
+@@ -43,6 +44,10 @@ use tokio::sync::{mpsc, oneshot};
+ use crate::SAMPLES_PER_SECOND;
+ 
+ const PRELOAD_NEXT_TRACK_BEFORE_END_DURATION_MS: u32 = 30000;
++
++/// How long one DJ line may take to synthesise and fetch before it is given up
++/// on. See `PlayerTrackLoader::render_clip`.
++const NARRATION_RENDER_TIMEOUT: Duration = Duration::from_secs(8);
+ pub const DB_VOLTAGE_RATIO: f64 = 20.0;
+ pub const PCM_AT_0DBFS: f64 = 1.0;
+ 
+@@ -104,9 +109,12 @@ enum PlayerCommand {
+         track_id: SpotifyUri,
+         play: bool,
+         position_ms: u32,
++        /// The DJ's lines for this track, when it has any.
++        narration: Option<Narration>,
+     },
+     Preload {
+         track_id: SpotifyUri,
++        narration: Option<Narration>,
+     },
+     Play,
+     Pause,
+@@ -360,7 +368,7 @@ impl NormalisationData {
+         })
+     }
+ 
+-    fn get_factor(config: &PlayerConfig, data: NormalisationData) -> f64 {
++    pub(crate) fn get_factor(config: &PlayerConfig, data: NormalisationData) -> f64 {
+         if !config.normalisation {
+             return 1.0;
+         }
+@@ -541,16 +549,26 @@ impl Player {
+         }
+     }
+ 
+-    pub fn load(&self, track_id: SpotifyUri, start_playing: bool, position_ms: u32) {
++    pub fn load(
++        &self,
++        track_id: SpotifyUri,
++        start_playing: bool,
++        position_ms: u32,
++        narration: Option<Narration>,
++    ) {
+         self.command(PlayerCommand::Load {
+             track_id,
+             play: start_playing,
+             position_ms,
++            narration,
+         });
+     }
+ 
+-    pub fn preload(&self, track_id: SpotifyUri) {
+-        self.command(PlayerCommand::Preload { track_id });
++    pub fn preload(&self, track_id: SpotifyUri, narration: Option<Narration>) {
++        self.command(PlayerCommand::Preload {
++            track_id,
++            narration,
++        });
+     }
+ 
+     pub fn play(&self) {
+@@ -693,6 +711,7 @@ enum PlayerState {
+         play_request_id: u64,
+         start_playback: bool,
+         loader: Pin<Box<dyn FusedFuture<Output = Result<PlayerLoadedTrackData, ()>> + Send>>,
++        narration: Option<Narration>,
+     },
+     Paused {
+         track_id: SpotifyUri,
+@@ -958,10 +977,11 @@ impl PlayerTrackLoader {
+         &self,
+         track_uri: SpotifyUri,
+         position_ms: u32,
++        narration: Option<Narration>,
+     ) -> Option<PlayerLoadedTrackData> {
+         match track_uri {
+             SpotifyUri::Track { .. } | SpotifyUri::Episode { .. } => {
+-                self.load_remote_track(track_uri, position_ms).await
++                self.load_remote_track(track_uri, position_ms, narration).await
+             }
+             SpotifyUri::Local { .. } => self.load_local_track(track_uri, position_ms).await,
+             _ => {
+@@ -975,6 +995,7 @@ impl PlayerTrackLoader {
+         &self,
+         track_uri: SpotifyUri,
+         position_ms: u32,
++        narration: Option<Narration>,
+     ) -> Option<PlayerLoadedTrackData> {
+         let track_id: SpotifyId = match (&track_uri).try_into() {
+             Ok(id) => id,
+@@ -1198,6 +1219,17 @@ impl PlayerTrackLoader {
+ 
+             let is_explicit = audio_item.is_explicit;
+ 
++            // The DJ speaks around the track, so this goes after the seek: the
++            // seek belongs to the music, and `stream_position_ms` has to stay
++            // the music's for everything downstream that reports progress.
++            let decoder = match &narration {
++                Some(narration) => {
++                    self.narrate(narration, decoder, &normalisation_data, stream_position_ms)
++                        .await
++                }
++                None => decoder,
++            };
++
+             info!("<{}> ({} ms) loaded", audio_item.name, duration_ms);
+ 
+             return Some(PlayerLoadedTrackData {
+@@ -1213,6 +1245,156 @@ impl PlayerTrackLoader {
+         }
+     }
+ 
++    /// Wrap a loaded track in the DJ's lines.
++    ///
++    /// **Nothing here is fatal.** Every failure — the synthesis request, the
++    /// fetch, the decode — returns the track unwrapped, because a DJ that does
++    /// not speak is a working device and a DJ that takes the music with it is
++    /// not. That is also why this runs after the track is fully loaded rather
++    /// than before: by the time anything can go wrong there is already
++    /// something to fall back to.
++    async fn narrate(
++        &self,
++        narration: &Narration,
++        track: Decoder,
++        track_levels: &NormalisationData,
++        start_position_ms: u32,
++    ) -> Decoder {
++        // Starting mid-track is a resume or a scrub, and an introduction to a
++        // song already half played is not an introduction. The closing remark
++        // still belongs to the end of it.
++        let intro = if start_position_ms == 0 {
++            self.render_clip(narration.intro.as_ref(), "intro", track_levels)
++                .await
++        } else {
++            None
++        };
++        // The closing remark is rendered up front although it is not needed
++        // until the track ends, because `AudioDecoder` has no await to reach
++        // for later. It is the second of the two round trips the wait below
++        // is there to bound.
++        let outro = self
++            .render_clip(narration.outro.as_ref(), "outro", track_levels)
++            .await;
++
++        if intro.is_none() && outro.is_none() {
++            return track;
++        }
++
++        Box::new(NarratedDecoder::new(
++            intro,
++            track,
++            outro,
++            start_position_ms,
++        ))
++    }
++
++    /// Synthesise one line and get a decoder for it, or `None` and a log line.
++    async fn render_clip(
++        &self,
++        clip: Option<&NarrationClip>,
++        which: &str,
++        track_levels: &NormalisationData,
++    ) -> Option<Decoder> {
++        let clip = clip?;
++
++        // **Bounded, because this sits in front of the first note.** Rendering
++        // a line is two round trips to services the rest of playback never
++        // touches, and they happen before the track can start; without a limit
++        // a slow synthesis is indistinguishable from a device that did not
++        // react to being pressed. Losing the line is the cheaper failure.
++        match tokio::time::timeout(
++            NARRATION_RENDER_TIMEOUT,
++            self.render_clip_unbounded(clip, which, track_levels),
++        )
++        .await
++        {
++            Ok(decoder) => decoder,
++            Err(_) => {
++                warn!(
++                    "narration {which} took longer than {:?}, playing without it",
++                    NARRATION_RENDER_TIMEOUT
++                );
++                None
++            }
++        }
++    }
++
++    async fn render_clip_unbounded(
++        &self,
++        clip: &NarrationClip,
++        which: &str,
++        track_levels: &NormalisationData,
++    ) -> Option<Decoder> {
++        let url = match self
++            .session
++            .spclient()
++            .narration_url(&clip.ssml, clip.voice, clip.provider, clip.sample_rate)
++            .await
++        {
++            Ok(url) => url,
++            Err(e) => {
++                warn!("could not synthesise the narration {which}: {e}");
++                return None;
++            }
++        };
++
++        let audio = match self.session.spclient().narration_audio(&url).await {
++            Ok(audio) if audio.len() <= crate::narration::MAX_CLIP_BYTES => audio,
++            Ok(audio) => {
++                warn!(
++                    "narration {which} is {} bytes, which is not a narration clip",
++                    audio.len()
++                );
++                return None;
++            }
++            Err(e) => {
++                warn!("could not fetch the narration {which}: {e}");
++                return None;
++            }
++        };
++
++        match decode_clip(audio.to_vec(), self.narration_gain(clip, track_levels)) {
++            Ok(decoder) => Some(Box::new(decoder)),
++            Err(e) => {
++                warn!("could not decode the narration {which}: {e}");
++                None
++            }
++        }
++    }
++
++    /// How much to scale a clip by so it comes out at its own mastered level.
++    ///
++    /// **The division is the whole point.** The player applies ONE
++    /// normalisation factor to everything a decoder hands it — the track's —
++    /// and the DJ is mastered separately, which is why the metadata carries
++    /// its own loudness at all. Pre-dividing by the track's factor makes the
++    /// player's own multiplication land on the clip's.
++    fn narration_gain(&self, clip: &NarrationClip, track_levels: &NormalisationData) -> f64 {
++        let Some((loudness, true_peak)) = clip.levels else {
++            // Absent levels mean play it as delivered. Normalising against a
++            // defaulted 0 LUFS would attenuate it to nothing.
++            return 1.0;
++        };
++
++        let clip_factor = NormalisationData::get_factor(
++            &self.config,
++            NormalisationData {
++                track_gain_db: loudness,
++                track_peak: true_peak,
++                album_gain_db: loudness,
++                album_peak: true_peak,
++            },
++        );
++        let track_factor = NormalisationData::get_factor(&self.config, *track_levels);
++
++        if track_factor > 0.0 {
++            clip_factor / track_factor
++        } else {
++            clip_factor
++        }
++    }
++
+     async fn load_local_track(
+         &self,
+         track_uri: SpotifyUri,
+@@ -1349,6 +1531,7 @@ impl Future for PlayerInternal {
+                 ref track_id,
+                 start_playback,
+                 play_request_id,
++                ..
+             } = self.state
+             {
+                 // The loader may be terminated if we are trying to load the same track
+@@ -1943,6 +2126,7 @@ impl PlayerInternal {
+         play_request_id_option: Option<u64>,
+         play: bool,
+         position_ms: u32,
++        narration: Option<Narration>,
+     ) -> PlayerResult {
+         let play_request_id =
+             play_request_id_option.unwrap_or(self.play_request_id_generator.get());
+@@ -2134,8 +2318,10 @@ impl PlayerInternal {
+         self.preload = PlayerPreload::None;
+ 
+         // If we don't have a loader yet, create one from scratch.
+-        let loader =
+-            loader.unwrap_or_else(|| Box::pin(self.load_track(track_id.clone(), position_ms)));
++        let loader = match loader {
++            Some(loader) => loader,
++            None => Box::pin(self.load_track(track_id.clone(), position_ms, narration.clone())),
++        };
+ 
+         // Set ourselves to a loading state.
+         self.state = PlayerState::Loading {
+@@ -2143,12 +2329,15 @@ impl PlayerInternal {
+             play_request_id,
+             start_playback: play,
+             loader,
++            // Kept so a scrub arriving before the load finishes can restart it
++            // with the DJ's lines rather than silently dropping them.
++            narration,
+         };
+ 
+         Ok(())
+     }
+ 
+-    fn handle_command_preload(&mut self, track_id: SpotifyUri) {
++    fn handle_command_preload(&mut self, track_id: SpotifyUri, narration: Option<Narration>) {
+         debug!("Preloading track");
+         let mut preload_track = true;
+         // check whether the track is already loaded somewhere or being loaded.
+@@ -2191,7 +2380,7 @@ impl PlayerInternal {
+ 
+         // schedule the preload of the current track if desired.
+         if preload_track {
+-            let loader = self.load_track(track_id.clone(), 0);
++            let loader = self.load_track(track_id.clone(), 0, narration);
+             self.preload = PlayerPreload::Loading {
+                 track_id,
+                 loader: Box::pin(loader),
+@@ -2208,14 +2397,17 @@ impl PlayerInternal {
+             ref track_id,
+             play_request_id,
+             start_playback,
++            ref narration,
+             ..
+         } = self.state
+         {
++            let (track_id, narration) = (track_id.clone(), narration.clone());
+             return self.handle_command_load(
+-                track_id.clone(),
++                track_id,
+                 Some(play_request_id),
+                 start_playback,
+                 position_ms,
++                narration,
+             );
+         }
+ 
+@@ -2272,9 +2464,13 @@ impl PlayerInternal {
+                 track_id,
+                 play,
+                 position_ms,
+-            } => self.handle_command_load(track_id, None, play, position_ms)?,
++                narration,
++            } => self.handle_command_load(track_id, None, play, position_ms, narration)?,
+ 
+-            PlayerCommand::Preload { track_id } => self.handle_command_preload(track_id),
++            PlayerCommand::Preload {
++                track_id,
++                narration,
++            } => self.handle_command_preload(track_id, narration),
+ 
+             PlayerCommand::Seek(position_ms) => self.handle_command_seek(position_ms)?,
+ 
+@@ -2383,6 +2579,7 @@ impl PlayerInternal {
+         &mut self,
+         spotify_uri: SpotifyUri,
+         position_ms: u32,
++        narration: Option<Narration>,
+     ) -> impl FusedFuture<Output = Result<PlayerLoadedTrackData, ()>> + Send + 'static {
+         // This method creates a future that returns the loaded stream and associated info.
+         // Ideally all work should be done using asynchronous code. However, seek() on the
+@@ -2402,7 +2599,7 @@ impl PlayerInternal {
+         let handle = tokio::runtime::Handle::current();
+ 
+         let load_handle = thread::spawn(move || {
+-            let data = handle.block_on(loader.load_track(spotify_uri, position_ms));
++            let data = handle.block_on(loader.load_track(spotify_uri, position_ms, narration));
+             if let Some(data) = data {
+                 let _ = result_tx.send(data);
+             }
+@@ -2474,7 +2671,7 @@ impl fmt::Debug for PlayerCommand {
+                 .field(&play)
+                 .field(&position_ms)
+                 .finish(),
+-            PlayerCommand::Preload { track_id } => {
++            PlayerCommand::Preload { track_id, .. } => {
+                 f.debug_tuple("Preload").field(&track_id).finish()
+             }
+             PlayerCommand::Play => f.debug_tuple("Play").finish(),
