@@ -36,6 +36,33 @@ index 3f9a06f..430cd49 100644
  
          self.connect_state
              .update_position(position_ms, self.now_ms());
+diff --git a/connect/src/state.rs b/connect/src/state.rs
+index b4ee61b..29ebe37 100644
+--- a/connect/src/state.rs
++++ b/connect/src/state.rs
+@@ -178,8 +178,20 @@ impl ConnectState {
+                 supports_external_episodes: false,
+                 supports_set_backend_metadata: false,
+                 supports_hifi: MessageField::none(),
+-                // that "AI" dj thingy only available to specific regions/users
+-                supports_dj: false,
++                // Declared because this build implements it: it follows
++                // `lexicon_context_url` for the tracks and synthesises the
++                // spoken lines itself (see `playback::narration`). Upstream
++                // says false and is right to — nothing there plays them.
++                //
++                // **It is what the official app reads to decide what to
++                // show.** With false it puts up "In der Betaversion ist die
++                // Stimme des DJs auf diesem Lautsprecher nicht verfügbar" and
++                // says so on a device that is about to speak — measured on
++                // hardware 2026-09-14, in the same session whose log shows the
++                // narration arriving and being decoded. So the flag is the
++                // claim and the code is the proof: neither may move without
++                // the other.
++                supports_dj: true,
+                 supports_rooms: false,
+                 // AudioQuality::HIFI is available, further investigation necessary
+                 supported_audio_quality: EnumOrUnknown::new(AudioQuality::VERY_HIGH),
 diff --git a/connect/src/state/tracks.rs b/connect/src/state/tracks.rs
 index 8619035..59f06db 100644
 --- a/connect/src/state/tracks.rs
@@ -95,10 +122,10 @@ index a637f00..82b4d08 100644
  
 diff --git a/playback/src/narration.rs b/playback/src/narration.rs
 new file mode 100644
-index 0000000..67f458b
+index 0000000..2d04e3b
 --- /dev/null
 +++ b/playback/src/narration.rs
-@@ -0,0 +1,536 @@
+@@ -0,0 +1,712 @@
 +//! Spotify DJ's spoken lines, played around the track they belong to.
 +//!
 +//! # What the service gives us, and what it does not
@@ -133,12 +160,22 @@ index 0000000..67f458b
 +
 +use std::collections::HashMap;
 +use std::io::Cursor;
++use std::time::Duration;
 +
-+use symphonia::core::probe::Hint;
++use symphonia::core::{
++    audio::SampleBuffer,
++    codecs::{Decoder, DecoderOptions},
++    errors::Error,
++    formats::FormatOptions,
++    io::{MediaSourceStream, MediaSourceStreamOptions},
++    meta::MetadataOptions,
++    probe::{Hint, ProbeResult},
++};
 +
 +use crate::decoder::{
-+    AudioDecoder, AudioPacket, AudioPacketPosition, DecoderError, DecoderResult, SymphoniaDecoder,
++    AudioDecoder, AudioPacket, AudioPacketPosition, DecoderError, DecoderResult,
 +};
++use crate::{NUM_CHANNELS, PAGES_PER_MS, SAMPLE_RATE};
 +
 +/// Cap on what is pulled into memory for one clip.
 +///
@@ -246,16 +283,164 @@ index 0000000..67f458b
 +///
 +/// The whole clip is buffered rather than streamed: it runs a couple of
 +/// seconds, and the decoder seeks.
-+pub fn decode_clip(clip: Vec<u8>, gain: f64) -> DecoderResult<GainDecoder<SymphoniaDecoder>> {
-+    let mut hint = Hint::new();
-+    // Named rather than probed blind: the service mislabels the format in its
-+    // own url (see the module comment), so the extension asserted here is what
-+    // the BYTES were measured to be.
-+    hint.with_extension("mp3");
-+    Ok(GainDecoder::new(
-+        SymphoniaDecoder::new(Cursor::new(clip), hint)?,
-+        gain,
-+    ))
++pub fn decode_clip(clip: Vec<u8>, gain: f64) -> DecoderResult<GainDecoder<ClipDecoder>> {
++    Ok(GainDecoder::new(ClipDecoder::new(clip)?, gain))
++}
++
++/// Duplicate a mono buffer into the interleaved stereo the player expects.
++///
++/// Kept apart from the decoding so it can be tested without an encoder: there
++/// is no way to write a mono MP3 in a unit test without shipping one.
++fn to_stereo(mono: &[f64]) -> Vec<f64> {
++    let mut out = Vec::with_capacity(mono.len() * 2);
++    for sample in mono {
++        out.push(*sample);
++        out.push(*sample);
++    }
++    out
++}
++
++/// The narration's own decoder, which differs from the track's in exactly one
++/// way: **it accepts a mono clip and duplicates it into both channels.**
++///
++/// That is not a nicety. Measured on hardware 2026-09-14, the German DJ's
++/// lines come back as single-channel MP3 — `Unsupported number of channels:
++/// 0b…0001` out of `SymphoniaDecoder`, which is right to refuse it for a
++/// TRACK and wrong for this. Playing mono samples as if they were interleaved
++/// stereo would be a voice at half speed across one channel, so the choice is
++/// upmix or nothing.
++///
++/// The sample rate is still fixed at 44100, because nothing here resamples.
++pub struct ClipDecoder {
++    probe_result: ProbeResult,
++    decoder: Box<dyn Decoder>,
++    sample_buffer: Option<SampleBuffer<f64>>,
++    mono: bool,
++}
++
++impl ClipDecoder {
++    pub fn new(clip: Vec<u8>) -> DecoderResult<Self> {
++        let mut hint = Hint::new();
++        // Named rather than probed blind: the service mislabels the format in
++        // its own url (see the module comment), so the extension asserted here
++        // is what the BYTES were measured to be.
++        hint.with_extension("mp3");
++
++        let mss = MediaSourceStream::new(
++            Box::new(Cursor::new(clip)),
++            MediaSourceStreamOptions::default(),
++        );
++        let probe_result = symphonia::default::get_probe().format(
++            &hint,
++            mss,
++            &FormatOptions {
++                enable_gapless: true,
++                ..Default::default()
++            },
++            &MetadataOptions::default(),
++        )?;
++
++        let track = probe_result.format.default_track().ok_or_else(|| {
++            DecoderError::SymphoniaDecoder("narration has no default track".into())
++        })?;
++        let decoder =
++            symphonia::default::get_codecs().make(&track.codec_params, &DecoderOptions::default())?;
++
++        let rate = decoder.codec_params().sample_rate.ok_or_else(|| {
++            DecoderError::SymphoniaDecoder("narration has no sample rate".into())
++        })?;
++        if rate != SAMPLE_RATE {
++            return Err(DecoderError::SymphoniaDecoder(format!(
++                "narration sample rate {rate} is not {SAMPLE_RATE} and nothing here resamples"
++            )));
++        }
++
++        let channels = decoder.codec_params().channels.ok_or_else(|| {
++            DecoderError::SymphoniaDecoder("narration has no channel configuration".into())
++        })?;
++        let mono = match channels.count() {
++            1 => true,
++            n if n == NUM_CHANNELS as usize => false,
++            n => {
++                return Err(DecoderError::SymphoniaDecoder(format!(
++                    "narration has {n} channels, which is neither mono nor stereo"
++                )));
++            }
++        };
++
++        Ok(Self {
++            probe_result,
++            decoder,
++            sample_buffer: None,
++            mono,
++        })
++    }
++
++    fn ts_to_ms(&self, ts: u64) -> u32 {
++        match self.decoder.codec_params().time_base {
++            Some(time_base) => Duration::from(time_base.calc_time(ts)).as_millis() as u32,
++            None => (ts as f64 * PAGES_PER_MS) as u32,
++        }
++    }
++}
++
++impl AudioDecoder for ClipDecoder {
++    /// A clip is never seeked: `NarratedDecoder` seeks the track and abandons
++    /// whatever clip was playing. Answering honestly rather than pretending is
++    /// what keeps that true — a silent success here would look like a clip
++    /// that repositioned itself.
++    fn seek(&mut self, _position_ms: u32) -> Result<u32, DecoderError> {
++        Err(DecoderError::SymphoniaDecoder(
++            "a narration clip cannot be seeked".into(),
++        ))
++    }
++
++    fn next_packet(&mut self) -> DecoderResult<Option<(AudioPacketPosition, AudioPacket)>> {
++        let mut skipped = false;
++
++        loop {
++            let packet = match self.probe_result.format.next_packet() {
++                Ok(packet) => packet,
++                Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
++                    return Ok(None);
++                }
++                Err(e) => return Err(e.into()),
++            };
++
++            let position = AudioPacketPosition {
++                position_ms: self.ts_to_ms(packet.ts()),
++                skipped,
++            };
++
++            match self.decoder.decode(&packet) {
++                Ok(decoded) => {
++                    let buffer = match self.sample_buffer.as_mut() {
++                        Some(buffer) => buffer,
++                        None => {
++                            let spec = *decoded.spec();
++                            let duration = decoded.capacity() as u64;
++                            self.sample_buffer.insert(SampleBuffer::new(duration, spec))
++                        }
++                    };
++                    buffer.copy_interleaved_ref(decoded);
++
++                    let samples = if self.mono {
++                        to_stereo(buffer.samples())
++                    } else {
++                        buffer.samples().to_vec()
++                    };
++
++                    return Ok(Some((position, AudioPacket::Samples(samples))));
++                }
++                Err(Error::DecodeError(_)) => {
++                    // One malformed frame is not a broken clip.
++                    skipped = true;
++                    continue;
++                }
++                Err(e) => return Err(e.into()),
++            }
++        }
++    }
 +}
 +
 +/// A decoder that scales what it passes on.
@@ -561,6 +746,24 @@ index 0000000..67f458b
 +        let mut d = NarratedDecoder::new(None, Fake::playing(&[0, 10]).boxed(), None, 0);
 +        assert!(!d.is_narrated());
 +        assert_eq!(drain(&mut d), vec![0, 10]);
++    }
++
++    #[test]
++    fn mono_is_duplicated_into_both_channels() {
++        // Measured on hardware 2026-09-14: the German DJ's lines come back as
++        // single-channel MP3. Handing those to the player as if they were
++        // already interleaved would be a voice at half speed on one side.
++        assert_eq!(to_stereo(&[0.1, 0.2, 0.3]), vec![0.1, 0.1, 0.2, 0.2, 0.3, 0.3]);
++        assert_eq!(to_stereo(&[]), Vec::<f64>::new());
++    }
++
++    #[test]
++    fn bytes_that_are_not_audio_are_an_error_not_a_panic() {
++        // Whatever the service hands back, the failure has to be the kind
++        // `NarratedDecoder` can drop — it is the difference between a DJ that
++        // stays quiet and a device that stops playing music.
++        assert!(ClipDecoder::new(vec![0u8; 64]).is_err());
++        assert!(ClipDecoder::new(Vec::new()).is_err());
 +    }
 +
 +    #[test]

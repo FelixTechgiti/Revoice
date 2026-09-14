@@ -1617,6 +1617,28 @@ which is the only other implementation of this and had settled each one:
   means normalising against 0 LUFS, which attenuates the clip to nothing — a
   silent DJ that looks like a working one.
 
+**The clip is MONO, and the track decoder is right to refuse it.** Measured on
+hardware 2026-09-14: the German DJ's lines come back as single-channel MP3, so
+`SymphoniaDecoder` answers `Unsupported number of channels: 0b…0001` and the
+line is dropped — the device plays the music and never speaks, which is exactly
+what a working "a failing narration costs only itself" looks like from the
+outside and exactly why that rule needed a second pair of eyes. Narration
+therefore has its OWN decoder (`narration::ClipDecoder`), differing from the
+track's in one way: it accepts one channel and duplicates it into both. The
+track decoder is left strict, because upmixing a mono TRACK would hide a real
+fault. Same 44100Hz limit on both, since nothing here resamples.
+
+**`supports_dj` is a claim the official app reads, and it was false.** With it
+false the Spotify app puts up *"In der Betaversion ist die Stimme des DJs auf
+diesem Lautsprecher nicht verfügbar"* — on the same device whose log, in that
+same session, shows the narration arriving and being decoded. So the banner was
+ours. Upstream sets it false and is right to; this build sets it true because
+it implements the thing. **The flag is the claim and the code is the proof, and
+neither may move without the other** — a capability declared ahead of its
+implementation is the `oww_shadow`/`oww_trigger` mistake in another costume,
+and one withheld behind a working implementation is a feature the service
+silently declines to send.
+
 **A seek must put playback back on the TRACK, in both directions.** Forwards
 that is the documented rule — a listener who scrubs wants the music, not the
 rest of the sentence. Backwards is the half that bites: librespot repeats a
