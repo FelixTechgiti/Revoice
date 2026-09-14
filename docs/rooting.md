@@ -4,20 +4,31 @@
 > negative Folgen.**
 
 > **⚠️ Installiere `amonet-biscuit` v2.0.0 NICHT auf einem Echo, auf dem
-> Revoice läuft.**
+> Revoice unter FireOS 5 läuft.**
 > Version 2.0.0 des Unlocks (10. September 2026) ersetzt die Bootloader des
-> Echo, und danach bootet FireOS 5 nicht mehr. Revoice läuft ausschließlich
-> auf FireOS 5 — emOS eingeschlossen, denn emOS benutzt den FireOS-5-Kernel.
-> Der XDA-Thread fordert entsperrte Nutzer inzwischen zum Update auf. Wenn auf
-> deinem Echo Revoice läuft: tu es nicht.
+> Echo, und danach bootet FireOS 5 nicht mehr — ein funktionierendes Gerät
+> hört also auf zu funktionieren, und es gibt keinen sicheren Weg zurück. Der
+> XDA-Thread fordert entsperrte Nutzer inzwischen zum Update auf. Wenn auf
+> deinem Echo Revoice unter FireOS 5 läuft: tu es nicht.
 >
 > - **Du entsperrst gerade einen neuen Echo?** Nimm **amonet-biscuit v1.1.0**,
->   das weiterhin im XDA-Thread hängt.
-> - **Schon aktualisiert?** Versuche nicht, durch Flashen von FireOS 5 oder
->   eines älteren amonet zurückzukommen. v2.0.0 hat Preloader, LK und
->   TrustZone überschrieben, und die alten von Hand zurückzuschreiben ist
->   genau der Weg, auf dem ein Echo hart gebrickt wird. Revoice läuft heute
->   nicht auf FireOS 6, dieser Echo bleibt also vorerst dort.
+>   das weiterhin im XDA-Thread hängt. Auf diesem Weg hat das Projekt mit
+>   großem Abstand die meisten Gerätestunden.
+> - **Schon auf v2.0.0 aktualisiert?** **Versuche nicht zurückzukommen**, weder
+>   durch Flashen von FireOS 5 noch eines älteren amonet. v2.0.0 hat Preloader,
+>   LK und TrustZone überschrieben, und die alten von Hand zurückzuschreiben
+>   ist genau der Weg, auf dem ein Echo hart gebrickt wird. Dein Echo bleibt
+>   auf FireOS 6 — und das ist **keine Sackgasse mehr**: **emOS läuft auf dem
+>   Kernel von FireOS 6** (erstmals am 12. September 2026 auf echter Hardware
+>   gebootet). Nimm also den **emOS-Weg** des Assistenten, der ein v2-Gerät
+>   annimmt. Der FireOS-Weg kann dort nicht funktionieren und verweigert sich,
+>   weil er das eigene Android 5 des Geräts startet.
+>
+>   Zwei ehrliche Einschränkungen dazu, weil es deine Hardware ist und die
+>   Sache neu: Es ist bisher auf **einem** Echo gebootet worden, und **noch
+>   kein mit v2.0.0 entsperrter Echo ist vollständig durch den Assistenten
+>   gelaufen**. Der Schritt „Boot-Image sichern" ist dein Rückweg nach einem
+>   missglückten Flash — bewahre diese Datei woanders auf als auf dem Gerät.
 
 Revoice braucht einen Echo Dot Gen 2, der bereits entsperrt ist und FireOS 5
 läuft. Zwei getrennte Arbeiten bringen dich dorthin, und sie tragen sehr
@@ -46,11 +57,20 @@ unterschiedliche Risiken.
 > Bitbreite war also nicht das Hindernis. (Das korrigiert eine frühere Fassung
 > dieser Notiz, die es auf die Signaturkette der TrustZone schob.)
 >
-> Revoice läuft, emOS eingeschlossen, auf FireOS 5 und braucht daher
-> **v1.1.0**. Für diese Version ist `Fire OS 6.5.7.0 (NS6570/6077)` weiterhin
-> relevant: ihre Anleitung sagt dir, du sollst vor dem Entsperren *darauf*
-> aktualisieren, weil der Exploit die Firmware-Partitionen unterwegs
-> herabstuft.
+> Revoice läuft, emOS eingeschlossen, auf FireOS 5 und braucht daher für
+> **diesen** Weg **v1.1.0**. Für diese Version ist `Fire OS 6.5.7.0
+> (NS6570/6077)` weiterhin relevant: ihre Anleitung sagt dir, du sollst vor dem
+> Entsperren *darauf* aktualisieren, weil der Exploit die Firmware-Partitionen
+> unterwegs herabstuft.
+>
+> **Die Firmware läuft auf FireOS 5; emOS läuft auf beiden.** Revoices eigene
+> Firmware zielt auf die Android-Userspace-Schicht, und die ist auf beiden
+> FireOS-Versionen 32-bittig — die Binärdatei ist also dieselbe. Was sich
+> unterscheidet, ist emOS' init, das zum Kernel passen muss: 64 Bit unter
+> FireOS 5, 32 Bit unter FireOS 6. Der Assistent wählt das, indem er die
+> Architektur aus deinem eigenen gesicherten Boot-Image liest, statt dich zu
+> fragen.
+>
 
 ## Was du brauchst
 

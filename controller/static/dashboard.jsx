@@ -3774,8 +3774,9 @@ function WifiPanel({ ready, wifiSsid, setWifiSsid, wifiPsk, setWifiPsk, onScan, 
   );
 }
 
-// md5 rather than SHA-256, and that is not a security choice: the device
-// verifies with busybox md5sum, so this is the hash both ends can compute.
+// md5 rather than SHA-256, and that is not a security choice: the device side
+// is whatever md5sum the recovery has (see deviceTools), so this is the hash
+// both ends can compute.
 // crypto.subtle has no md5, so it is implemented here — 40 lines against a
 // dependency the CSP would block anyway.
 function _md5Hex(bytes) {
@@ -3819,6 +3820,77 @@ function _md5Hex(bytes) {
   new DataView(out.buffer).setInt32(12, d0, true);
   return Promise.resolve(
     Array.from(out).map(b => b.toString(16).padStart(2, '0')).join(''));
+}
+
+// Which shell tools this recovery actually has, resolved once per connection.
+//
+// The wizard used to write `busybox md5sum` and `busybox dd` literally, and
+// busybox is not something a recovery is guaranteed to have. It depends on
+// what has been installed on that device rather than on the TWRP version: a
+// stock FireOS 6 install carries toybox, with md5sum and dd on PATH and no
+// busybox at all, while a device with a root component added may well have
+// both. So neither form can be assumed and both have to be tried.
+//
+// Measured 2026-09-13 on G090LF11752215LE, TWRP 3.7.0_9-0, stock FireOS 6:
+// `busybox md5sum` exits 127 and produces an empty string, which surfaced as
+// "start_server.sh reads unreadable" on a device whose script was installed
+// perfectly. The transfer was fine; the CHECK could not run.
+//
+// The plain name is preferred and busybox is the fallback rather than the
+// other way round: the escrow step has always used a bare `dd` and works
+// everywhere it has been run, so plain is the form with evidence behind it.
+//
+// Resolved by RUNNING each candidate rather than by looking for the binary.
+// `command -v` answers about PATH, and busybox applets are not on it — the
+// question is whether the command works, which is the same distinction the
+// TWRP `su` shim taught us when a file that existed could not execute.
+// `sync` is in here because it is the DURABILITY BARRIER on every
+// partition write, not a convenience: dd returns once the kernel has the
+// bytes, and sync() is what waits for them to reach the device. A
+// recovery without it has to be refused rather than written to with no
+// barrier and nothing saying so.
+const _TOOL_NAMES = ['md5sum', 'dd', 'base64', 'tee', 'sync'];
+
+async function deviceTools(c) {
+  if (c._tools) return c._tools;
+  const probe = _TOOL_NAMES.map(n =>
+    `for t in "${n}" "busybox ${n}"; do `
+    + `if $t </dev/null >/dev/null 2>&1; then echo "TOOL ${n} $t"; break; fi; done`
+  ).join('; ');
+  const out = await c.shell(probe);
+  const tools = {};
+  for (const m of out.matchAll(/^TOOL (\S+) (.+)$/gm)) tools[m[1]] = m[2].trim();
+
+  // Whether this dd accepts `conv=`. toybox builds it optionally and a stock
+  // FireOS 6 recovery has it compiled OUT: the command exits with
+  // "dd: conv option disabled" having written nothing at all, which on a
+  // partition write reads as 180MB/s and a read-back that still holds the old
+  // image. Measured 2026-09-13 on G090LF11752215LE; the device was never
+  // modified, because a dd that refuses its arguments does nothing.
+  //
+  // Asked with a one-byte write to a temp file rather than by parsing a
+  // version, and the fallback is simply to drop the flag — the callers
+  // already follow every write with `sync`, and the read-back after
+  // drop_caches is what actually proves a write landed.
+  if (tools.dd) {
+    const conv = await c.shell(
+      `${tools.dd} if=/dev/zero of=/tmp/.em_ddconv bs=1 count=1 conv=fsync `
+      + `>/dev/null 2>&1 && echo CONV_OK; rm -f /tmp/.em_ddconv`);
+    tools.ddConv = /CONV_OK/.test(conv) ? ' conv=fsync' : '';
+  }
+  c._tools = tools;
+  const missing = _TOOL_NAMES.filter(n => !tools[n]);
+  if (missing.length) {
+    // Named rather than substituted with a guess. A wrong tool here writes a
+    // partition or verifies one, and "command not found" swallowed into an
+    // empty string is what made this cost an evening in the first place.
+    throw new Error(
+      `This recovery has no usable ${missing.join(', ')} — the wizard needs `
+      + `${missing.length > 1 ? 'them' : 'it'} to verify what it writes, so `
+      + `nothing has been written. Please report this with the TWRP version `
+      + `from step 1.`);
+  }
+  return tools;
 }
 
 // Hand the operator a file. Used for the escrowed boot image, which must exist
@@ -4482,25 +4554,59 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       }
       addLog(`Unlock check: TWRP ${twrp || 'unknown'}, expdb ${expdb || 'unreadable'}`);
     }
+    // A v2 device is refused by the FireOS flow and ACCEPTED by the emOS one,
+    // and that split is the point rather than a loosening.
+    //
+    // amonet-biscuit v2.0.0 writes a newer preloader, LK and TrustZone, and
+    // FireOS 5 does not boot on them — so the FireOS flow, which patches and
+    // boots the device's own Android 5, still cannot work and still refuses.
+    //
+    // What changed is emOS. It ran on FireOS 5's 64-bit kernel only, which is
+    // why this used to say "emOS included"; it now also runs on FireOS 6's
+    // 32-bit kernel, which is the only FireOS v2 boots. So refusing a v2 device
+    // here would refuse exactly the devices emOS newly supports, and the
+    // escrow-build-flash sequence the emOS flow runs is not FireOS-5-specific at
+    // any step: it reads the device's own boot image, rebuilds it with an init
+    // matching that image's kernel, and writes it back.
     const unlock = _unlockVerdict({ release: effRelease, expdb, twrp });
-    if (unlock.v2) {
+    if (unlock.v2 && !isEmos) {
       expectDisconnect.current = true;
       try { await c.close(); } catch {}
       setAdb(null);
       throw new Error(
         `This Echo was unlocked with amonet-biscuit v2.0.0 or later (${unlock.evidence.join('; ')}). `
-        + 'v2.0.0 replaces the Echo\'s bootloaders and FireOS 5 does not boot on them, and '
-        + 'Revoice, emOS included, needs FireOS 5 — so nothing has been written. Do not try '
-        + 'to go back by flashing FireOS 5 or an older amonet: that means writing bootloaders '
-        + 'by hand, which is how an Echo gets hard-bricked. See the warning at the top of '
-        + 'docs/rooting.md.');
+        + 'v2.0.0 replaces the Echo\'s bootloaders and FireOS 5 does not boot on them, so the '
+        + 'FireOS flow cannot work on this device — nothing has been written. Use the emOS flow '
+        + 'instead, which runs on the FireOS 6 kernel this device has. Do not try to go back by '
+        + 'flashing FireOS 5 or an older amonet: that means writing bootloaders by hand, which is '
+        + 'how an Echo gets hard-bricked. See the warning at the top of docs/rooting.md.');
     }
-    if ((!inRecovery || effRelease) && !effRelease.startsWith('5.')) {
-      throw new Error(`Expected FireOS 5 (Android 5.x), got Android ${effRelease}. Wrong device?`);
+    if (unlock.v2) {
+      // Said loudly, and not as a refusal. The operator is about to have their
+      // boot partition rewritten on a device class that has not been through
+      // this wizard before, and the thing that makes that recoverable is the
+      // escrow two steps away — so it is named here, while they can still stop.
+      addLog(`This Echo was unlocked with amonet-biscuit v2.0.0 or later `
+           + `(${unlock.evidence.join('; ')}), so it runs FireOS 6. emOS supports that `
+           + `kernel, and the wizard will build a 32-bit image to match it.`, 'warn');
+      addLog('No Echo unlocked with v2 has been through this wizard before. The '
+           + 'Escrow Boot Image step is the way back — keep that file.', 'warn');
+    }
+    // Which releases each flow can work with. FireOS 6 is Android 7.1, and there
+    // is no FireOS on this board reporting 6.x, so the emOS flow accepts 5 and 7
+    // by name rather than "not 5" — an unexpected release is still a wrong
+    // device, and the point of this check is to catch that before anything is
+    // written.
+    const okRelease = isEmos ? ['5.', '7.'] : ['5.'];
+    if ((!inRecovery || effRelease)
+        && !okRelease.some(p => effRelease.startsWith(p))) {
+      throw new Error(
+        `Expected ${isEmos ? 'FireOS 5 or 6 (Android 5.x or 7.x)' : 'FireOS 5 (Android 5.x)'}`
+        + `, got Android ${effRelease}. Wrong device?`);
     }
     if (fwBuild && fwBuild !== _TESTED_FIREOS_BUILD) {
       addLog(`Untested firmware — Revoice is developed against ${_TESTED_FIREOS_NAME} `
-           + `(${_TESTED_FIREOS_BUILD}). Other FireOS 5 builds may behave differently, `
+           + `(${_TESTED_FIREOS_BUILD}). Other builds may behave differently, `
            + `particularly around USB and ADB.`, 'warn');
     }
     // The emOS flow REFUSES a board it does not recognise, where the FireOS
@@ -4665,14 +4771,37 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
   // able to read by-name is not evidence of danger, and refusing on it would
   // block any device whose TWRP lays that directory out differently — the same
   // reading the OTA free-space check applies to an unreadable df.
+  // Two unlock generations put the boot partition in two different places.
+  //
+  // amonet v1 INVERTS the by-name map under TWRP: the bare boot_a points at
+  // the unlock payload and TWRP publishes /dev/block/other-boot for the real
+  // kernel. Everything below the `v1` comment is that layout, unchanged.
+  //
+  // amonet v2 does not invert anything. It protects itself by pointing lk,
+  // preloader and tee at /tmp/ota-decoy/ instead, so an OTA writing a
+  // bootloader writes to tmpfs — which is why boot_a/boot_b are left pointing
+  // at real flash and there is no other-boot, no _x alias and no _amonet
+  // alias anywhere (v2 keeps its payload in expdb). Measured on a v2 device,
+  // TWRP 3.7.0_9-0, 2026-09-13.
+  //
+  // The consequence that matters: v1 got the ACTIVE slot for free, because
+  // other-boot named it. v2 flips the active slot on every install, so the
+  // slot has to be read at the moment the wizard runs — `ro.boot.slot_suffix`,
+  // which the bootloader sets on the kernel cmdline and TWRP itself uses.
+  // Never default to boot_a: escrowing the wrong slot backs up the other
+  // image while calling it a backup, and flashing it leaves the device
+  // booting what it booted before, which reads as the flash doing nothing.
   function classifyBootTarget(probe) {
     const target = (probe.match(/TARGET=(\S*)/) || [])[1] || '';
     const isBlock = /ISBLK=yes/.test(probe);
-    const names = [];
-    for (const m of probe.matchAll(/^NAME (\S+) (\S+)$/gm)) {
-      if (m[2] === target && !names.includes(m[1])) names.push(m[1]);
-    }
-    names.sort();
+    const entries = [...probe.matchAll(/^NAME (\S+) (\S+)$/gm)];
+    const namesFor = (dev) => {
+      const out = [];
+      for (const m of entries) if (m[2] === dev && !out.includes(m[1])) out.push(m[1]);
+      out.sort();
+      return out;
+    };
+    const names = namesFor(target);
     const label = names.length ? `${names.join(', ')} (${target})` : target;
 
     if (!target) {
@@ -4680,6 +4809,54 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         '/dev/block/other-boot did not resolve to anything. TWRP normally creates it; '
         + 'without it there is nothing safe to write to.' };
     }
+
+    // `readlink -f` echoes its argument back when the path does not exist, so
+    // target still reading other-boot means the alias is ABSENT rather than
+    // pointing somewhere bad. Those are different states: absent is v2 and is
+    // normal, whereas resolving to a non-block path is the tmpfs case below
+    // and is never safe.
+    if (target === '/dev/block/other-boot') {
+      const suffix = ((probe.match(/SUFFIX=(\S*)/) || [])[1] || '').trim();
+      const slotDev = ((probe.match(/SLOTDEV=(\S*)/) || [])[1] || '').trim();
+      const slotBlock = /SLOTBLK=yes/.test(probe);
+
+      // A v1-shaped map with no other-boot is a combination nothing has seen.
+      // Refusing costs a bug report; guessing costs the unlock.
+      const v1Aliases = entries.filter(m => /_(amonet|x)$/.test(m[1])).map(m => m[1]);
+      if (v1Aliases.length) {
+        return { ok: false, target, names, reason:
+          `/dev/block/other-boot does not exist, but the by-name map carries `
+          + `${v1Aliases.sort().join(', ')} — which belongs to the older amonet layout, `
+          + 'where the bare names are not the kernel. That combination is not a state '
+          + 'the wizard has seen, so nothing has been read or written. Please report '
+          + 'this with the line above.' };
+      }
+      if (!/^_[ab]$/.test(suffix)) {
+        return { ok: false, target, names, reason:
+          `Could not read which slot this device booted (ro.boot.slot_suffix is `
+          + `${suffix ? `"${suffix}"` : 'empty'}). This device has boot_a and boot_b and `
+          + 'switches between them, so there is no safe default — writing to the wrong '
+          + 'one leaves the device booting the image it booted before. Nothing has been '
+          + 'read or written.' };
+      }
+      const wanted = `boot${suffix}`;
+      if (!slotDev || slotDev === `/dev/block/by-name/${wanted}`) {
+        return { ok: false, target, names, reason:
+          `This device booted slot ${suffix.slice(1).toUpperCase()}, but `
+          + `/dev/block/by-name/${wanted} did not resolve to anything.` };
+      }
+      if (!slotBlock) {
+        return { ok: false, target, names, reason:
+          `/dev/block/by-name/${wanted} resolves to "${slotDev}", which is not a block `
+          + 'device. Writing there would land in TWRP\'s tmpfs and never reach flash.' };
+      }
+      const slotNames = namesFor(slotDev);
+      return { ok: true, layout: 'v2', slot: suffix, target: slotDev, names: slotNames,
+        reason: `${slotNames.length ? `${slotNames.join(', ')} ` : ''}(${slotDev}), `
+              + `the active slot ${suffix.slice(1).toUpperCase()}` };
+    }
+
+    // ── v1: other-boot exists and names the real kernel ──────────────────
     if (!isBlock) {
       return { ok: false, target, names, reason:
         `/dev/block/other-boot resolves to "${target}", which is not a block device. `
@@ -4695,7 +4872,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         + 'report this with the line above: it is not a state the wizard has seen.' };
     }
     if (names.some(n => n.endsWith('_x'))) {
-      return { ok: true, target, names, reason: label };
+      return { ok: true, layout: 'v1', target, names, reason: label };
     }
     // No _x alias and no _amonet alias, but named boot_a/boot_b: this is the
     // Android-style map, where the bare name IS the payload. The wizard should
@@ -4707,7 +4884,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         + 'Under that layout the bare name is amonet\'s payload rather than the FireOS '
         + 'kernel, so this is not somewhere to write a kernel. Refusing.' };
     }
-    return { ok: true, warn: true, target, names, reason:
+    return { ok: true, warn: true, layout: 'v1', target, names, reason:
       `could not identify ${target} in by-name — continuing, but it is not a partition this `
       + 'has been checked against.' };
   }
@@ -4724,10 +4901,18 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     const probe = await c.shell(
       'd=$(readlink -f /dev/block/other-boot 2>/dev/null); echo "TARGET=$d"; '
       + 'if [ -b "$d" ]; then echo "ISBLK=yes"; else echo "ISBLK=no"; fi; '
+      // The slot the BOOTLOADER picked. ro.boot.* comes from the kernel
+      // cmdline LK passed, so it is true inside TWRP too — unlike the
+      // ro.build.* properties, which describe the recovery ramdisk. Empty on
+      // amonet v1, where other-boot answers the same question.
+      + 's=$(getprop ro.boot.slot_suffix 2>/dev/null); echo "SUFFIX=$s"; '
+      + 'sd=$(readlink -f /dev/block/by-name/boot$s 2>/dev/null); echo "SLOTDEV=$sd"; '
+      + 'if [ -b "$sd" ]; then echo "SLOTBLK=yes"; else echo "SLOTBLK=no"; fi; '
       // Glob every boot_* rather than naming the four we expect: the payload
       // is only visible under TWRP as boot_a_amonet/boot_b_amonet, and a
-      // fixed list cannot report a name it was not told to look for.
-      + 'for n in /dev/block/platform/*/by-name/boot_*; do '
+      // fixed list cannot report a name it was not told to look for. Both
+      // by-name directories, because amonet v2's TWRP has only the short one.
+      + 'for n in /dev/block/platform/*/by-name/boot_* /dev/block/by-name/boot_*; do '
       + '[ -e "$n" ] && echo "NAME ${n##*/} $(readlink -f "$n" 2>/dev/null)"; done');
     const boot = classifyBootTarget(probe);
     if (!boot.ok) throw new Error(boot.reason);
@@ -5438,7 +5623,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     const b64 = btoa(unescape(encodeURIComponent(confLines)));
     await c.shell('su -c "chmod 770 /data/misc/wifi"');
     await c.shell('su -c "rm -f /tmp/wpa_supplicant.conf"');
-    await c.shell(`su -c "echo ${b64} | busybox base64 -d | busybox tee /tmp/wpa_supplicant.conf"`);
+    const T = await deviceTools(c);
+    await c.shell(`su -c "echo ${b64} | ${T.base64} -d | ${T.tee} /tmp/wpa_supplicant.conf"`);
 
     // Verify the staged file actually has the SSID we intended — catches
     // the b64-via-shell-arg path silently mangling content before we ever
@@ -5989,8 +6175,9 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // endings and the OTA path already treats md5 as the only definition of a
     // successful transfer.
     const scriptWant = await _md5Hex(new TextEncoder().encode(script));
+    const tools = await deviceTools(c);
     const scriptGot  = (await c.shell(
-      "su -c 'busybox md5sum /data/local/bin/start_server.sh' 2>/dev/null")).trim().split(/\s+/)[0];
+      `su -c '${tools.md5sum} /data/local/bin/start_server.sh' 2>/dev/null`)).trim().split(/\s+/)[0];
     if (scriptGot !== scriptWant) {
       throw new Error('Startup script install verification failed — '
         + `/data/local/bin/start_server.sh reads ${scriptGot || 'unreadable'}, expected `
@@ -6178,7 +6365,18 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     const probe = await c.shell(
       'd=$(readlink -f /dev/block/other-boot 2>/dev/null); echo "TARGET=$d"; '
       + 'if [ -b "$d" ]; then echo "ISBLK=yes"; else echo "ISBLK=no"; fi; '
-      + 'for n in /dev/block/platform/*/by-name/boot_*; do '
+      // The slot the BOOTLOADER picked. ro.boot.* comes from the kernel
+      // cmdline LK passed, so it is true inside TWRP too — unlike the
+      // ro.build.* properties, which describe the recovery ramdisk. Empty on
+      // amonet v1, where other-boot answers the same question.
+      + 's=$(getprop ro.boot.slot_suffix 2>/dev/null); echo "SUFFIX=$s"; '
+      + 'sd=$(readlink -f /dev/block/by-name/boot$s 2>/dev/null); echo "SLOTDEV=$sd"; '
+      + 'if [ -b "$sd" ]; then echo "SLOTBLK=yes"; else echo "SLOTBLK=no"; fi; '
+      // Glob every boot_* rather than naming the four we expect: the payload
+      // is only visible under TWRP as boot_a_amonet/boot_b_amonet, and a
+      // fixed list cannot report a name it was not told to look for. Both
+      // by-name directories, because amonet v2's TWRP has only the short one.
+      + 'for n in /dev/block/platform/*/by-name/boot_* /dev/block/by-name/boot_*; do '
       + '[ -e "$n" ] && echo "NAME ${n##*/} $(readlink -f "$n" 2>/dev/null)"; done');
     // The same guard the FireOS flow uses, and for the same reason: the
     // by-name map is INVERTED between TWRP and Android, and reading the wrong
@@ -6200,8 +6398,16 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // costs nothing, and the failure it prevents is a device that takes the
     // flash and then does not boot, which is the most expensive outcome
     // available here.
+    //
+    // v2 keeps its payload in expdb rather than in a partition alias, so the
+    // absence of boot_*_amonet there is expected and says nothing. Step 1 has
+    // already identified the unlock generation from expdb and the TWRP
+    // version; warning again here would contradict it.
     const amonet = /NAME boot_[ab]_amonet /.test(probe);
-    if (!amonet) {
+    if (boot.layout === 'v2') {
+      addLog(`  amonet v2 layout, booted slot `
+           + `${boot.slot.slice(1).toUpperCase()}`, 'ok');
+    } else if (!amonet) {
       addLog('No amonet partitions in the by-name map. This device may not be '
            + 'unlocked, or may be unlocked by some other means. You are in TWRP, '
            + 'which normally means it IS unlocked — but if the flash does not '
@@ -6272,27 +6478,36 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       throw new Error('No escrowed boot image — run the Escrow Boot Image step first.');
     }
 
-    // The init comes from the latest emOS release by default. It is the only
-    // part of an emOS image that CAN be distributed — the kernel and device
-    // trees in a built image are the user's own — so this is the whole of
-    // what the wizard needs to fetch.
-    let initBlob = initFile;
-    let version = '0.1';
+    // The init comes from the latest emOS release by default, and the CONTROLLER
+    // resolves it rather than the wizard fetching it first.
+    //
+    // That is not a tidying-up. The init must match the escrowed image's KERNEL
+    // architecture — FireOS 5 boots a 64-bit kernel and FireOS 6 a 32-bit one,
+    // and an init of the wrong one takes the flash and then produces no output
+    // at all — and the only thing that knows which is the image itself. Choosing
+    // here would mean a second copy of the sniffer in JavaScript, against the
+    // one in em_emos_build.py, and the two could disagree with no test able to
+    // see it. The image is going to the controller anyway, so the question is
+    // answered where the evidence is.
+    //
+    // It also keeps ~3.5MB out of a request that has already been too big once:
+    // HA's ingress caps the body well below what the controller accepts, and the
+    // reference plus an init was refused with a 413 that never reached the
+    // add-on at all (2026-09-06).
+    // useLatest OVERRIDES a chosen file, as it did before: it is a separate
+    // button, so clicking it after picking a file means the operator changed
+    // their mind. The old code overrode by overwriting initBlob with what it
+    // fetched; nothing is fetched now, so the override has to be explicit.
+    let initBlob = useLatest ? null : initFile;
+    // Only sent for a hand-picked init, where nothing else knows what it is. On
+    // the latest-release path the controller stamps the release's own tag, which
+    // is the version the image actually is — sending a placeholder here would
+    // override it and put "0.1" in /etc/os-release on every provisioned device.
+    let version = useLatest ? '' : '0.1';
     if (useLatest) {
-      addLog('Fetching the emOS init from the latest release…');
-      const resp = await fetch(ingressPath('/api/provision/emos_init'),
-                               { headers: { Authorization: `Bearer ${token}` } });
-      if (!resp.ok) {
-        let detail = `HTTP ${resp.status}`;
-        try { const j = await resp.json(); detail = j.message || j.error || detail; } catch {}
-        throw new Error(detail);
-      }
-      const bytes = new Uint8Array(await resp.arrayBuffer());
-      version = resp.headers.get('X-Emos-Version') || version;
-      initBlob = new Blob([bytes]);
-      addLog(`  ${version}, ${(bytes.length/1024/1024).toFixed(1)} MB`);
+      addLog('The controller will pick the init matching this image’s kernel.');
     }
-    if (!initBlob) {
+    if (!useLatest && !initBlob) {
       throw new Error('Choose an emOS init binary to build with, or use the '
         + 'latest release. Build one from emos/ with build.sh if you need a '
         + 'specific version.');
@@ -6318,7 +6533,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
            + `${(emosRef.bytes.length/1024/1024).toFixed(1)} MB partition — sending that`);
     }
     addLog(`Sending the escrowed image (${(reference.length/1024/1024).toFixed(1)} MB) `
-         + `and the init to the controller…`);
+         + `to the controller…`);
 
     const fd = new FormData();
     fd.append('reference', new Blob([reference]), 'reference.img');
@@ -6327,8 +6542,17 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // provide one as a side effect of reproducing the boot header's SHA1, and
     // that had to be relaxed for images carrying a stale id.
     fd.append('reference_md5', await _md5Hex(reference));
-    fd.append('init', initBlob, 'init');
-    fd.append('version', version);
+    // One or the other, never both: the controller resolves the init from the
+    // reference's own kernel when asked, and an explicit part wins when the
+    // operator picked a file by hand.
+    if (initBlob) {
+      fd.append('init', initBlob, 'init');
+    } else {
+      fd.append('use_latest_init', '1');
+    }
+    if (version) {
+      fd.append('version', version);
+    }
     const resp = await fetch(ingressPath('/api/provision/emos_image'), {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
@@ -6381,12 +6605,18 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
   // Returns null on success, or a string naming what went wrong — the caller
   // decides whether that is a retry, a restore, or a stop.
   async function _writeBootPartition(c, target, bytes, md5, what) {
+    // Before the upload, not after it: a recovery that cannot verify what it
+    // is about to write should say so rather than spend a minute pushing an
+    // image first. deviceTools caches per connection, so this is free on
+    // every call after the first.
+    const T = await deviceTools(c);
+
     addLog(`Uploading the ${what} to the device…`);
     await c.push('/tmp/emos_boot.img', bytes,
       pct => setProgress({ label: `Uploading ${what}`, pct }));
     setProgress(null);
 
-    const staged = (await c.shell('busybox md5sum /tmp/emos_boot.img 2>/dev/null')).trim().split(/\s+/)[0];
+    const staged = (await c.shell(`${T.md5sum} /tmp/emos_boot.img 2>/dev/null`)).trim().split(/\s+/)[0];
     if (staged !== md5) {
       await c.shell('rm -f /tmp/emos_boot.img');
       return `The ${what} arrived on the device corrupted (md5 ${staged || 'unreadable'}, `
@@ -6394,14 +6624,15 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     }
     addLog('  staged and verified on the device');
 
-    // conv=fsync, then sync, then drop the page cache BEFORE reading back.
-    // A read-back that comes from the cache confirms the cache, not the
-    // partition — and a write that reports implausible throughput (this eMMC
-    // does 2.5–9 MB/s) went to cache and is lost on the next boot.
+    // conv=fsync where dd supports it, then sync, then drop the page cache
+    // BEFORE reading back. A read-back that comes from the cache confirms the
+    // cache, not the partition — and a write that reports implausible
+    // throughput (this eMMC does 2.5–9 MB/s) went to cache and is lost on the
+    // next boot.
     addLog(`Writing to ${target}…`);
     const t0 = Date.now();
     const wrote = await c.shell(
-      `busybox dd if=/tmp/emos_boot.img of=${target} bs=1048576 conv=fsync 2>&1; sync`);
+      `${T.dd} if=/tmp/emos_boot.img of=${target} bs=1048576${T.ddConv} 2>&1; ${T.sync}`);
     const secs = (Date.now() - t0) / 1000;
     addLog(wrote.trim() || '(done)');
     const mbps = (bytes.length / 1024 / 1024) / Math.max(secs, 0.001);
@@ -6410,6 +6641,20 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       addLog('That throughput is not achievable on this eMMC, so the write '
            + 'probably went to cache. The read-back below is the check that '
            + 'matters.', 'warn');
+    }
+    // dd ALWAYS prints its record counts to stderr, which is captured above.
+    // Their absence means it never copied anything — it rejected its own
+    // arguments and exited. That is not a failed write, it is no write, and
+    // saying so is the difference between one line and an evening: a stock
+    // FireOS 6 recovery's toybox dd has conv= compiled out and answers
+    // "dd: conv option disabled", which otherwise presents as an impossible
+    // 180MB/s followed by a read-back that still holds the old image.
+    if (!/records in/i.test(wrote)) {
+      await c.shell('rm -f /tmp/emos_boot.img');
+      return `dd did not run: it answered ${JSON.stringify(wrote.trim()) || '(nothing)'} `
+           + `and copied nothing, so ${target} is untouched and the device is `
+           + `exactly as it was. This is a fault in the wizard rather than in `
+           + `your device — please report it with that message.`;
     }
     const short = _ddShortWrite(wrote);
     if (short) {
@@ -6446,11 +6691,16 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       return _md5Hex(padded);
     })();
     const readCmd = exact
-      ? `busybox dd if=${target} bs=2048 count=${bytes.length / 2048}`
-      : `busybox dd if=${target} bs=1048576 count=${Math.ceil(bytes.length / 1048576)}`;
+      ? `${T.dd} if=${target} bs=2048 count=${bytes.length / 2048}`
+      : `${T.dd} if=${target} bs=1048576 count=${Math.ceil(bytes.length / 1048576)}`;
     const readBack = async () => {
-      await c.shell('echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; sync');
-      return (await c.shell(`${readCmd} 2>/dev/null | busybox md5sum`))
+      // sync FIRST, then drop. drop_caches evicts only CLEAN pages, so a
+      // dirty one survives it and the read below could still be answered from
+      // cache — which would confirm the cache rather than the partition. The
+      // other order happened to work, but only because the write command ends
+      // in a sync of its own; this makes the read-back stand on its own.
+      await c.shell(`${T.sync}; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null`);
+      return (await c.shell(`${readCmd} 2>/dev/null | ${T.md5sum}`))
         .trim().split(/\s+/)[0];
     };
     addLog('Reading it back…');
@@ -6833,6 +7083,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // device is not connected to the controller yet, and 15MB of base64
     // heredoc would be slow. Same bytes and same destination as the field
     // path — only the transport differs.
+    const assetTools = await deviceTools(c);
     addLog('Fetching wake word assets from controller…');
     const manifest = await API.get('/api/provision/oww_assets');
     (manifest.problems || []).forEach(p => addLog(`  ⚠ ${p}`, 'error'));
@@ -6857,7 +7108,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       // md5 is the only definition of success: a truncated push produces a
       // file of plausible size that fails later at dlopen, with an error that
       // names nothing useful.
-      const got = (await c.shell('su -c "busybox md5sum /sdcard/em_oww_asset" 2>/dev/null')).trim().split(/\s+/)[0];
+      const got = (await c.shell(`su -c "${assetTools.md5sum} /sdcard/em_oww_asset" 2>/dev/null`)).trim().split(/\s+/)[0];
       if (got !== a.md5) {
         await c.shell('su -c "rm -f /sdcard/em_oww_asset"');
         throw new Error(`${a.name} arrived corrupted (md5 ${got || 'unreadable'}, expected ${a.md5}).`);
@@ -6871,7 +7122,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         `su -c "mv /sdcard/em_oww_asset ${manifest.dir}/${a.name} && chmod 644 ${manifest.dir}/${a.name}" 2>&1`)).trim();
       if (moveOut) addLog(`  → ${moveOut}`);
       const landed = (await c.shell(
-        `su -c "busybox md5sum ${manifest.dir}/${a.name}" 2>/dev/null`)).trim().split(/\s+/)[0];
+        `su -c "${assetTools.md5sum} ${manifest.dir}/${a.name}" 2>/dev/null`)).trim().split(/\s+/)[0];
       if (landed !== a.md5) {
         throw new Error(`${a.name} did not land in ${manifest.dir} `
           + `(md5 ${landed || 'unreadable'}, expected ${a.md5}). Check free space on /data.`);

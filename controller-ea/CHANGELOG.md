@@ -1137,6 +1137,97 @@ The dashboard's firmware and controller update checks read this fork's
 releases. A database copied over from an upstream install is repointed once,
 on the first start, and says so in the log; if you would rather keep tracking
 upstream, set it back and it stays set.
+## 2.24.0-ea.4 (Early Access)
+
+**Fixes the flash step reporting that a write did not take, on a device where
+nothing had been written at all** (#520).
+
+The wizard asked the device to copy the image with an option its recovery does
+not support, so the copy never happened. What you saw was an impossible write
+speed, then a partition that still held the old image, then an automatic retry
+doing exactly the same thing. Your device was never modified.
+
+The wizard now asks whether that option is available and leaves it out where it
+is not. Every write is still followed by a flush and checked by reading the
+partition back, which is what actually proves an image landed.
+
+**It also now tells the two cases apart.** A copy that never ran and a copy
+that failed looked identical, and only one of them means anything is wrong with
+your device. If the tool refuses to run, the wizard says so in its own words
+and tells you the partition is untouched, instead of reporting a mismatch.
+
+## 2.24.0-ea.3 (Early Access)
+
+**Fixes the wizard stopping at the Install EchoMuse step with "start_server.sh
+reads unreadable"** (#516). The file was installed correctly. Only the check
+that confirms it could not run.
+
+The wizard was asking the device to hash files with busybox, and a recovery
+does not always have it — a stock FireOS 6 install carries a different set of
+tools. It now asks the device which tools it has and uses those, so both kinds
+of recovery work.
+
+This also affected the flash step, which verifies the image on the device
+before writing it and reads the partition back afterwards. Both used the same
+missing tool, so a device that got past the install step would have stopped
+there instead. Neither could ever have written something unverified — they
+refuse rather than continue — but the run could not finish.
+
+If the recovery turns out to have no usable tool at all, the wizard now says
+which one is missing and stops before writing anything, rather than reporting
+the file as corrupt.
+
+## 2.24.0-ea.2 (Early Access)
+
+**Fixes the wizard stopping at the Escrow Boot Image step on a device unlocked
+with amonet-biscuit v2.0.0** (#513). It refused with a message about
+`/dev/block/other-boot` not being a block device, and nothing was read or
+written.
+
+That unlock arranges the partitions differently from the older one, and the
+wizard assumed the older layout everywhere. It now recognises both, and reads
+which of the two boot slots your device actually started from rather than
+assuming — v2 devices switch slots when you install a FireOS update, so
+guessing would write to the slot the device is not using and look like the
+flash had done nothing.
+
+If it cannot tell which slot booted, it refuses rather than picking one.
+
+This has been through the test suite against the partition layout read off a
+real v2 device, and has not yet run on hardware.
+
+## 2.24.0-ea.1 (Early Access)
+
+**The setup wizard can now install emOS on a device unlocked with
+amonet-biscuit v2.0.0.** That unlock only boots FireOS 6, and until now those
+devices had no path through the wizard at all.
+
+This needs emOS 0.5 or newer. On an older emOS release the build refuses with a
+message naming the problem, rather than producing an image that will not boot.
+
+The FireOS 6 path has been through CI and host tests. It has not yet run on
+hardware, which is what Early Access is for.
+
+**The wizard picks the init to match your device's kernel.** It reads the
+architecture out of the boot image you escrowed, so a 32-bit device gets the
+32-bit init. An init of the wrong architecture boots to nothing at all, with no
+output, so this is detected rather than left as a setting you could get wrong.
+If the architecture cannot be read, the build refuses instead of guessing.
+
+**amonet v2.0.0 devices are accepted by the emOS flow.** 2.23.1 refused them at
+the first step, because the FireOS path genuinely cannot work on FireOS 6. That
+refusal stays for the FireOS flow. Only the emOS flow accepts them.
+
+**Changing WiFi and scanning for networks now work on emOS.** Those went
+through an Android command that emOS does not have, so the controller writes the
+network and restarts the supplicant instead.
+
+Also in this release: the dashboard tells you when a tab has gone stale against
+a newer controller, and the init is now fetched by the controller rather than
+uploaded by your browser, which takes about 3.5MB out of a request that has hit
+Home Assistant's ingress size limit before.
+
+No database migration. No firmware update.
 
 ## 2.23.1-ea.1 (Early Access)
 
