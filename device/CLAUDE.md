@@ -1331,6 +1331,51 @@ tick yet, must not render as "not running". Accusing a working Echo for the
 first thirty seconds of every reconnect is how this becomes the line everyone
 learns to ignore.
 
+## Two upstream syncs met the same question, and only one of them composed
+
+The 2026-09-14 sync brought twelve upstream commits, and two of them had
+independently answered a question this fork had already answered. **They did
+not resolve the same way, and the difference is worth keeping.**
+
+**Controller discovery COMPOSED, because upstream had left the slot open.**
+Upstream built static endpoints (#166) and wrote in its own comment that the
+persisted last-known tier was "a separate, not-yet-built piece" — which is
+exactly what this fork had built. Better still, upstream's non-static branch
+already carried the `lastKnownServer()` + `probeTCP` fast path. So the merge
+was three grafts onto upstream's loop rather than a rewrite: seeding
+`c.lastServer` from disk at startup (nothing else fills it, and losing that
+once put every updated device back on mDNS-only), the offline record on
+`/data`, and `FindServerWith`'s re-probe so one failed probe does not retire
+the unicast path for a whole outage.
+
+**One graft changed for the better in the merge, and that is the part to
+copy.** The fork's all-clear fired on a registration-count delta; upstream's
+`connect` now returns `healthy`, set at the read loop's exit — the one place a
+connection that LASTED can be told from one accepted and dropped. The merged
+version rides `healthy`, because an outage report that a flap cancels is worse
+than none: it says the problem went away. **When a sync offers a better signal
+for something the fork already does, take the signal, not just the feature.**
+
+**emOS WiFi did NOT compose, and was declined on its own argument.** Both
+sides taught the reload about emOS. Upstream kills the supplicant and lets
+init's 5s supervision ticker restart it against the new conf; this fork's
+`reload.go` uses `wpa_cli disconnect` and deliberately leaves the process
+running, because — in its own words — killing the supplicant on a device whose
+only management path is that radio removes the means of putting it back. That
+is not two additions at one spot, it is two opposed answers, and the fork's
+carries a documented safety argument that upstream's does not address.
+
+So `wifi.go` stays the fork's, and upstream's `wifi_test.go` went with it: it
+tests `androidConf`/`emosConf`/`baseOS`, which are that version's structure.
+**What was given up is real and should be re-decided rather than re-discovered**
+— upstream also omits the WPS/P2P block on emOS, which this fork still emits.
+
+**The general rule both cases produce:** ask whether the two sides answered the
+same QUESTION, not whether they touched the same lines. Upstream naming its own
+missing tier is what made the first one a graft; the fork's comment arguing
+against upstream's mechanism by name is what made the second one a decision
+somebody has to take.
+
 ## A discard armed for a stream that never ends is silent, permanent, and looks healthy
 
 **The music plane has four flushers and three of them are local producers that
