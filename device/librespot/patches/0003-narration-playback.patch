@@ -95,10 +95,10 @@ index a637f00..82b4d08 100644
  
 diff --git a/playback/src/narration.rs b/playback/src/narration.rs
 new file mode 100644
-index 0000000..a907eb5
+index 0000000..67f458b
 --- /dev/null
 +++ b/playback/src/narration.rs
-@@ -0,0 +1,510 @@
+@@ -0,0 +1,536 @@
 +//! Spotify DJ's spoken lines, played around the track they belong to.
 +//!
 +//! # What the service gives us, and what it does not
@@ -350,14 +350,18 @@ index 0000000..a907eb5
 +}
 +
 +impl AudioDecoder for NarratedDecoder {
-+    /// Seeking abandons an introduction still playing: a listener who scrubs
-+    /// wants the music, not the rest of the sentence. A closing remark still
-+    /// follows, because it belongs to the end of the track rather than to the
-+    /// position within it.
++    /// Seeking puts playback back on the track, wherever it was.
++    ///
++    /// **Both directions matter, and only one of them is obvious.** Forwards
++    /// it abandons an introduction still playing, because a listener who
++    /// scrubs wants the music and not the rest of the sentence. Backwards it
++    /// matters more: the player reuses a finished decoder to repeat a track,
++    /// and a wrapper left standing past its last part answers the repeat with
++    /// silence — a track that plays once and then goes quiet on every loop.
++    /// A closing remark follows either way, since it belongs to the end of the
++    /// track rather than to a position within it.
 +    fn seek(&mut self, position_ms: u32) -> Result<u32, DecoderError> {
-+        if self.cur < self.main {
-+            self.cur = self.main;
-+        }
++        self.cur = self.main;
 +        let reached = self.parts[self.main].seek(position_ms)?;
 +        self.main_position_ms = reached;
 +        Ok(reached)
@@ -440,6 +444,10 @@ index 0000000..a907eb5
 +    impl AudioDecoder for Fake {
 +        fn seek(&mut self, position_ms: u32) -> Result<u32, DecoderError> {
 +            self.seeked_to = Some(position_ms);
++            // A real decoder plays again from where it was seeked to, so the
++            // script restarts. Without this a test cannot tell a wrapper that
++            // resumed from one that merely returned a number.
++            self.calls = 0;
 +            Ok(position_ms)
 +        }
 +
@@ -528,6 +536,24 @@ index 0000000..a907eb5
 +        assert_eq!(d.seek(5000).unwrap(), 5000);
 +        // The track's packet and the outro's, and nothing more of the intro.
 +        assert_eq!(drain(&mut d), vec![5000, 5000]);
++    }
++
++    #[test]
++    fn a_finished_decoder_plays_again_when_it_is_seeked_back() {
++        // How the player repeats a track: it keeps the decoder and seeks it to
++        // 0. A wrapper left standing past its last part would answer that with
++        // silence.
++        let mut d = NarratedDecoder::new(
++            Some(Fake::playing(&[0]).boxed()),
++            Fake::playing(&[0, 10]).boxed(),
++            Some(Fake::playing(&[0]).boxed()),
++            0,
++        );
++        assert_eq!(drain(&mut d).len(), 4);
++        // Every part is exhausted. The seek has to put playback back on the
++        // track, or the repeat is silence.
++        assert_eq!(d.seek(0).unwrap(), 0);
++        assert_eq!(drain(&mut d), vec![0, 10]);
 +    }
 +
 +    #[test]

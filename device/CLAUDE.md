@@ -1617,6 +1617,16 @@ which is the only other implementation of this and had settled each one:
   means normalising against 0 LUFS, which attenuates the clip to nothing — a
   silent DJ that looks like a working one.
 
+**A seek must put playback back on the TRACK, in both directions.** Forwards
+that is the documented rule — a listener who scrubs wants the music, not the
+rest of the sentence. Backwards is the half that bites: librespot repeats a
+track by keeping the finished decoder and seeking it to 0, so a wrapper that
+only rewinds an intro stays parked past its last part and answers the repeat
+with **silence**. Caught by reading the diff rather than by a test, and pinned
+by one since. The general form: a wrapper that tracks a position of its own has
+to answer a seek from every position it can be in, not from the one the feature
+was designed around.
+
 **Two things are ours rather than ported, and both are about this device:**
 
 - **The gain is DIVIDED by the track's.** librespot applies one normalisation
