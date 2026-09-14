@@ -324,6 +324,37 @@ def pad(b: bytes) -> bytes:
     return b + b"\0" * (-len(b) % PAGE)
 
 
+def boot_image_len(head: bytes) -> int:
+    """How many bytes of the partition are the boot image, from its own header.
+
+    Returns 0 for anything not understood, and 0 means **read the whole
+    partition** rather than "empty". A size optimisation must never be the
+    reason a reflash cannot happen, so every uncertain answer costs 16MB of
+    transfer and nothing else.
+
+    The third copy of this arithmetic, and the duplication is deliberate rather
+    than missed: `boot_image_len()` in `emos/init/init.c` runs at PID 1 time
+    with no Python, and `_bootImageLength` in `dashboard.jsx` runs in a browser
+    with no controller. Each one is the only code that can answer the question
+    where it stands. They are pinned against each other by
+    `tests/test_netflash.py`, which drives the same headers the JSX test does.
+
+    Needs only the first 64 bytes, so a caller can ask before transferring
+    anything.
+    """
+    if len(head) < 64 or head[:8] != b"ANDROID!":
+        return 0
+    ksz, rsz, ssz, psz = (
+        struct.unpack("<I", head[o:o + 4])[0] for o in (8, 16, 24, 36))
+    if psz != PAGE:
+        return 0
+
+    def _pad(n: int) -> int:
+        return (n + PAGE - 1) // PAGE * PAGE
+
+    return PAGE + _pad(ksz) + _pad(rsz) + _pad(ssz)
+
+
 def split_reference(ref: bytes) -> dict:
     """Take the device's own boot image apart into the pieces we reuse.
 
