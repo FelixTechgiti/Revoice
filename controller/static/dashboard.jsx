@@ -2459,6 +2459,18 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                          : (s?.volumePct != null ? `${s.volumePct}%` : '—'))}
                     {row('Link', device.connected ? (device.linkTls ? 'wss (TLS)' : 'plain ws') : '—',
                          device.connected ? (device.linkTls ? 'var(--ok)' : 'var(--warn)') : undefined)}
+                    {/* Which userspace this Echo booted. Absent means the device has
+                        never said — older firmware, or a row that has not registered
+                        since — and that is NOT the same as FireOS, so it renders as
+                        unknown rather than resolving to a default. The payload gating
+                        resolves absence to Android deliberately; a readout must not,
+                        or it asserts something nobody measured. */}
+                    {row('Base system',
+                         device.baseOs === 'emos' ? 'emOS'
+                       : device.baseOs === 'fireos' ? 'FireOS'
+                       : device.baseOs ? device.baseOs
+                       : (device.connected ? 'Not reported' : '—'),
+                         device.baseOs === 'emos' ? 'var(--ok)' : undefined)}
                     {row('Config', (() => {
                       const n = (device.config_sections ?? []).length;
                       const total = Object.keys(CONFIG_SECTIONS).length;

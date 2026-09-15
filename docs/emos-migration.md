@@ -134,16 +134,35 @@ Dashboard → **Einrichtungsassistent**, emOS-Ablauf (die Voreinstellung).
 
 ## Danach
 
-- Gerät → **Status** zeigt `emos` als Basissystem.
+- Gerät → **Status** → Zeile **Base system** zeigt `emOS`.
 - **Config → Advanced → USB console** wird aktiv. Das Feld war ausgegraut,
   solange kein Gerät der Flotte emOS meldet — FireOS benutzt adb. Setze ein
   Konsolenpasswort: die Konsole ist sonst eine unauthentifizierte Root-Shell,
   und der WLAN-Schlüssel liegt auf dem Gerät.
-- Der Firewall-Schritt der Firmware wird zum Leerlauf. Die Regeln werden noch
-  geschrieben — `iptables` liegt auf Amazons `/system`, das emOS mountet —
-  aber in eine Tabelle, die ohnehin alles annimmt.
+- Der Firewall-Schritt der Firmware läuft weiter und **wirkt auch**. Hier stand
+  bis zum 2026-09-15, er werde zum Leerlauf, „in eine Tabelle, die ohnehin alles
+  annimmt" — am Gerät gemessen ist die INPUT-Vorgabe `DROP`, mit verworfenen
+  Paketen im Zähler. Das ist an sich richtig so; falsch war der Satz.
 - Debloat-Skript und pm-Hide-Liste werden nicht mehr an das Gerät geschickt.
   Der Controller sieht `base_os: emos` und lässt sie weg.
+
+### ⚠ Spotify Connect funktioniert auf emOS noch nicht
+
+**Namen lassen sich nicht auflösen, und librespot braucht das.** Am Gerät
+gemessen (2026-09-15): Netz und Routing sind in Ordnung — Ping und TCP gehen
+—, aber eine DNS-Anfrage verlässt das Gerät gar nicht erst.
+
+Der Grund ist bekannt und steht für einen anderen Fall schon in der
+Projektdoku: bionic fragt unter Android nicht selbst nach, sondern reicht den
+Namen über `/dev/socket/dnsproxyd` an `netd` weiter. Unter emOS gibt es beides
+nicht, also hat **jedes gegen bionic gelinkte Programm keine Namensauflösung**,
+egal was in `/etc/resolv.conf` steht.
+
+Nicht betroffen sind der Controller-Link (er geht über IP und mDNS) und
+AirPlay (mDNS). Deshalb sieht ein frisch migriertes Gerät vollständig gesund
+aus, während genau der eine Dienst tot ist, der ins offene Internet spricht.
+
+Stand und Lösungswege: [#198](https://github.com/FelixTechgiti/Revoice/issues/198).
 
 ## Wenn etwas schiefgeht
 
