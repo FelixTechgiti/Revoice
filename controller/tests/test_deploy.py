@@ -2717,10 +2717,23 @@ def test_the_emos_release_workflow_asserts_what_it_publishes():
     assert "32-bit LSB executable, ARM" in wf, \
         "the release must assert init32 is a 32-bit ARM binary"
     assert "statically linked" in wf, "the release must assert the inits are static"
-    # All four off-target checks run against the source being published. Each
-    # one drives a parser or an invariant whose failure is silent on hardware.
-    for check in ("ringsim --check", "pwcheck", "tmoutcheck", "wpacheck"):
-        assert check in wf, f"the release must run {check}"
+    # Every off-target check runs against the source being published. Each one
+    # drives a parser or an invariant whose failure is silent on hardware.
+    #
+    # The set comes from the TREE, never from a list written here. This guard
+    # named four while the tree held six, so `pathcheck` and `nodecheck` were
+    # missing from the release for as long as they had existed and nothing
+    # could say so — the same stale-count failure the workflow's own comment
+    # had, one layer up, and a guard that repeats the mistake it is guarding
+    # against is worse than none.
+    checks = sorted(p.stem for p in (CONTROLLER.parent / "emos" / "init").glob("*check.c"))
+    assert len(checks) >= 4, \
+        f"found only {checks} — a guard over an empty set passes vacuously"
+    loop = "for c in emos/init/*check.c" in wf
+    for check in checks:
+        assert loop or check in wf, f"the release must run {check}"
+    # ringsim is not a *check.c and needs -lm, so it is named on its own.
+    assert "ringsim --check" in wf, "the release must run ringsim --check"
     # The bundle is what carries everything but the compat init, so a release
     # that skipped building it would publish an empty-handed payload.
     assert "make-payload-bundle.py" in wf, \
