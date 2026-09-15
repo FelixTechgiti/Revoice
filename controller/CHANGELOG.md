@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.50.0-fx.1
+
+### Der Netz-Reflash konnte die Boot-Partition nicht lesen
+
+Beim ersten Einsatz gegen ein echtes Gerät hat der Netz-Reflash aus 2.49.0-fx.1
+abgebrochen — **bevor er irgendetwas geschrieben hat**, mit der Meldung, das
+Gerät habe für den gelesenen Bereich nichts geliefert.
+
+Die Partition war völlig in Ordnung. Was fehlte, war eine Option: Das busybox
+auf dem Echo stammt von 2016 und kennt eine Schreibweise nicht, die der
+Controller beim Auslesen benutzt hat. Das Ergebnis war leer, und leer sieht von
+aussen aus wie eine unlesbare Partition.
+
+Aufgefallen ist es nie, weil jede andere Übertragung Daten **auf** das Gerät
+schiebt, und diese Richtung funktioniert. Gelesen wird nur an dieser einen
+Stelle, und der Netz-Reflash war das Erste, was sie je benutzt hat.
+
+**Zu tun ist nichts** ausser dem Update. Der Reflash lässt sich danach erneut
+starten; kein Gerät hat durch den Fehlschlag Schaden genommen, weil vor dem
+Schreiben gelesen und geprüft wird.
+
 ## 2.49.0-fx.1
 
 ### emOS lässt sich ohne Kabel neu flashen
