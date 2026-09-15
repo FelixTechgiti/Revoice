@@ -986,18 +986,37 @@ is not proof it rebooted — compare uptime or a build fingerprint.
     difference between this and restoring the escrowed boot image, which
     leaves `/data` alone but also leaves the device on FireOS with emOS's
     install still sitting there.
-  - **Flash over the network from the running emOS**, which is how development
-    images are already moved (~30s a cycle). The device has a root shell and
-    the controller can reach it, so this is the natural home for a real
-    re-provision and needs no USB at all.
+  - **Flash over the network from the running emOS.** ~~Still the fix worth
+    building.~~ **Built, and not yet run against a device**
+    (`POST /api/devices/{id}/emos_reflash`, `controller/em_netflash.py`). The
+    controller reads the device's own boot image off p10 through the shell
+    plane in verified 1MB chunks, rebuilds it with the latest released init
+    using the same packer the wizard uses, pushes it back, writes it, reads
+    back exactly as many bytes as it wrote, and reboots. No USB, no recovery.
+
+    **Why this write is allowed where the wizard's needs TWRP.** The hard part
+    of the wizard's flash is the target, not the write: amonet v1 inverts the
+    by-name map, so `boot_a` is p10 under TWRP and **p17 — the unlock payload —
+    under Android**. emOS resolves nothing by name. Its own rollback already
+    writes `/dev/block/mmcblk0p10` by fixed node, so this writes where emOS
+    writes, and the whole `classifyBootTarget` question does not arise.
+    `preflight` refuses anything that has not POSITIVELY reported `emos`, for
+    exactly that reason.
+
+    **And the rollback is the net.** A boot is confirmed when the network comes
+    up; three that are not restore `boot-good.img` and show an amber ring. So
+    the failure this could cause is the one emOS already repairs by itself,
+    which is what makes doing it unattended defensible. A device with no
+    `boot-good.img` is refused rather than warned, because without that file
+    there is no net.
+
+    Remaining: a control in the dashboard — it is an endpoint today — and a
+    device. Nothing here has been run against hardware.
   - **The console**, for a device that is on emOS but not on the network.
 
-  The middle one is still the fix worth building, and it is the same self-flash
-  the design deferred for FireOS → emOS — it needs no USB and no recovery at
-  all. It is no longer urgent, though: `/init recovery` plus the wizard's
-  existing TWRP entry covers the case that mattered. Keep the escrowed boot
-  image regardless; it is the ten-second undo for a device that will not boot,
-  which is the one situation none of these paths help with.
+  Keep the escrowed boot image regardless; it is the ten-second undo for a
+  device that will not boot, which is the one situation none of these paths
+  help with.
 
 ## What emOS is worth beyond the stunt
 

@@ -32,6 +32,7 @@ state with persisted DB state without coupling to a global.
 """
 
 import asyncio
+import base64
 import hashlib
 import html as _html
 import json
@@ -59,6 +60,7 @@ import em_ble_proxy
 import em_config_sections as sections_mod
 import em_console_pw
 import em_emos_build
+import em_netflash
 import em_endpoint_bins
 import em_endpoint_release
 import em_endpoint_restart
@@ -547,6 +549,7 @@ async def create_app() -> web.Application:
     app.router.add_post("/api/provision/emos_image",   _post_provision_emos_image)
     app.router.add_post("/api/devices/{id}/secure_link",  _post_secure_link)
     app.router.add_post("/api/devices/{id}/debloat",      _post_debloat)
+    app.router.add_post("/api/devices/{id}/emos_reflash", _post_emos_reflash)
 
     # Live events WebSocket
     app.router.add_get("/api/events", _ws_events)
@@ -2785,6 +2788,108 @@ def _transfer_failed(stage: str, extra: str = "") -> TransferResult:
     if extra:
         detail = f"{detail} ({extra})"
     return TransferResult(False, stage, detail)
+
+
+# How much of a device file to ask for in one round trip.
+#
+# 1MB of binary is ~1.37MB of base64, which is a comfortable single read on
+# this link and small enough that a failure costs one chunk rather than the
+# whole transfer. The push path sends in one shot and #121 is the record of
+# what that costs when it goes wrong: a 10MB payload that fails 15 seconds in
+# reports the same thing as one that never opened a shell.
+PULL_CHUNK = 1 << 20
+
+
+async def _pull_range_from_device(ws, path: str, offset: int, length: int,
+                                  timeout: float = 60.0):
+    """One chunk of a device file, with its md5, or (None, reason).
+
+    The device computes the digest of the SAME bytes it encodes, in the same
+    pipeline, so a mismatch here means the transfer corrupted them rather than
+    that two different things were measured.
+
+    Everything is framed by a sentinel. A chunk that arrives without its
+    trailing marker is a truncated read, and truncation is exactly the failure
+    that must not look like a short file.
+    """
+    skip, count = offset // PULL_CHUNK, max(1, length // PULL_CHUNK)
+    # dd with bs=PULL_CHUNK so skip/count are in whole chunks, then `head -c`
+    # to trim the tail chunk to the real length. Two tools rather than
+    # `bs=1 count=N`, which is exact and takes minutes on this hardware.
+    cmd = (f"__R=$(dd if={_sh_quote(path)} bs={PULL_CHUNK} skip={skip} "
+           f"count={count} 2>/dev/null | head -c {length} | busybox base64 -w0); "
+           f'echo "B64:$__R"; '
+           f'echo "MD5:$(printf %s "$__R" | busybox base64 -d | busybox md5sum '
+           f"| cut -d' ' -f1)\"; "
+           f"echo __PULLEND__")
+    await ws.send(cmd + "\n")
+
+    buf = ""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
+        except asyncio.TimeoutError:
+            continue
+        buf += msg.decode("utf-8", errors="replace") if isinstance(msg, bytes) else msg
+        if "__PULLEND__" in buf:
+            break
+
+    if "__PULLEND__" not in buf:
+        return None, "the read did not complete"
+
+    b64 = md5 = ""
+    for line in buf.splitlines():
+        if line.startswith("B64:"):
+            b64 = line[4:].strip()
+        elif line.startswith("MD5:"):
+            md5 = line[4:].strip()
+    if not b64:
+        return None, "the device returned nothing for that range"
+    try:
+        raw = base64.b64decode(b64, validate=True)
+    except Exception:
+        return None, "what came back was not valid base64"
+    if len(raw) != length:
+        return None, f"expected {length} bytes, got {len(raw)}"
+    if not md5:
+        return None, "the device sent no digest, so the bytes are unverifiable"
+    if hashlib.md5(raw).hexdigest() != md5.lower():
+        return None, "the chunk arrived corrupt — md5 did not match"
+    return raw, ""
+
+
+async def _pull_file_from_device(live, path: str, length: int):
+    """Read `length` bytes of `path` off the device, verified chunk by chunk.
+
+    Returns (bytes, "") or (None, reason). The counterpart to
+    `_stream_file_to_device`, and it exists for the network reflash: the only
+    thing that knows this device's kernel and device trees is its own boot
+    partition, and that is what has to come back here for the packer to reuse.
+
+    Deliberately NOT a general file-fetch endpoint. It holds the device's
+    shell lock for the whole transfer, which is minutes for a boot image, so
+    every caller should be something that was going to reboot the device
+    anyway.
+    """
+    device_id = live.device_id
+    try:
+        ws = await _get_device_shell_ws(live)
+    except Exception as e:
+        return None, f"could not open a shell session ({e})"
+    try:
+        out = []
+        got = 0
+        while got < length:
+            want = min(PULL_CHUNK, length - got)
+            raw, why = await _pull_range_from_device(ws, path, got, want)
+            if raw is None:
+                return None, f"at offset {got}: {why}"
+            out.append(raw)
+            got += len(raw)
+        return b"".join(out), ""
+    finally:
+        await _release_shell_ws(device_id, live)
 
 
 async def _stream_file_to_device(live, data: bytes, dest: str,
@@ -6160,6 +6265,195 @@ EMOS_SBIN_ASSETS = ("wpa_supplicant", "wpa_cli", "em-wifi")
 
 # One archive with a manifest of sha256s — see build_payload_bundle.
 EMOS_PAYLOAD_ASSET = "emos-payload.zip"
+
+
+# The size of the partition the boot image lives on. Only a fallback: the
+# header says how much of it is the image, and that is what is read. 16MB is
+# what to transfer when the header could not be understood, because a size
+# optimisation must never be why a reflash cannot happen.
+BOOT_PARTITION_BYTES = 16 * 1024 * 1024
+
+
+async def _emos_reflash_steps(live, device_id: str) -> None:
+    """Re-flash a device's emOS image over the network. No USB, no TWRP.
+
+    The sequence, and why it is this one:
+
+      1. Ask the device about itself — base, rollback image, free space.
+      2. Read its own boot image off p10. The kernel and device trees in it
+         are the device's and are reused verbatim; nothing else knows them.
+      3. Build the new image HERE, with the packer the wizard uses. Doing it
+         on the device would mean a second packer in shell, against the one
+         whose byte-exactness is tested.
+      4. Push it to /data, verified.
+      5. Write it, read back exactly as many bytes as were written, compare.
+      6. Reboot.
+
+    **If this leaves a bad image, emOS repairs it without us.** init confirms
+    a boot only when the network comes up and restores boot-good.img after
+    three that were not confirmed. So the worst outcome of a wrong image here
+    is an amber ring and the previous emOS, which is the outcome that makes
+    doing this over the network defensible at all.
+
+    Everything is written to the device log rather than returned, because the
+    caller is a button that returns immediately: a transfer of this size
+    outlives any request somebody is willing to watch.
+    """
+    def say(msg: str, level: str = "info") -> None:
+        log.info(f"[reflash] {device_id}: {msg}")
+        db.log_device(device_id, level, "reflash", msg)
+
+    say("Network reflash requested.")
+
+    # ── 1. What the device says about itself ─────────────────────────────────
+    probe = await _shell_run(live, (
+        f"[ -f {em_netflash.GOOD_IMG} ] && echo GOOD:yes || echo GOOD:no; "
+        f"echo \"FREE:$(df -m /data 2>/dev/null | awk 'NR==2{{print $4}}')\"; "
+        f"echo _RFCHK"), timeout=30.0)
+    if "_RFCHK" not in probe:
+        say("Could not ask the device anything — no shell session. Nothing "
+            "has been written.", "error")
+        return
+    good = "GOOD:yes" in probe
+    free_mb = None
+    for line in probe.splitlines():
+        if line.startswith("FREE:"):
+            raw = line[5:].strip()
+            free_mb = int(raw) if raw.isdigit() else None
+
+    # ── 2. The device's own boot image ───────────────────────────────────────
+    # The header first, so the length is known before megabytes move.
+    head, why = await _pull_file_from_device(live, em_netflash.BOOT_DEV, 64)
+    if head is None:
+        say(f"Could not read the boot partition header: {why}. Nothing has "
+            f"been written.", "error")
+        return
+
+    # arch is None, not "": it has not been ASKED yet. The sniffer needs the
+    # kernel, and the kernel is the eleven megabytes this check exists to
+    # avoid moving for a device we are going to refuse.
+    verdict = em_netflash.preflight(
+        getattr(live, "base_os", None), good, free_mb, head, None)
+    if verdict is not None:
+        say(verdict.message, "error")
+        return
+
+    length = em_emos_build.boot_image_len(head) or BOOT_PARTITION_BYTES
+    say(f"Reading {length // 1024}KB of the boot partition "
+        f"({'from its header' if length != BOOT_PARTITION_BYTES else 'the whole partition — the header was not readable'}).")
+    reference, why = await _pull_file_from_device(live, em_netflash.BOOT_DEV, length)
+    if reference is None:
+        say(f"Could not read the boot image: {why}. Nothing has been written.",
+            "error")
+        return
+
+    # Asked of the image rather than assumed, and re-run now that the whole
+    # image is here: the architecture sniffer needs the kernel, not the header.
+    arch = em_emos_build.reference_kernel_arch(reference)
+    verdict = em_netflash.preflight(
+        getattr(live, "base_os", None), good, free_mb, reference, arch)
+    if verdict is not None:
+        say(verdict.message, "error")
+        return
+
+    # ── 3. Build ─────────────────────────────────────────────────────────────
+    init_bin, sbin, version, err = await _fetch_emos_payload(arch)
+    if err is not None:
+        say("Could not get an emOS init for this device's kernel from the "
+            "latest release. Nothing has been written.", "error")
+        return
+    # `arch` is NOT passed: build_emos_image reads it off the reference itself,
+    # for the reason split_reference gives — the device's own image is the only
+    # thing that knows. `sbin` is emOS's WiFi userspace, which _fetch_emos_
+    # payload returns populated only for a 32-bit kernel and empty otherwise,
+    # so a FireOS 5 device is not moved off Amazon's working supplicant as a
+    # side effect of an unrelated update.
+    try:
+        built = await asyncio.get_event_loop().run_in_executor(
+            None, em_emos_build.build_emos_image, reference, init_bin, version,
+            "", sbin)
+    except em_emos_build.BuildError as e:
+        say(f"Could not build an image from this device's own boot partition: "
+            f"{e}. Nothing has been written.", "error")
+        return
+    image, want = built["image"], built["md5"]
+    say(f"Built {version} for this device's {arch} kernel "
+        f"({built['size']} bytes, md5 {want}).")
+
+    # ── 4. Push ──────────────────────────────────────────────────────────────
+    # 644: this is data that dd reads, not something anything execs. The
+    # default 755 would work and would also be the only executable boot image
+    # on the device, which is the kind of detail that misleads later.
+    sent = await _stream_file_to_device(live, image, em_netflash.STAGE_IMG,
+                                        mode="644", require_verify=True)
+    if not sent:
+        say(f"Could not stage the image on the device: {sent}. Nothing has "
+            f"been written to the boot partition.", "error")
+        return
+
+    staged = em_netflash.stage_size(
+        await _shell_run(live, em_netflash.stage_size_cmd(), timeout=30.0))
+    if staged != len(image):
+        say(f"The staged image is {staged} bytes where {len(image)} were sent, "
+            f"so it is not what we built. Nothing has been written to the boot "
+            f"partition.", "error")
+        return
+
+    # ── 5. Write, and check the bytes rather than the blocks ─────────────────
+    say("Writing the boot partition.")
+    await _shell_run(live, em_netflash.flash_cmd(), timeout=180.0)
+    back = await _shell_run(live, em_netflash.read_back_cmd(len(image)),
+                            timeout=180.0)
+    # The digest is the LAST line: dd writes its block counts to stderr, which
+    # the read-back command redirects, but a shell that echoes anything else
+    # first would otherwise be compared instead of the md5.
+    got = back.strip().splitlines()[-1] if back.strip() else ""
+    if not em_netflash.written_correctly(got, want):
+        say("The boot partition does not read back as what was written. NOT "
+            "rebooting — the device is still running its current emOS, and "
+            "the safest next move is to try again rather than to power-cycle.",
+            "error")
+        return
+    say(f"Verified. Rebooting into {version}; if it cannot reach the network, "
+        f"emOS restores the previous image by itself after three boots.")
+
+    # ── 6. Reboot ────────────────────────────────────────────────────────────
+    # Amazon's /system/bin/reboot cannot reboot an emOS device — it talks to a
+    # property service that is not running and fails with ENOENT naming a
+    # socket. busybox's goes through the syscall.
+    await _shell_run(live, "busybox reboot || reboot", timeout=15.0)
+
+
+async def _post_emos_reflash(request: web.Request) -> web.Response:
+    """
+    POST /api/devices/{id}/emos_reflash
+
+    Write the latest released emOS to a device that is already on emOS, over
+    the network. The counterpart to the wizard, for the case the wizard's own
+    documentation called a detour: a device on emOS has no adbd, so a USB
+    re-provision means reaching TWRP first.
+
+    Returns as soon as the work is queued. Progress and every refusal land in
+    the device log, because the transfer is minutes long and a request nobody
+    is watching cannot report anything.
+    """
+    device_id = request.match_info["id"]
+    live = _live(device_id)
+    if live is None:
+        return _error("device_offline", f"Device not connected: {device_id}", 409)
+
+    # Refused HERE as well as in the steps, and server-side rather than by
+    # greying out a control: this is a plain POST with a session token, so a
+    # dashboard-only rule protects nobody who opens the network tab. The same
+    # reasoning that put the Android check on `_post_debloat`, for a write
+    # whose cost is higher.
+    verdict = em_netflash.base_refusal(getattr(live, "base_os", None))
+    if verdict is not None:
+        return _error(verdict.code, verdict.message, 409)
+
+    task = asyncio.create_task(_emos_reflash_steps(live, device_id))
+    task.add_done_callback(_log_task_exception_api)
+    return _ok({"started": True})
 
 
 async def _fetch_emos_payload(arch: str) -> tuple:
