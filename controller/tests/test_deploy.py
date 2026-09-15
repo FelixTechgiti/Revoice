@@ -529,9 +529,9 @@ def test_the_wake_word_asset_wizard_step_is_mandatory():
         {int(n) for n in re.findall(r"\d+", s)} for s in sets
     ]
 
-    for table, auto, flow in (("_WIZARD_STEPS", fireos_auto, "FireOS"),
-                              ("_EMOS_STEPS", emos_auto, "emOS")):
-        steps = jsx[jsx.index(f"const {table} = ["):]
+    for table, auto, flow in (("_wizardSteps", fireos_auto, "FireOS"),
+                              ("_emosSteps", emos_auto, "emOS")):
+        steps = jsx[jsx.index(f"const {table} = () => ["):]
         steps = steps[:steps.index("\n];")]
         assert "'install_oww'" in steps, \
             f"the wake word asset step is missing from the {flow} wizard"
@@ -2434,7 +2434,7 @@ def _jsx():
 
 def _step_ids(table):
     steps = _jsx()
-    steps = steps[steps.index(f"const {table} = ["):]
+    steps = steps[steps.index(f"const {table} = () => ["):]
     steps = steps[:steps.index("\n];")]
     return re.findall(r"\{ id: '([a-z_]+)'", steps)
 
@@ -2451,7 +2451,7 @@ def test_the_emos_flow_drops_every_android_only_step():
     step in the wizard, because in the wrong mode it writes over the amonet
     unlock payload.
     """
-    ids = set(_step_ids("_EMOS_STEPS"))
+    ids = set(_step_ids("_emosSteps"))
     for gone in ("patch_boot", "install_magisk", "preseed_db", "verify_root",
                  "disable_alexa", "debloat"):
         assert gone not in ids, (
@@ -2465,7 +2465,7 @@ def test_the_emos_flow_escrows_before_it_flashes():
     every destructive step has to come after it. Ordering is the guard here —
     a flash before an escrow is a device with no way back.
     """
-    ids = _step_ids("_EMOS_STEPS")
+    ids = _step_ids("_emosSteps")
     assert ids.index("escrow_boot") < ids.index("build_emos") < ids.index("flash_emos"), \
         f"escrow must precede build must precede flash, got {ids}"
     # And the install lands on /data before the partition write, which is what
