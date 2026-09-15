@@ -3351,6 +3351,157 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
 
 // ADB-over-WebUSB client — thin wrapper around @yume-chan/adb 2.1.0.
 // Lazy-loads from esm.sh on first use (dynamic import works in classic scripts).
+//   Client.requestDevice() -> client
+//   client.connect()
+//   client.shell(cmd)   -> string
+//   client.push(path, Uint8Array, onProgress?)
+//   client.pull(path)   -> Uint8Array
+//   client.close()
+const _ADB = (() => {
+  // Module cache — loaded once on first requestDevice() call.
+  let _mods = null;
+
+  async function _load(logFn) {
+    if (_mods) return _mods;
+    logFn('Loading ADB library from esm.sh…');
+    const [webUsbMod, adbMod] = await Promise.all([
+      import('https://esm.sh/@yume-chan/adb-daemon-webusb@2.1.0?bundle&deps=@yume-chan/adb@2.1.0'),
+      import('https://esm.sh/@yume-chan/adb@2.1.0?bundle'),
+    ]);
+    _mods = {
+      manager:       webUsbMod.AdbDaemonWebUsbDeviceManager,
+      Transport:     adbMod.AdbDaemonTransport,
+      Adb:           adbMod.Adb,
+      defaultAuths:  adbMod.ADB_DEFAULT_AUTHENTICATORS,
+    };
+    logFn('ADB library loaded.');
+    return _mods;
+  }
+
+  // Drain a WHATWG ReadableStream<Uint8Array> into a single Uint8Array.
+  async function _readAll(stream) {
+    const reader = stream.getReader();
+    const chunks = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.length;
+    }
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.length; }
+    return out;
+  }
+
+  // Track the last usbDevice so we can release it before reconnecting.
+  let _lastUsbDevice = null;
+
+  class Client {
+    constructor(adb, transport, banner, serial) {
+      this._adb = adb;
+      this._transport = transport;
+      this.banner = banner;  // product name string, e.g. "omni_biscuit" or "csm_biscuit"
+      // Carried so a WebUSB 'disconnect' event can be matched to this client
+      // rather than to any other USB device the operator happens to unplug.
+      this.serial = serial ?? null;
+      this._log = () => {};
+    }
+
+    // Spawn a command and return its stdout as a trimmed string.
+    // Must use noneProtocol — shellProtocol requires Android 7+.
+    async shell(cmd) {
+      const proc = await this._adb.subprocess.noneProtocol.spawn(cmd);
+      const out = await _readAll(proc.output);
+      return new TextDecoder().decode(out).replace(/\r\n/g, '\n').trim();
+    }
+
+    // Push bytes to a remote path via `cat >`.
+    // stdin is a WritableStream<Uint8Array>; we write in 64 KB chunks.
+    async push(remotePath, data, onProgress) {
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      // The per-phase lines exist to localise a stall — which phase it hung in
+      // is the whole diagnostic — but they are four lines per push, and a
+      // provision makes eight sub-megabyte pushes that complete instantly.
+      // Narrate the transfers that can actually stall; one line for the rest.
+      const chatty = bytes.length >= 1024 * 1024;
+      if (chatty) this._log(`push: opening cat > '${remotePath}' (${(bytes.length/1024/1024).toFixed(1)} MB)`);
+      const proc  = await this._adb.subprocess.noneProtocol.spawn(`cat > '${remotePath}'`);
+      if (chatty) this._log('push: stream open, writing chunks…');
+      const writer = proc.stdin.getWriter();
+      const SZ = 64 * 1024;
+      for (let i = 0; i < bytes.length; i += SZ) {
+        await writer.write(bytes.subarray(i, Math.min(i + SZ, bytes.length)));
+        onProgress?.((i + SZ) / bytes.length);
+      }
+      if (chatty) this._log('push: all chunks written, closing stdin…');
+      await writer.close();
+      onProgress?.(1);
+      this._log(chatty ? 'push: done.'
+                       : `push: '${remotePath}' (${(bytes.length/1024).toFixed(0)} KB) done.`);
+      // No drain — busybox cat on TWRP does not close stdout when stdin closes,
+      // so _readAll would hang forever. The next shell command provides sequencing.
+    }
+
+    // Pull a remote file as a Uint8Array via `cat`.
+    async pull(remotePath) {
+      this._log(`pull: cat '${remotePath}'`);
+      const proc = await this._adb.subprocess.noneProtocol.spawn(`cat '${remotePath}'`);
+      this._log('pull: draining output…');
+      const out = await _readAll(proc.output);
+      this._log(`pull: done (${(out.length/1024/1024).toFixed(1)} MB)`);
+      return out;
+    }
+
+    async close() {
+      try { await this._transport.close(); } catch {}
+    }
+
+    // ── Static factory ──────────────────────────────────────────────────────
+
+    // Open the browser USB picker, load the library, authenticate, return a
+    // ready Client.  logFn is optional — wizard passes addLog.
+    static async requestDevice(logFn = () => {}) {
+      const blocked = webUsbBlocked();
+      if (blocked) throw new Error(`${blocked.why} ${blocked.fix}`);
+
+      const { manager, Transport, Adb, defaultAuths } = await _load(logFn);
+
+      // Release any previous connection — calling connect() on an already-claimed
+      // interface hangs indefinitely. This happens on retry after a reboot.
+      if (_lastUsbDevice) {
+        try { await _lastUsbDevice.disconnect(); } catch {}
+        _lastUsbDevice = null;
+      }
+
+      logFn('Requesting USB device — select the Echo Dot from the picker…');
+      const usbDevice = await manager.BROWSER.requestDevice();
+      if (!usbDevice) throw new Error('No device selected.');
+      logFn(`Device selected: ${usbDevice.name ?? usbDevice.serial ?? 'unknown'}`);
+      _lastUsbDevice = usbDevice;
+
+      logFn('Opening USB connection…');
+      const connection = await usbDevice.connect();
+
+      logFn('Authenticating ADB…');
+      const transport = await Transport.authenticate({
+        serial:         usbDevice.serial ?? 'revoice',
+        connection,
+        authenticators: defaultAuths,
+      });
+      logFn('ADB authenticated.');
+
+      const adb = new Adb(transport);
+      const banner = adb.banner?.product ?? '(unknown)';
+      logFn(`Connected. Banner: ${banner}`);
+
+      return new Client(adb, transport, banner, usbDevice.serial ?? null);
+    }
+  }
+
+  return { Client };
+})();
 
 const _ALEXA_PKGS = [
   'amazon.speech.davs.davcservice',

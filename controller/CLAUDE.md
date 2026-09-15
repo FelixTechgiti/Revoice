@@ -2287,6 +2287,48 @@ to `wilbowes/EchoMuse`, which publishes no `endpoints-v*` at all — so a fresh
 install with nothing configured answered "nothing is published" for ever,
 correctly, about a different repository.
 
+## The build resolves no identifier, so a deleted helper ships silently
+
+`esbuild --bundle=false --jsx=transform` rewrites JSX and nothing else. It
+never resolves a name, so a helper whose definition is gone compiles exactly
+as cleanly as one that is still there, and the failure waits in the browser
+on the one click that reaches the dead call.
+
+**The redesign commit 2806f5c deleted the 145-line `_ADB` block** — the whole
+ADB-over-WebUSB client — and left its three call sites and its comment header
+standing. CI stayed green, the page loaded, the dashboard worked, and the one
+thing that broke was the provisioning wizard's Connect step:
+`_ADB.Client.requestDevice()` threw a `TypeError` **before** the USB picker
+could open, so the browser showed no dialog at all.
+
+That last detail is the diagnostic one. An empty picker and no picker are
+different faults: Chrome opens a picker with nothing in it when no device
+matches the filter, so **no dialog means `requestDevice` was never called**.
+Reported from hardware as "Chrome asks nothing" with a working cable, a
+working `adbd` (`sys.usb.state = mtp,adb`) and an https origin — which is
+indistinguishable from a cable fault until somebody opens the console, and
+three cables were tried first.
+
+`tests/dashboard_definitions.test.mjs` is the guard, and it is about the
+SHAPE rather than about `_ADB`: any `_Name` **called** (`_Name.` or `_Name(`)
+must be defined in the same file, so the next deletion is caught without
+anybody having predicted which name it will be. Three things it gets right
+that the first version did not:
+
+- **Strings are NOT stripped, only comments.** Pairing quotes in JSX is not
+  something a regex can do — one apostrophe in prose swallows everything up to
+  the next quote — and a stripper that gets it wrong reports on whatever the
+  damage left behind. The reference shape is narrow enough that a string
+  cannot fake it: `target="_blank"` is a mention, not a call.
+- **Class methods count as definitions.** `async _pump() {` carries no
+  declaration keyword, and its own definition line matches the reference
+  shape — so without a second pattern a method only ever called on `this`
+  reports as missing from the file that defines it.
+- **One name must be FOUND, not merely not-missing.** A regex that stopped
+  matching would report success on an empty set, so the guard also asserts
+  `_ADB` is both defined and used. A net that catches nothing looks identical
+  to a net over nothing.
+
 ## Provisioning wizard (`dashboard.jsx`, `_WIZARD_STEPS`)
 
 The WebUSB/ADB wizard that takes a stock Dot to a fielded device. Four rules,
