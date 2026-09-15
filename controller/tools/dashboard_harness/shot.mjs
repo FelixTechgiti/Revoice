@@ -115,6 +115,21 @@ async function clickText(page, text) {
   await new Promise(r => setTimeout(r, 900));
 }
 
+// Scroll the modal's own scrolling region. The window is capped at
+// min(700px, 90vh), so a taller viewport makes the PAGE taller and the
+// window exactly as short as before — everything past the first section is
+// unreachable by resizing, which is how a whole pane of tiles went
+// unphotographed.
+async function scrollModal(page, px) {
+  await page.evaluate(n => {
+    const box = [...document.querySelectorAll('.em-modal *')]
+      .find(el => el.scrollHeight > el.clientHeight + 20);
+    if (!box) throw new Error('nothing scrolls inside the window');
+    box.scrollTop = n;
+  }, px);
+  await new Promise(r => setTimeout(r, 400));
+}
+
 // Every state a screenshot can show: both themes, both densities, both
 // languages, the width where the sidebar goes under the list, the two
 // windows — a playing device and one waiting to be approved — and the
@@ -138,6 +153,18 @@ const SHOTS = [
   { name: 'device',   page: 'dark.html',  w: 1440, h: 900,  open: 'Lounge' },
   { name: 'approve',  page: 'light.html', w: 1440, h: 900,  open: 'G090LF1180570XYZ' },
   { name: 'settings', page: 'dark.html',  w: 1440, h: 900,  click: 'Settings' },
+  // The same pane in the other theme. Both bugs this shot was added for
+  // were theme-specific and invisible in the other one: a text colour
+  // that was the console's hairline, and a scrim literal that stayed
+  // light. Neither is a thing a token test can see.
+  { name: 'settings-light', page: 'light.html', w: 1440, h: 900, click: 'Settings' },
+  // The wake word section, where the selectable tiles live. Their titles
+  // were painted in the console's hairline colour, so on the dark theme
+  // they were invisible — and no shot went that far down. Shot in GERMAN,
+  // because English is the source and cannot be wrong: what this has to
+  // catch is a string that never left it.
+  { name: 'settings-tiles', page: 'dark.html', w: 1440, h: 900,
+    click: 'Einstellungen', lang: 'de', scroll: 700 },
   // The click target is a LABEL, so it is language-dependent — which is
   // itself worth shooting: if the German build ever stopped translating the
   // header, this shot would fail rather than quietly photograph English.
@@ -154,7 +181,7 @@ const SHOTS = [
 let problems = 0;
 for (const shot of SHOTS) {
   const { name, page: page_, w, h } = shot;
-  const { density = 'roomy', lang = 'en', theme, open, click, setup } = shot;
+  const { density = 'roomy', lang = 'en', theme, open, click, setup, scroll } = shot;
   const page = await browser.newPage();
   // Set every time, not only for the dense shot: localStorage is per ORIGIN
   // and these pages share one, so a preference left by an earlier shot
@@ -198,6 +225,7 @@ for (const shot of SHOTS) {
   await new Promise(r => setTimeout(r, 1200));
   if (open) await openDevice(page, open);
   if (click) await clickText(page, click);
+  if (scroll) await scrollModal(page, scroll);
   // A modal is position:fixed, so fullPage would shoot the page BEHIND it
   // at full height with the window floating over the first screenful.
   await page.screenshot({ path: join(OUT, `shot-${name}.png`), fullPage: !(open || click) });

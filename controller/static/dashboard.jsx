@@ -765,7 +765,10 @@ function Select({ label, sub, value, options, onChange }) {
 function EqCurve({ bands, fs = 22050 }) {
   const FREQS = [125, 250, 500, 1000, 2000, 3500, 5500, 8000];
   const Q = 1.4, DB_RANGE = 14, N = 130, F_MIN = 60, F_MAX = 11000;
-  const W = 380, H = 90, PT = 8, PB = 20, PL = 8, PR = 8;
+  // No bottom gutter: the frequency axis is labelled by the faders
+  // directly beneath, and printing it twice made the panel read as two
+  // charts rather than one control with its response above it.
+  const W = 380, H = 74, PT = 10, PB = 6, PL = 8, PR = 8;
   const IW = W - PL - PR, IH = H - PT - PB;
 
   function peakCoeffs(fc, g) {
@@ -812,28 +815,31 @@ function EqCurve({ bands, fs = 22050 }) {
   const dbTicks = [-12,-6,0,6,12];
   const fTicks  = [{f:125,label:'125'},{f:500,label:'500'},{f:1000,label:'1k'},{f:4000,label:'4k'},{f:8000,label:'8k'}];
 
+  // The tick labels were `rgba(0,0,0,0.28)` — black at 28% — on a ground
+  // that is dark in one of the two themes, so half the fleet read this
+  // chart with no axis at all. The hex ratchet cannot see an `rgba()`, which
+  // is exactly why it is worth saying here: a literal that is not a `#` is a
+  // literal all the same.
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width:'100%', display:'block', marginBottom:4, borderRadius:4, overflow:'hidden' }}>
-      <rect x={PL} y={PT} width={IW} height={IH} fill="var(--hairline)" rx="2"/>
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width:'100%', display:'block', marginBottom:10, overflow:'hidden' }}>
       {dbTicks.map(db => (
         <line key={db} x1={PL} x2={PL+IW} y1={yOf(db)} y2={yOf(db)}
-          stroke={db===0?'rgba(0,0,0,0.18)':'var(--hairline)'}
+          stroke={db===0?'var(--line-strong)':'var(--line)'}
           strokeWidth={db===0?1:0.5} strokeDasharray={db===0?undefined:'2,3'}/>
       ))}
       {fTicks.map(({f}) => (
         <line key={f} x1={xOf(f)} x2={xOf(f)} y1={PT} y2={PT+IH}
-          stroke="var(--hairline)" strokeWidth={0.5}/>
+          stroke="var(--line)" strokeWidth={0.5}/>
       ))}
-      <path d={fill} fill="rgba(64,88,120,0.10)"/>
-      <path d={line} fill="none" stroke="var(--accent)" strokeWidth="1.5"
-        style={{filter:'drop-shadow(0 0 4px rgba(64,88,120,0.4))'}}/>
+      {/* The area under the curve is the deflection from flat, so it is
+          mixed against the page rather than given an opacity of its own:
+          `color-mix` takes a var(), and concatenating alpha onto one
+          produces `var(--voice)1a`, which drops the whole declaration. */}
+      <path d={fill} fill="color-mix(in srgb, var(--voice) 12%, transparent)"/>
+      <path d={line} fill="none" stroke="var(--voice)" strokeWidth="1.5"/>
       {dbTicks.filter(d=>d!==0).map(db => (
-        <text key={db} x={PL+2} y={yOf(db)+4}
-          style={{fontFamily:"'DM Mono',monospace",fontSize:6,fill:'rgba(0,0,0,0.28)'}}>{db>0?'+':''}{db}</text>
-      ))}
-      {fTicks.map(({f,label}) => (
-        <text key={f} x={xOf(f)} y={H-4} textAnchor="middle"
-          style={{fontFamily:"'DM Mono',monospace",fontSize:6,fill:'rgba(0,0,0,0.28)'}}>{label}</text>
+        <text key={db} x={PL+2} y={yOf(db)-2}
+          style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:7,fill:'var(--muted)'}}>{db>0?'+':''}{db}</text>
       ))}
     </svg>
   );
@@ -7525,7 +7531,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       backdropFilter: 'blur(8px)',
     }}>
       <div style={{
-        background: 'linear-gradient(170deg,var(--raised),var(--surface))', border: '1px solid var(--border)',
+        background: 'var(--bg)', border: '1px solid var(--line)',
         borderRadius: 16, width: 'min(900px,95vw)', height: 'min(700px,90vh)',
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
         boxShadow: '0 24px 80px rgba(0,0,0,0.3),0 2px 0 var(--sheen) inset',
@@ -7533,7 +7539,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       }}>
 
         {/* Header */}
-        <div style={{ background: 'linear-gradient(180deg,var(--card),var(--bg))', borderBottom: '1px solid var(--border-hard)', padding: '20px 24px 16px', boxShadow: '0 1px 0 var(--sheen) inset', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ borderBottom: '1px solid var(--line)', padding: '20px 24px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 22, fontWeight: 600, color: 'var(--text)', letterSpacing: '-0.02em' }}>Provision Echo Dot</div>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 4 }}>Chrome/Edge only · USB-A cable · amonet-biscuit prerequisite</div>
@@ -8168,25 +8174,113 @@ function ScopeChip({ children, tone }) {
   );
 }
 
-// EqSliders — one vertical fader per band, ±12 dB. Live-updates eqBands so
-// the curve above redraws as you drag.
+// Fader — one vertical EQ band, drawn rather than borrowed.
+//
+// The browser's own vertical range input is what this replaces, and it had
+// to go rather than be restyled: every horizontal-slider rule in
+// dashboard.html is excluded from `.em-fader` on purpose, because a thumb
+// rule that resets `appearance` reverts a vertical slider to the browser
+// default — which is how eight green faders became eight blue ones. So a
+// vertical input can only ever be the native control with `accent-color`
+// over it, and the native control cannot show what a fader has to show:
+// where zero is, and how far this band has moved from it.
+//
+// Being drawn rather than native means the keyboard has to be built, not
+// inherited. `role="slider"` with the three aria values is what a screen
+// reader reads; the arrow keys are what a sighted keyboard user expects; and
+// a double-click returns the band to 0 dB, which is the one value somebody
+// wants back and cannot hit reliably by dragging.
+function Fader({ value, onChange, disabled, label }) {
+  const H = 92, MIN = -12, MAX = 12;
+  const ref = useRef(null);
+  const yOf = g => (1 - (g - MIN) / (MAX - MIN)) * H;
+  const mid = yOf(0);
+  const y = yOf(value);
+
+  const commit = clientY => {
+    const box = ref.current?.getBoundingClientRect();
+    if (!box) return;
+    const frac = 1 - (clientY - box.top) / box.height;
+    const g = Math.round(MIN + frac * (MAX - MIN));
+    const clamped = Math.max(MIN, Math.min(MAX, g));
+    if (clamped !== value) onChange(clamped);
+  };
+
+  const key = e => {
+    const step = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1,
+                   PageUp: 3, PageDown: -3 }[e.key];
+    let next = step != null ? value + step
+             : e.key === 'Home' ? MIN
+             : e.key === 'End' ? MAX : null;
+    if (next == null) return;
+    e.preventDefault();
+    next = Math.max(MIN, Math.min(MAX, next));
+    if (next !== value) onChange(next);
+  };
+
+  return (
+    <div ref={ref} role="slider" tabIndex={disabled ? -1 : 0}
+         aria-label={label} aria-valuemin={MIN} aria-valuemax={MAX}
+         aria-valuenow={value} aria-valuetext={`${value > 0 ? '+' : ''}${value} dB`}
+         onKeyDown={disabled ? undefined : key}
+         onDoubleClick={disabled ? undefined : () => value !== 0 && onChange(0)}
+         // Pointer capture rather than window listeners: the drag then
+         // survives leaving the element, and ends by itself if the pointer
+         // is lost — no listener to forget to remove.
+         onPointerDown={disabled ? undefined : e => {
+           e.currentTarget.setPointerCapture(e.pointerId);
+           commit(e.clientY);
+         }}
+         onPointerMove={disabled ? undefined : e => {
+           if (e.currentTarget.hasPointerCapture(e.pointerId)) commit(e.clientY);
+         }}
+         style={{ position: 'relative', width: 22, height: H, flexShrink: 0,
+                  cursor: disabled ? 'default' : 'pointer', touchAction: 'none',
+                  borderRadius: 4 }}>
+      {/* The track, 3px as the handoff specifies. */}
+      <div style={{ position: 'absolute', left: '50%', top: 0, width: 3, height: H,
+                    marginLeft: -1.5, borderRadius: 2, background: 'var(--track)' }}/>
+      {/* Zero, marked wider than the track so it is findable without
+          counting: a fader whose centre is invisible cannot be returned to
+          flat by eye, and flat is the value people come back to. */}
+      <div style={{ position: 'absolute', left: '50%', top: mid, width: 9, height: 1,
+                    marginLeft: -4.5, background: 'var(--line-strong)' }}/>
+      {/* The deflection, drawn FROM the centre rather than from the bottom —
+          this is a cut or a boost, not a level, and a bar growing off the
+          floor would say the opposite about a band set to −12. */}
+      {value !== 0 && (
+        <div style={{ position: 'absolute', left: '50%', width: 3, marginLeft: -1.5,
+                      borderRadius: 2, background: 'var(--voice)',
+                      top: Math.min(y, mid), height: Math.abs(y - mid) }}/>
+      )}
+      <div style={{ position: 'absolute', left: '50%', top: y, width: 14, height: 14,
+                    marginLeft: -7, marginTop: -7, borderRadius: '50%',
+                    background: disabled ? 'var(--line-strong)' : 'var(--voice)' }}/>
+    </div>
+  );
+}
+
+// EqSliders — one fader per band, ±12 dB. Live-updates eqBands so the curve
+// above redraws as you drag.
 function EqSliders({ bands, onChange, disabled }) {
   const FREQ_LABELS = ['125', '250', '500', '1k', '2k', '3.5k', '5.5k', '8k'];
+  const monoF = "'IBM Plex Mono',monospace";
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 2, ...(disabled ? { opacity: 0.45, pointerEvents: 'none' } : {}) }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 2,
+                  ...(disabled ? { opacity: 0.45, pointerEvents: 'none' } : {}) }}>
       {bands.map((g, i) => (
-        <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, minWidth: 0 }}>
-          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 8, color: g !== 0 ? 'var(--accent)' : 'var(--muted)', marginBottom: 2, fontWeight: g !== 0 ? 600 : 400 }}>
+        <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center',
+                              flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: monoF, fontSize: 10, marginBottom: 6,
+                        color: g !== 0 ? 'var(--voice)' : 'var(--muted)',
+                        fontWeight: g !== 0 ? 500 : 400 }}>
             {(g > 0 ? '+' : '') + g}
           </div>
-          {/* Native vertical slider via writing-mode — a rotate() transform
-              renders fine but breaks drag gestures (pointer capture math
-              stays in the untransformed axis, so only clicks land).
-              orient="vertical" covers older Firefox. */}
-          <input type="range" className="em-fader" min={-12} max={12} step={1} value={g} orient="vertical"
-            onChange={e => { const nb = [...bands]; nb[i] = Number(e.target.value); onChange(nb); }}
-            style={{ writingMode: 'vertical-lr', direction: 'rtl', WebkitAppearance: 'slider-vertical', width: 20, height: 76, cursor: 'pointer' }}/>
-          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 8, color: 'var(--muted)', marginTop: 2 }}>{FREQ_LABELS[i]}</div>
+          <Fader value={g} disabled={disabled} label={`${FREQ_LABELS[i]} Hz`}
+                 onChange={v => { const nb = [...bands]; nb[i] = v; onChange(nb); }}/>
+          <div style={{ fontFamily: monoF, fontSize: 9, color: 'var(--muted)', marginTop: 6 }}>
+            {FREQ_LABELS[i]}
+          </div>
         </div>
       ))}
     </div>
@@ -8291,7 +8385,7 @@ function ScopeToggle({ local, onChange, disabled }) {
       <span style={{
         fontFamily: STAGE_MONO, fontSize: 8, letterSpacing: '0.12em',
         textTransform: 'uppercase', color: 'var(--muted)',
-      }}>Scope</span>
+      }}>{t('scopeLabel')}</span>
       <span style={{
         display: 'inline-flex', borderRadius: 6, overflow: 'hidden',
         border: `1px solid ${local ? SCOPE_DEVICE : SCOPE_FLEET}`,
@@ -8567,7 +8661,7 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 <Pill key={label} small accent={activeEqPreset === label} onClick={() => set('eqBands', vals)}>{label}</Pill>
               ))}
               {!activeEqPreset && (
-                <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>· Custom</span>
+                <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{t('cfgEqCustom')}</span>
               )}
             </div>
           </div>
@@ -8644,28 +8738,26 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
             {WW_MODELS.map(m => (
               <div key={m.value} onClick={() => set('owwModel', m.value)} style={{
                 background: config.owwModel === m.value
-                  ? 'linear-gradient(160deg,var(--accent-tint),var(--accent-line))'
-                  : 'linear-gradient(160deg,var(--raised),var(--surface))',
-                border: `1px solid ${config.owwModel === m.value ? 'var(--accent)' : 'var(--border-soft)'}`,
+                  ? 'var(--voice-bg)' : 'transparent',
+                border: `1px solid ${config.owwModel === m.value ? 'var(--voice)' : 'var(--line)'}`,
                 borderRadius: 8, padding: '8px 10px',
                 cursor: disabled ? 'default' : 'pointer',
                 transition: 'border-color 0.15s, background 0.15s',
               }}>
-                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, color: 'var(--lcd-line)' }}>{m.label}</div>
+                <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{m.label}</div>
                 <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)', marginTop: 2 }}>{m.value}</div>
               </div>
             ))}
             {[...customModels, ...(orphanModel ? [orphanModel] : [])].map(m => (
               <div key={m.path} onClick={() => set('owwModel', m.path)} style={{
                 background: config.owwModel === m.path
-                  ? 'linear-gradient(160deg,var(--accent-tint),var(--accent-line))'
-                  : 'linear-gradient(160deg,var(--raised),var(--surface))',
-                border: `1px solid ${config.owwModel === m.path ? 'var(--accent)' : 'var(--border-soft)'}`,
+                  ? 'var(--voice-bg)' : 'transparent',
+                border: `1px solid ${config.owwModel === m.path ? 'var(--voice)' : 'var(--line)'}`,
                 borderRadius: 8, padding: '8px 10px', position: 'relative',
                 cursor: disabled ? 'default' : 'pointer',
                 transition: 'border-color 0.15s, background 0.15s',
               }}>
-                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, color: 'var(--lcd-line)' }}>{wwModelLabel(m.path)}</div>
+                <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{wwModelLabel(m.path)}</div>
                 <div style={{ fontFamily: mono, fontSize: 9, color: m.missing ? 'var(--error)' : 'var(--muted)', marginTop: 2 }}>
                   {m.missing ? t('cfgMissingFile') : `custom · ${m.file}`}
                 </div>
@@ -8678,25 +8770,25 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
               </div>
             ))}
             <div onClick={() => { if (!disabled) wwFileRef.current?.click(); }} style={{
-              background: 'linear-gradient(160deg,var(--raised),var(--surface))',
-              border: '1px dashed var(--border-hard)', borderRadius: 8, padding: '8px 10px',
+              background: 'transparent',
+              border: '1px dashed var(--line-strong)', borderRadius: 8, padding: '8px 10px',
               cursor: disabled ? 'default' : 'pointer', opacity: 0.85,
             }}>
-              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, color: 'var(--text2)' }}>+ Custom model</div>
-              <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)', marginTop: 2 }}>upload .onnx (oww_forge)</div>
+              <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, fontWeight: 600, color: 'var(--text2)' }}>{t('cfgCustomModel')}</div>
+              <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)', marginTop: 2 }}>{t('cfgCustomModelSub')}</div>
               <input ref={wwFileRef} type="file" accept=".onnx" style={{ display: 'none' }}
                 onChange={e => { uploadWakeModel(e.target.files[0]); e.target.value = ''; }}/>
             </div>
           </div>
           <div>
             <div style={inputStyle}>
-              <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--text2)', marginBottom: 6 }}>Sensitivity</div>
+              <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--text2)', marginBottom: 6 }}>{t('cfgSensitivity')}</div>
               <input type="range" min={1} max={9} step={1} value={sensitivity}
                 style={{ width: '100%' }}
                 onChange={e => set('owwThreshold', sensitivityToThreshold(Number(e.target.value)))}/>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)' }}>Precise</span>
-                <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)' }}>Eager</span>
+                <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)' }}>{t('cfgSensitivityLow')}</span>
+                <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)' }}>{t('cfgSensitivityHigh')}</span>
               </div>
             </div>
             <div style={{ marginTop: 16, ...inputStyle }}>
@@ -8754,9 +8846,8 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
             {Object.entries(PRESETS).map(([key, p]) => (
               <div key={key} onClick={() => selectPreset(key)} style={{
                 background: currentPreset === key
-                  ? 'linear-gradient(160deg,var(--accent-tint),var(--accent-line))'
-                  : 'linear-gradient(160deg,var(--raised),var(--surface))',
-                border: `1px solid ${currentPreset === key ? 'var(--accent)' : 'var(--border-soft)'}`,
+                  ? 'var(--voice-bg)' : 'transparent',
+                border: `1px solid ${currentPreset === key ? 'var(--voice)' : 'var(--line)'}`,
                 borderRadius: 10, padding: '9px 6px 8px',
                 cursor: disabled ? 'default' : 'pointer',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
@@ -8823,14 +8914,13 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
             {RING_SCENES.map(sc => (
               <div key={sc.value} onClick={() => set('ledScene', sc.value)} style={{
                 background: (config.ledScene ?? 'standard') === sc.value
-                  ? 'linear-gradient(160deg,var(--accent-tint),var(--accent-line))'
-                  : 'linear-gradient(160deg,var(--raised),var(--surface))',
-                border: `1px solid ${(config.ledScene ?? 'standard') === sc.value ? 'var(--accent)' : 'var(--border-soft)'}`,
+                  ? 'var(--voice-bg)' : 'transparent',
+                border: `1px solid ${(config.ledScene ?? 'standard') === sc.value ? 'var(--voice)' : 'var(--line)'}`,
                 borderRadius: 8, padding: '8px 10px',
                 cursor: disabled ? 'default' : 'pointer',
                 transition: 'border-color 0.15s, background 0.15s',
               }}>
-                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, color: 'var(--lcd-line)' }}>{sc.label}</div>
+                <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{sc.label}</div>
                 <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
                   {(sc.value === 'custom'
                     ? [config.ledListenColor ?? '#00b400', config.ledThinkColor ?? '#00c800']
@@ -8844,14 +8934,14 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
           </div>
           {(config.ledScene ?? 'standard') === 'custom' && (
             <div style={inputStyle}>
-              <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>Custom colours</div>
+              <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>{t('cfgRingCustomColours')}</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                 <input type="color" value={config.ledListenColor ?? '#00b400'} disabled={disabled}
                   onChange={e => set('ledListenColor', e.target.value)}
                   style={{ width: 36, height: 28, padding: 0, border: '1px solid var(--border)', borderRadius: 6, background: 'none', cursor: 'pointer' }}/>
                 <div>
-                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600 }}>Listening</div>
-                  <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)' }}>solid ring while recording</div>
+                  <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, fontWeight: 600 }}>{t('cfgRingListening')}</div>
+                  <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)' }}>{t('cfgRingListeningSub')}</div>
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -8859,8 +8949,8 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                   onChange={e => set('ledThinkColor', e.target.value)}
                   style={{ width: 36, height: 28, padding: 0, border: '1px solid var(--border)', borderRadius: 6, background: 'none', cursor: 'pointer' }}/>
                 <div>
-                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600 }}>Thinking</div>
-                  <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)' }}>spinner while processing</div>
+                  <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, fontWeight: 600 }}>{t('cfgRingThinking')}</div>
+                  <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)' }}>{t('cfgRingThinkingSub')}</div>
                 </div>
               </div>
             </div>
@@ -9134,7 +9224,7 @@ function DeployAllModal({ release, devices, deployState, onStarted, onDismiss, o
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(30,28,24,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'linear-gradient(170deg,var(--raised),var(--surface))', border: '1px solid var(--border)', borderRadius: 14, padding: '28px 32px', width: 440, maxWidth: '92vw', boxShadow: '0 24px 80px rgba(0,0,0,0.3)' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 14, padding: '28px 32px', width: 440, maxWidth: '92vw' }}>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 16, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
           Deploy to fleet
         </div>
@@ -9312,14 +9402,14 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
   };
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(180,176,168,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, backdropFilter:'blur(8px)' }}
+    <div style={{ position:'fixed', inset:0, background:'var(--scrim)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, backdropFilter:'blur(8px)' }}
       onClick={e => e.target === e.currentTarget && onClose()}>
       {/* Same fixed frame as the device Detail modal — consistent window
           size across the whole dashboard. */}
       <div className="em-modal" style={{ width:'min(900px,95vw)', height:'min(700px,90vh)', background:'var(--bg)', border:'1px solid var(--line)', borderRadius:16, display:'flex', flexDirection:'column', overflow:'hidden', animation:'fadeIn 0.15s ease' }}>
 
         {/* Header */}
-        <div className="em-modal-head" style={{ background:'linear-gradient(180deg,var(--card),var(--bg))', borderBottom:'1px solid var(--border-hard)', padding:'20px 24px 0', boxShadow:'0 1px 0 var(--sheen) inset' }}>
+        <div className="em-modal-head" style={{ borderBottom:'1px solid var(--line)', padding:'20px 24px 0' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
             <div style={{ fontFamily:"'Instrument Sans',sans-serif", fontSize:24, color:'var(--text)', fontWeight:600, letterSpacing:'-0.01em' }}>{t('settings')}</div>
             <CircleButton onClick={onClose} title="Close">×</CircleButton>
@@ -10310,7 +10400,7 @@ function App() {
           padding: '14px 28px',
         }}>
           <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
-            <span style={{ ...label, color:'var(--warn)' }}>Controller update</span>
+            <span style={{ ...label, color:'var(--warn)' }}>{t('controllerUpdateLabel')}</span>
             <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:14, color:'var(--warn)' }}>
               {ctrlRelease.version}
             </span>
