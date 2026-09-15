@@ -161,19 +161,27 @@ jobs:
             emos/build/wpa/wpa_supplicant emos/build/wpa/wpa_cli \
             emos/build/wpa/em-wifi
 
-      # The off-target checks, against the exact source being published. All
-      # four of them: each drives a parser or an invariant whose failure is
-      # silent on hardware, which is the criterion in CLAUDE.md for having one.
+      # The off-target checks, against the exact source being published: each
+      # drives a parser or an invariant whose failure is silent on hardware,
+      # which is the criterion in CLAUDE.md for having one.
+      #
+      # This said "all four of them" while the tree held six and this job ran
+      # four — pathcheck and nodecheck were never here, so two checks guarded
+      # CI and not the artefact anybody installs. A count in prose is a claim
+      # about a directory that nothing can notice going stale, which is the
+      # rule CLAUDE.md states for exactly this sentence; the loop below is the
+      # count instead, and a new check is picked up by existing.
       - name: Off-target checks
         run: |
+          set -e
           cc -O2 -Wall -o /tmp/ringsim emos/init/ringsim.c -lm
           /tmp/ringsim --check
-          cc -O2 -o /tmp/pwcheck emos/init/pwcheck.c
-          /tmp/pwcheck
-          cc -O2 -o /tmp/tmoutcheck emos/init/tmoutcheck.c
-          /tmp/tmoutcheck
-          cc -O2 -o /tmp/wpacheck emos/init/wpacheck.c
-          /tmp/wpacheck
+          for c in emos/init/*check.c; do
+            n=$(basename "$c" .c)
+            echo "== $n"
+            cc -O2 -o "/tmp/$n" "$c"
+            "/tmp/$n"
+          done
 
       # Same rule as the firmware release: the notes come from the ANNOTATED
       # tag, because whoever reads them is deciding whether to reflash a boot
