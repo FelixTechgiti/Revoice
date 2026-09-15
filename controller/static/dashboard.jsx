@@ -983,6 +983,17 @@ function LedRing({ state, size = 120 }) {
   // settled fact: muted, playing, ready.
   const dashed = `${circumference / 24 * 1.35} ${circumference / 24 * 0.65}`;
   const spin = { transformOrigin: `${cx}px ${cy}px` };
+  // Thinner than the ring: the ring is the state and the glyph inside it is
+  // the detail, and a glyph at ring weight fills the hole at 34px.
+  const gw = Math.max(1.2, size * 0.05);
+  // An id, because a mask is referenced by one and a fleet page draws many
+  // of these. Two rings sharing an id is not a visible fault today — the
+  // masks are identical — which is exactly why it would survive until the
+  // masks stopped being identical.
+  // The colons React puts in are legal in a fragment reference and not in
+  // a CSS selector, so they come out here rather than in whoever next
+  // wants to find this node from a test.
+  const maskId = `em-muted-${React.useId().replace(/:/g, '')}`;
 
   const ring = (stroke, extra) => (
     <circle cx={cx} cy={cy} r={r} fill="none" stroke={stroke} strokeWidth={sw}
@@ -1006,13 +1017,58 @@ function LedRing({ state, size = 120 }) {
 
       {key === 'offline' && ring(color, { strokeDasharray: dashed, opacity: 0.75 })}
 
+      {/* Muted: a struck-through microphone, and the mark is the whole point.
+          A cross is the universal sign for UNAVAILABLE, and muted is the one
+          state on this page that is not a fault — somebody walked up and
+          pressed the button, so the microphone is off because they wanted it
+          off. Drawn with a cross it reads as a device that cannot be reached,
+          which sends the reader looking for a problem that does not exist and
+          hides the actual answer to "why did it not hear me".
+
+          The colour stays `--error` even though `offline` uses it too: the
+          device's own LED ring is red while muted, and the two halves of the
+          product must not disagree about what red means in the one place the
+          product made a promise to the person standing in the room. So the
+          confusion is fixed in the mark, and the shape distinction from
+          `offline` (solid against dashed) is kept rather than leaned on. */}
       {key === 'muted' && (
         <g>
           {ring(color)}
-          <line x1={cx - r * 0.42} y1={cy - r * 0.42} x2={cx + r * 0.42} y2={cy + r * 0.42}
-                stroke={color} strokeWidth={sw * 0.7} strokeLinecap="round"/>
-          <line x1={cx + r * 0.42} y1={cy - r * 0.42} x2={cx - r * 0.42} y2={cy + r * 0.42}
-                stroke={color} strokeWidth={sw * 0.7} strokeLinecap="round"/>
+          {/* The slash needs a GAP through the glyph or the two shapes read
+              as one smudge at 34px — and it cannot be painted in the
+              background colour, because the row behind it changes on hover.
+              A mask makes the gap out of the glyph itself, whatever is
+              underneath. */}
+          <mask id={maskId} maskUnits="userSpaceOnUse"
+                x={0} y={0} width={size} height={size}>
+            {/* White and black here are COVERAGE, not colour — a mask is
+                read as alpha, and nothing on this page is painted either
+                value. They are the two keywords rather than tokens for
+                that reason, and tokenising them would break the mask. */}
+            <rect x={0} y={0} width={size} height={size} fill="white"/>
+            <line x1={cx - size * 0.21} y1={cy - size * 0.21}
+                  x2={cx + size * 0.21} y2={cy + size * 0.21}
+                  stroke="black" strokeWidth={gw * 3} strokeLinecap="round"/>
+          </mask>
+          <g mask={`url(#${maskId})`}>
+            <rect x={cx - size * 0.055} y={cy - size * 0.20}
+                  width={size * 0.11} height={size * 0.24} rx={size * 0.055}
+                  fill={color}/>
+            {/* The cradle, the stem and the foot: the three strokes that
+                make a capsule read as a microphone rather than a pill. */}
+            <path d={`M ${cx - size * 0.115} ${cy + size * 0.01}`
+                     + ` A ${size * 0.115} ${size * 0.115} 0 0 0`
+                     + ` ${cx + size * 0.115} ${cy + size * 0.01}`}
+                  fill="none" stroke={color} strokeWidth={gw} strokeLinecap="round"/>
+            <line x1={cx} y1={cy + size * 0.125} x2={cx} y2={cy + size * 0.20}
+                  stroke={color} strokeWidth={gw} strokeLinecap="round"/>
+            <line x1={cx - size * 0.075} y1={cy + size * 0.20}
+                  x2={cx + size * 0.075} y2={cy + size * 0.20}
+                  stroke={color} strokeWidth={gw} strokeLinecap="round"/>
+          </g>
+          <line x1={cx - size * 0.21} y1={cy - size * 0.21}
+                x2={cx + size * 0.21} y2={cy + size * 0.21}
+                stroke={color} strokeWidth={gw} strokeLinecap="round"/>
         </g>
       )}
 
@@ -1039,8 +1095,8 @@ function LedRing({ state, size = 120 }) {
       )}
 
       {/* Playing: an all-but-closed ring with a level meter inside it. The
-          gap is what keeps it from reading as `muted` with the cross lost
-          at small sizes. */}
+          gap is what keeps it from reading as `muted` once the glyph inside
+          is too small to tell apart. */}
       {key === 'playing' && (
         <g>
           {ring(color, {

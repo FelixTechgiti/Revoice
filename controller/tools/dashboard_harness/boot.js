@@ -2,7 +2,12 @@
 //
 // The real bundle talks to /api over fetch and opens a WebSocket. Both are
 // stubbed with fixtures here so the page renders a plausible fleet: one
-// device listening, one playing over Spotify, one offline, one pending.
+// device listening, one playing over Spotify, one offline, one MUTED and
+// one pending.
+//
+// The muted device sits next to the offline one deliberately. They are the
+// two states drawn in red, one of them is not a fault, and whether they can
+// be told apart is a question only a screenshot answers.
 (function () {
   try {
     localStorage.setItem('em_token', 'harness');
@@ -43,6 +48,9 @@
     base('G090LF1180570DEF', 'Office', {
       connected: false, last_seen: now - 14 * 60, rttMs: null, volume: 0.25,
       firmware_ver: 'v2.38.0-fx.1',
+    }),
+    base('G090LF1180570GHI', 'Bedroom', {
+      muted: true, volume: 0.18, rttMs: 9,
     }),
     base('G090LF1180570XYZ', 'G090LF1180570XYZ', {
       approved: false, label: null, firmware_ver: null, rttMs: null, volume: null,

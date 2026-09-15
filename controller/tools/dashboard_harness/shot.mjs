@@ -152,6 +152,9 @@ const SHOTS = [
   { name: 'dense-de', page: 'dark.html',  w: 1440, h: 700,  density: 'dense', lang: 'de' },
   { name: 'device',   page: 'dark.html',  w: 1440, h: 900,  open: 'Lounge' },
   { name: 'approve',  page: 'light.html', w: 1440, h: 900,  open: 'G090LF1180570XYZ' },
+  // The muted device's own window, which is the only place the mark is
+  // drawn at 44px. The fleet shots cover it at 34.
+  { name: 'muted',    page: 'light.html', w: 1440, h: 900,  open: 'Bedroom' },
   { name: 'settings', page: 'dark.html',  w: 1440, h: 900,  click: 'Settings' },
   // The same pane in the other theme. Both bugs this shot was added for
   // were theme-specific and invisible in the other one: a text colour
