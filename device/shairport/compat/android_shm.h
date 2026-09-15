@@ -1,11 +1,19 @@
 /*
  * android_shm.h — declarations for the shm_open shim. See android_shm.c.
  *
- * Separate from android_compat.h on purpose. That header is injected into
- * every shairport-sync translation unit with `-include`; this one is needed
- * by **nqptp too**, which is a different program with its own build, and a
- * header that pulls in pthread cancellation is not something to hand a
- * daemon that does not use threads.
+ * Separate from android_compat.h because they are needed by two different
+ * programs: that header is injected into every shairport-sync translation
+ * unit, and this one is needed by **nqptp too**, which is a different program
+ * with its own build.
+ *
+ * **It used to say nqptp was given this one and not the other because it is
+ * "a daemon that does not use threads". That was wrong**, and it was reasoning
+ * rather than measurement. nqptp's debug.c calls pthread_setcancelstate four
+ * times, around the critical section of every log line, and bionic has no
+ * cancellation at any API level — so the first CI build of this recipe failed
+ * with `use of undeclared identifier PTHREAD_CANCEL_DISABLE` (2026-09-15).
+ * nqptp now gets both headers. The split stays, because two programs is a
+ * real reason where "does not use threads" was a guess.
  *
  * The rename to the standard names is guarded on __ANDROID__ so the same
  * sources compile on the host, where shm_open is real and shmcheck.c drives

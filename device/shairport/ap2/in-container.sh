@@ -240,16 +240,63 @@ say "nqptp $NQPTP_REF"
 # advantage of hardware timestamping", which is the correction at the centre
 # of #79.
 #
-# The shim is injected with -include, so no upstream source is patched.
+# The shims are injected with -include, so no upstream source is patched.
+#
+# BOTH headers, and the second one was added after a measurement rather than
+# from reading. android_shm.h used to say cancellation was deliberately kept
+# out of nqptp's build because it is "a daemon that does not use threads" —
+# and nqptp's own debug.c calls pthread_setcancelstate four times, around the
+# critical section of every log line. bionic has no cancellation at any API
+# level, so the build failed with `use of undeclared identifier
+# PTHREAD_CANCEL_DISABLE` (measured in CI, 2026-09-15).
+#
+# Only the DECLARATIONS were missing: libemcompat.a already carries
+# android_compat.o and nqptp already links it, so this adds no code to the
+# binary that was not being linked in anyway. It is the real deferred-
+# cancellation shim rather than a no-op stub, which matters even though nqptp
+# is unlikely to cancel anything: a stub would be a second, weaker
+# implementation of something already implemented correctly twenty lines away.
 git clone --depth 1 --branch "$NQPTP_REF" https://github.com/mikebrady/nqptp
 (
     cd nqptp
     autoreconf -fi
+    # ac_cv_func_malloc_0_nonnull is the autoconf cross-compile trap, and it
+    # fails at LINK rather than at configure, which is what makes it worth a
+    # comment. AC_FUNC_MALLOC decides whether malloc(0) returns non-NULL by
+    # RUNNING a program; cross-compiling it cannot, so it assumes broken and
+    # emits `#define malloc rpl_malloc` — a replacement nobody provides:
+    #
+    #     nqptp.o: undefined reference to 'rpl_malloc'
+    #
+    # Measured in CI 2026-09-15. bionic's malloc(0) returns a unique non-NULL
+    # pointer like every other modern libc, so answering the question the
+    # test could not ask is a statement of fact rather than a workaround.
+    # realloc carries the identical trap and is answered beside it, because
+    # the two differ only in which source file happens to call the other one.
     ./configure --host=armv7a-linux-androideabi --prefix="$PREFIX" \
+        ac_cv_func_malloc_0_nonnull=yes \
+        ac_cv_func_realloc_0_nonnull=yes \
         CFLAGS="-O2 -I$PREFIX/include -include /compat/android_shm.h" \
         LDFLAGS="-L$PREFIX/lib -static-libgcc" \
         LIBS="-lemcompat"
-    make -j"$JOBS" CXXLD="$CC"
+    # The cancellation shim goes to MAKE, not to configure, and that split is
+    # forced rather than chosen. android_compat.h includes <pthread.h>;
+    # autoconf's AC_CHECK_LIB declares the function it is probing for itself,
+    # as `char pthread_create ();`, and a real prototype in scope makes that
+    # conflict — so the test program fails to COMPILE and configure reports it
+    # as a missing library:
+    #
+    #     checking for pthread_create in -lpthread... no
+    #     configure: error: pthread library needed
+    #
+    # Measured in CI 2026-09-15, one run after the shim was added. android_shm.h
+    # can stay above because it includes only <stddef.h> and <sys/types.h>, and
+    # it has to: configure's own feature tests must see the shm rename.
+    #
+    # AM_CFLAGS survives this — `-fno-common -Wall -Wextra -pthread
+    # --include=config.h` come from the Makefile, not from here.
+    make -j"$JOBS" CXXLD="$CC" \
+        CFLAGS="-O2 -I$PREFIX/include -include /compat/android_shm.h -include /compat/android_compat.h"
 )
 
 # ---------------------------------------------------------------------------
