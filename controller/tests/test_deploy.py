@@ -3282,3 +3282,40 @@ def test_the_stale_bundle_check_does_not_refresh_the_displayed_version():
     assert "setStatus" not in block, (
         "the staleness poll must not call setStatus — the header's version "
         "has to keep naming the controller this page was loaded against")
+
+
+def test_the_device_pull_uses_no_base64_flag_the_device_lacks():
+    """
+    busybox on this hardware is v1.22.1 (2016) and its base64 takes `[-d]` and
+    nothing else — measured on a device 2026-09-15, which rejects the wrapping
+    flag outright.
+
+    Passing it therefore produces an EMPTY capture, and the caller reports that
+    the device returned nothing for the range: an unsupported flag that reads
+    as an unreadable partition. It shipped because every other transfer PUSHES
+    and decodes on the device, which IS supported; this is the only path that
+    pulls, so the emOS network reflash was the first thing ever to run it.
+
+    A source check, because the command is a string handed to a shell this
+    suite does not have.
+
+    **Comments are stripped and string literals are NOT**, which is the
+    opposite of `_code_only` in test_mute_one_way and for the opposite reason:
+    there the offending word appeared in a log message, here the offending
+    flag IS the code and lives inside an f-string, while the explanation of it
+    lives in a comment. The first version of this guard matched its own
+    comment and failed against the fixed source — the same trap, entered from
+    the other side.
+    """
+    import re
+    src = (CONTROLLER / "em_api.py").read_text()
+    src = re.sub(r'"""[\s\S]*?"""', "", src)
+    code = "\n".join(re.sub(r"#.*$", "", line) for line in src.splitlines())
+
+    flag = "base64 " + "-w"
+    assert flag not in code, \
+        "busybox on the device has no wrapping flag for base64; use tr"
+    # And the pull must still produce ONE line, or the `B64:` parser takes the
+    # first 76 characters and silently truncates every chunk.
+    assert "busybox tr -d" in code, \
+        "the pulled base64 must be joined into one line"

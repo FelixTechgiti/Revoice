@@ -2816,8 +2816,23 @@ async def _pull_range_from_device(ws, path: str, offset: int, length: int,
     # dd with bs=PULL_CHUNK so skip/count are in whole chunks, then `head -c`
     # to trim the tail chunk to the real length. Two tools rather than
     # `bs=1 count=N`, which is exact and takes minutes on this hardware.
+    #
+    # **The -w0 flag DOES NOT EXIST on this device**, so the newlines are
+    # stripped with `tr` instead. Measured on hardware 2026-09-15: busybox
+    # there is v1.22.1 from 2016 and rejects it, usage `base64 [-d] [FILE]`.
+    # `__R` is then empty and the caller reports that the device returned
+    # nothing for the range — an unsupported flag that reads as an unreadable
+    # partition.
+    #
+    # It survived because PUSHING decodes on the device, which this busybox
+    # does support, and every OTA, asset and endpoint-binary transfer is a
+    # push. This is the only path that pulls, so the first thing ever to run
+    # it was the emOS network reflash, on its first attempt against hardware.
+    #
+    # The general rule: a flag is not supported because the tool is.
     cmd = (f"__R=$(dd if={_sh_quote(path)} bs={PULL_CHUNK} skip={skip} "
-           f"count={count} 2>/dev/null | head -c {length} | busybox base64 -w0); "
+           f"count={count} 2>/dev/null | head -c {length} "
+           f"| busybox base64 | busybox tr -d '\\n'); "
            f'echo "B64:$__R"; '
            f'echo "MD5:$(printf %s "$__R" | busybox base64 -d | busybox md5sum '
            f"| cut -d' ' -f1)\"; "
