@@ -260,7 +260,22 @@ git clone --depth 1 --branch "$NQPTP_REF" https://github.com/mikebrady/nqptp
 (
     cd nqptp
     autoreconf -fi
+    # ac_cv_func_malloc_0_nonnull is the autoconf cross-compile trap, and it
+    # fails at LINK rather than at configure, which is what makes it worth a
+    # comment. AC_FUNC_MALLOC decides whether malloc(0) returns non-NULL by
+    # RUNNING a program; cross-compiling it cannot, so it assumes broken and
+    # emits `#define malloc rpl_malloc` — a replacement nobody provides:
+    #
+    #     nqptp.o: undefined reference to 'rpl_malloc'
+    #
+    # Measured in CI 2026-09-15. bionic's malloc(0) returns a unique non-NULL
+    # pointer like every other modern libc, so answering the question the
+    # test could not ask is a statement of fact rather than a workaround.
+    # realloc carries the identical trap and is answered beside it, because
+    # the two differ only in which source file happens to call the other one.
     ./configure --host=armv7a-linux-androideabi --prefix="$PREFIX" \
+        ac_cv_func_malloc_0_nonnull=yes \
+        ac_cv_func_realloc_0_nonnull=yes \
         CFLAGS="-O2 -I$PREFIX/include -include /compat/android_shm.h" \
         LDFLAGS="-L$PREFIX/lib -static-libgcc" \
         LIBS="-lemcompat"
