@@ -261,10 +261,27 @@ git clone --depth 1 --branch "$NQPTP_REF" https://github.com/mikebrady/nqptp
     cd nqptp
     autoreconf -fi
     ./configure --host=armv7a-linux-androideabi --prefix="$PREFIX" \
-        CFLAGS="-O2 -I$PREFIX/include -include /compat/android_shm.h -include /compat/android_compat.h" \
+        CFLAGS="-O2 -I$PREFIX/include -include /compat/android_shm.h" \
         LDFLAGS="-L$PREFIX/lib -static-libgcc" \
         LIBS="-lemcompat"
-    make -j"$JOBS" CXXLD="$CC"
+    # The cancellation shim goes to MAKE, not to configure, and that split is
+    # forced rather than chosen. android_compat.h includes <pthread.h>;
+    # autoconf's AC_CHECK_LIB declares the function it is probing for itself,
+    # as `char pthread_create ();`, and a real prototype in scope makes that
+    # conflict — so the test program fails to COMPILE and configure reports it
+    # as a missing library:
+    #
+    #     checking for pthread_create in -lpthread... no
+    #     configure: error: pthread library needed
+    #
+    # Measured in CI 2026-09-15, one run after the shim was added. android_shm.h
+    # can stay above because it includes only <stddef.h> and <sys/types.h>, and
+    # it has to: configure's own feature tests must see the shm rename.
+    #
+    # AM_CFLAGS survives this — `-fno-common -Wall -Wextra -pthread
+    # --include=config.h` come from the Makefile, not from here.
+    make -j"$JOBS" CXXLD="$CC" \
+        CFLAGS="-O2 -I$PREFIX/include -include /compat/android_shm.h -include /compat/android_compat.h"
 )
 
 # ---------------------------------------------------------------------------
