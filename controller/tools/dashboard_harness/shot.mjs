@@ -177,6 +177,11 @@ const SHOTS = [
   // header, this shot would fail rather than quietly photograph English.
   { name: 'settings-de', page: 'dark.html', w: 1440, h: 1200, click: 'Einstellungen', lang: 'de' },
   { name: 'wizard',   page: 'dark.html',  w: 1440, h: 900,  click: 'Set up an Echo Dot' },
+  // The wizard in German. Its step descriptions tell somebody what to do
+  // to their own hardware, and one of its steps writes a partition — so
+  // this is the pane where a sentence left in English costs the most.
+  { name: 'wizard-de', page: 'dark.html', w: 1440, h: 900,
+    click: 'Echo Dot einrichten', lang: 'de' },
   // The landing page, which is the first thing anyone sees and the only
   // page here that is not the dashboard.
   { name: 'landing-dark',  page: 'landing', w: 900, h: 640, theme: 'dark' },

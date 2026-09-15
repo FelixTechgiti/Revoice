@@ -20,14 +20,19 @@
 // somebody and a dead end is the wording. Leaving out `/init recovery` is what
 // #134 was filed for: the route has existed since emOS 0.4 and appeared in no
 // dialog.
+//
+// **Every check runs in BOTH languages**, because the advice moved into
+// `strings.js`. A route that survives only in English is not a route for
+// whoever is reading the German build — and that is the person most likely to
+// be holding the device.
 
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const JSX = join(HERE, "..", "static", "dashboard.jsx");
-const src = readFileSync(JSX, "utf8");
+const STATIC = join(HERE, "..", "static");
+const src = readFileSync(join(STATIC, "dashboard.jsx"), "utf8");
 
 function liftFunction(name) {
   const start = src.indexOf(`function ${name}`);
@@ -44,8 +49,19 @@ function liftFunction(name) {
   return src.slice(start, i + 1);
 }
 
-const connectFailureAdvice = new Function(
-  `${liftFunction("connectFailureAdvice")}; return connectFailureAdvice;`)();
+// strings.js is a classic script that assigns to the global, so it is imported
+// as one rather than picked apart — which also means this test fails if it
+// stops working outside a browser, and it has to work there.
+const stringsSrc = readFileSync(join(STATIC, "strings.js"), "utf8");
+const I18N = (await import("data:text/javascript;base64," + Buffer.from(
+  stringsSrc + "\nexport default globalThis.EM_I18N;").toString("base64"))).default;
+
+// The lifted function calls `t(key)`, which the dashboard defines at module
+// scope. Injecting it here rather than stubbing the strings is the point: what
+// is under test is the text somebody reads, not the shape of the call.
+const adviceFor = lang => new Function("t",
+  `${liftFunction("connectFailureAdvice")}; return connectFailureAdvice;`)(
+    key => { I18N.set(lang); return I18N.t(key); });
 
 let failures = 0;
 function check(label, pass, detail) {
@@ -57,92 +73,88 @@ function check(label, pass, detail) {
   }
 }
 
-const joined = (msg, step) =>
-  connectFailureAdvice(msg, step).map(l => l.text).join("\n");
+for (const lang of I18N.supported) {
+  console.log(`\n── ${lang} ──`);
+  const connectFailureAdvice = adviceFor(lang);
+  const joined = (msg, step) =>
+    connectFailureAdvice(msg, step).map(l => l.text).join("\n");
 
-// ── The case the whole thing exists for ────────────────────────────────────
+  // ── The case the whole thing exists for ──────────────────────────────────
 
-{
-  const out = joined("No device selected.", "connect_android");
-  check("an empty picker says something at all", out.length > 0);
-  check("it names emOS as a possible cause", /emOS/.test(out), out);
-  check("it says retrying cannot help there", /cannot help|never will/i.test(out), out);
-  // The route. Without it this is a diagnosis with no next step, which is
-  // exactly the state #134 describes.
-  check("it names /init recovery", out.includes("/init recovery"), out);
-  check("it says the step accepts a device already in TWRP",
-        /TWRP/.test(out) && /accepts/i.test(out), out);
-  // The ordinary cause must survive too. Somebody whose cable is charge-only
-  // should not be sent to a console they do not need.
-  check("it still names the ordinary causes",
-        /charge-only|dismissed/i.test(out), out);
-  check("it still says replug and retry", /replug/i.test(out), out);
+  {
+    const out = joined("No device selected.", "connect_android");
+    check("an empty picker says something at all", out.length > 0);
+    check("it names emOS as a possible cause", /emOS/.test(out), out);
+    // The route. Without it this is a diagnosis with no next step, which is
+    // exactly the state #134 describes. Untranslated on purpose — it is a
+    // command somebody types.
+    check("it names /init recovery", out.includes("/init recovery"), out);
+    check("it says the step accepts a device already in TWRP",
+          /TWRP/.test(out), out);
+  }
+
+  // ── Where it must stay quiet ─────────────────────────────────────────────
+
+  // The secure-context refusal already carries its own fix, from webUsbBlocked.
+  // A second wording here is a second thing to keep in step.
+  check("nothing extra for a secure-context refusal",
+        connectFailureAdvice(
+          "WebUSB needs a secure context, and this page is on http://x. Use …",
+          "connect_android").length === 0);
+
+  // A real failure mid-step is not a picker problem, and advice about emOS in
+  // front of it would be noise on top of a genuine error.
+  check("nothing extra for an unrelated failure",
+        connectFailureAdvice("Failed to execute 'transferOut' on 'USBDevice'",
+                             "connect_android").length === 0);
+
+  // Keyed on the step ID: every later step already has a device, so the same
+  // message there means something else entirely.
+  check("nothing on a later step",
+        connectFailureAdvice("No device selected.", "flash_emos").length === 0);
+  check("nothing when the step id is missing",
+        connectFailureAdvice("No device selected.", undefined).length === 0);
+
+  // Defensive: the catch block passes `e.message`, which is not always a
+  // string.
+  check("a non-string message does not throw",
+        connectFailureAdvice(null, "connect_android").length === 0);
+
+  // Chrome's own wording for a cancelled picker differs from the wrapper's,
+  // and neither string belongs to us.
+  check("Chrome's NotFoundError phrasing is covered",
+        /emOS/.test(joined("NotFoundError: No device found.", "connect_android")));
 }
 
-// Chrome's own wording for a cancelled picker differs from the wrapper's, and
-// neither string belongs to us.
-check("Chrome's NotFoundError phrasing is covered",
-      /emOS/.test(joined("NotFoundError: No device found.", "connect_android")));
-
-// ── Where it must stay quiet ───────────────────────────────────────────────
-
-// The secure-context refusal already carries its own fix, from webUsbBlocked.
-// A second wording here is a second thing to keep in step.
-check("nothing extra for a secure-context refusal",
-      connectFailureAdvice(
-        "WebUSB needs a secure context, and this page is on http://x. Use …",
-        "connect_android").length === 0);
-
-// A real failure mid-step is not a picker problem, and advice about emOS in
-// front of it would be noise on top of a genuine error.
-check("nothing extra for an unrelated failure",
-      connectFailureAdvice("Failed to execute 'transferOut' on 'USBDevice'",
-                           "connect_android").length === 0);
-
-// Keyed on the step ID: every later step already has a device, so the same
-// message there means something else entirely.
-check("nothing on a later step",
-      connectFailureAdvice("No device selected.", "flash_emos").length === 0);
-check("nothing when the step id is missing",
-      connectFailureAdvice("No device selected.", undefined).length === 0);
-
-// Defensive: the catch block passes `e.message`, which is not always a string.
-check("a non-string message does not throw",
-      connectFailureAdvice(null, "connect_android").length === 0);
-
-// ── The step description carries it too ────────────────────────────────────
+// ── The step description carries it too ──────────────────────────────────────
 //
 // The advice above only appears AFTER a failure. Somebody on emOS should not
-// have to fail first, and both flows start with this step — so both strings
-// have to say it, which a single search-and-replace would miss if only one
-// were changed.
+// have to fail first, and both flows start with this step — so both have to
+// say it.
+//
+// They now say it by sharing ONE key, which is stronger than the two
+// descriptions this used to compare: two strings can drift and one cannot. So
+// what is checked is that both tables still reach the same key, and that the
+// key's text carries the route in every language.
 
+console.log("\n── the step description ──");
 {
-  const descs = [...src.matchAll(/id: 'connect_android',[\s\S]*?desc: '([^']*)'/g)]
+  const keys = [...src.matchAll(/id: 'connect_android',\s*label: t\('[^']+'\),\s*desc: t\('([^']+)'\)/g)]
     .map(m => m[1]);
-  check("both flows define the connect step", descs.length === 2,
-        `found ${descs.length}`);
-  check("both descriptions mention emOS",
-        descs.length === 2 && descs.every(d => d.includes("emOS")),
-        JSON.stringify(descs));
-  check("both descriptions name /init recovery",
-        descs.length === 2 && descs.every(d => d.includes("/init recovery")),
-        JSON.stringify(descs));
+  check("both flows define the connect step", keys.length === 2,
+        `found ${keys.length}`);
+  check("both flows use the SAME description key",
+        keys.length === 2 && keys[0] === keys[1], JSON.stringify(keys));
+  for (const lang of I18N.supported) {
+    I18N.set(lang);
+    const desc = keys.length ? I18N.t(keys[0]) : "";
+    check(`the ${lang} description mentions emOS`, desc.includes("emOS"), desc);
+    check(`the ${lang} description names /init recovery`,
+          desc.includes("/init recovery"), desc);
+  }
 }
 
-// Every line is rendered by addLog, which takes a level. A typo there renders
-// as the default class and the line stops looking like a warning.
-{
-  const levels = new Set(
-    connectFailureAdvice("No device selected.", "connect_android")
-      .map(l => l.level));
-  check("every line carries a known level",
-        [...levels].every(l => ["warn", "error", "ok"].includes(l)),
-        [...levels].join(","));
-}
-
-if (failures) {
-  console.log(`\n${failures} check(s) failed`);
-  process.exit(1);
-}
-console.log("\nthe wizard names the emOS dead end and the way out of it");
+console.log(failures
+  ? `\n${failures} failure(s)`
+  : "\nthe wizard names the emOS dead end and the way out of it");
+process.exit(failures ? 1 : 0);

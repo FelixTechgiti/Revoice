@@ -3689,21 +3689,15 @@ function connectFailureAdvice(message, stepId) {
   // and neither is ours.
   if (!m.includes('no device selected') && !m.includes('no device found')) return [];
 
+  // The four lines are keys, so the advice exists in both languages. The
+  // one thing that must survive translation is `/init recovery`: without it
+  // this is a diagnosis with no next step, which is the state #134 was filed
+  // for. `emos_connect_advice.test.mjs` asserts it in each language.
   return [
-    { level: 'warn', text:
-      'Nothing was selected — and two different situations look identical here.' },
-    { level: 'warn', text:
-      '· The picker was dismissed, or the Dot is off or on a charge-only '
-      + 'cable. Replug and retry.' },
-    { level: 'warn', text:
-      '· The Dot is ALREADY RUNNING emOS. Retrying cannot help: emOS has no '
-      + 'adbd and never will, so it offers a serial console and the ADB picker '
-      + 'has nothing to show.' },
-    { level: 'warn', text:
-      'If it is on emOS: open the console and run `/init recovery`. The Dot '
-      + 'reboots into TWRP, and this step accepts a device that is already '
-      + 'there — it reads the FireOS build off /system rather than trusting '
-      + 'the recovery ramdisk\'s own properties.' },
+    { level: 'warn', text: t('wizAdviceNothingSelected') },
+    { level: 'warn', text: t('wizAdviceDismissed') },
+    { level: 'warn', text: t('wizAdviceAlreadyEmos') },
+    { level: 'warn', text: t('wizAdviceInitRecovery') },
   ];
 }
 
@@ -3801,25 +3795,30 @@ async function _sha256Hex(buf) {
 //  9  debloat          — pm hide bloat pkgs + service.d daemon-stop script [auto]
 // 10  wifi             — configure WiFi network                            [inputs]
 // 11  install_em       — push binary + startup script                      [file]
-const _WIZARD_STEPS = [
-  { id: 'connect_android', label: 'Connect Device',     desc: 'Connect the Echo Dot via USB. Device should be on and booted into Android. Appears as "AEOBC" in the USB picker. Already running emOS? It has no adbd, so the picker stays empty — run /init recovery from its console first, then connect here.' },
-  { id: 'connect_twrp',    label: 'Connect to TWRP',   desc: 'Wait for TWRP recovery to appear, then reconnect. Appears as "Echo" in the USB picker.' },
-  { id: 'patch_boot',      label: 'Patch Boot Image',  desc: 'Apply SELinux permissive patch and add init.rc service entries.' },
-  { id: 'install_magisk',  label: 'Install Magisk',    desc: 'Flash Magisk 17.3 for persistent root access.' },
-  { id: 'preseed_db',      label: 'Pre-seed Root DB',  desc: 'Grant root to ADB shell without a screen prompt.' },
-  { id: 'reboot',          label: 'Reboot to Android', desc: 'Reboot device to Android.' },
-  { id: 'reconnect',       label: 'Reconnect',         desc: 'Re-connect ADB as soon as the device appears as "AEOBC" in the USB picker — no need to wait for it to finish booting, the next step does that.' },
-  { id: 'verify_root',     label: 'Verify Root',       desc: 'Confirm Magisk root is working.' },
-  { id: 'disable_alexa',   label: 'Disable Alexa',     desc: 'Silence the Amazon setup assistant and disable the Alexa voice pipeline, before the device ever reaches WiFi.' },
-  { id: 'debloat',         label: 'Debloat',           desc: 'Hide non-essential Amazon packages and stop background daemons (~130MB RAM freed).' },
-  { id: 'wifi',            label: 'Configure WiFi',    desc: 'Connect the device to your local WiFi network.' },
-  { id: 'install_em',      label: 'Install Revoice',  desc: 'Push server binary and startup script to device.' },
+// FUNCTIONS rather than constants, for `deviceTabLabel`'s reason: a
+// module-scope array is built once at load and therefore frozen in whatever
+// language was active then, while the language toggle re-renders rather than
+// reloading the page. The step list is the spine of this window, so it is the
+// last thing that may be stuck in the wrong language.
+const _wizardSteps = () => [
+  { id: 'connect_android', label: t('wizStepConnectDevice'),  desc: t('wizDescConnectDevice') },
+  { id: 'connect_twrp',    label: t('wizStepConnectTwrp'),    desc: t('wizDescConnectTwrp') },
+  { id: 'patch_boot',      label: t('wizStepPatchBoot'),      desc: t('wizDescPatchBoot') },
+  { id: 'install_magisk',  label: t('wizStepInstallMagisk'),  desc: t('wizDescInstallMagisk') },
+  { id: 'preseed_db',      label: t('wizStepPreseedDb'),      desc: t('wizDescPreseedDb') },
+  { id: 'reboot',          label: t('wizStepReboot'),         desc: t('wizDescReboot') },
+  { id: 'reconnect',       label: t('wizStepReconnect'),      desc: t('wizDescReconnect') },
+  { id: 'verify_root',     label: t('wizStepVerifyRoot'),     desc: t('wizDescVerifyRoot') },
+  { id: 'disable_alexa',   label: t('wizStepDisableAlexa'),   desc: t('wizDescDisableAlexa') },
+  { id: 'debloat',         label: t('wizStepDebloat'),        desc: t('wizDescDebloat') },
+  { id: 'wifi',            label: t('wizStepWifi'),           desc: t('wizDescWifi') },
+  { id: 'install_em',      label: t('wizStepInstallEm'),      desc: t('wizDescInstallEm') },
   // Mandatory, not skippable. Every provisioned device carries the runtime,
   // which removes a whole class of "I enabled on-device wake word and nothing
   // happened" — the assets are not in the firmware, so without this step the
   // capability is advertised by a device that cannot actually use it. USB is
   // also much better suited to 15MB than the shell plane.
-  { id: 'install_oww',     label: 'Wake Word Assets',  desc: 'Push the ONNX runtime and wake models (~15MB) used for on-device wake word detection.' },
+  { id: 'install_oww',     label: t('wizStepInstallOww'),     desc: t('wizDescInstallOww') },
 ];
 
 // Transcript styling only — copy uses e.msg verbatim.
@@ -3871,16 +3870,16 @@ function _wizardLogClass(msg, type) {
 // WiFi moves to the END and is done over the console against emOS's own
 // wpa_supplicant — the real radio, so a network this hardware cannot join is
 // refused at pick time rather than after a flash.
-const _EMOS_STEPS = [
-  { id: 'connect_android', label: 'Connect Device',    desc: 'Connect the Echo Dot via USB. Device should be on and booted into Android. Appears as "AEOBC" in the USB picker. Already running emOS? It has no adbd, so the picker stays empty — run /init recovery from its console first, then connect here.' },
-  { id: 'connect_twrp',    label: 'Connect to TWRP',   desc: 'Wait for TWRP recovery to appear, then reconnect. Appears as "Echo" in the USB picker. Everything after this happens here.' },
-  { id: 'escrow_boot',     label: 'Escrow Boot Image', desc: 'Read the stock boot partition off the device and keep a copy. This one file is both the build input and the ten-second undo.' },
-  { id: 'install_em',      label: 'Install Revoice',  desc: 'Push the server binary, startup script and TLS credentials to /data, which survives the boot-partition write.' },
-  { id: 'install_oww',     label: 'Wake Word Assets',  desc: 'Push the ONNX runtime and wake models (~15MB) used for on-device wake word detection.' },
-  { id: 'build_emos',      label: 'Build emOS',        desc: 'The controller repacks your own escrowed image with the emOS init, reusing your kernel and device trees.' },
-  { id: 'flash_emos',      label: 'Flash and Verify',  desc: 'Write the built image to the boot partition and read it back to confirm it landed.' },
-  { id: 'reboot_watch',    label: 'Reboot and Watch',  desc: 'Reboot into emOS and follow the first boot over the USB serial console while the ring fills.' },
-  { id: 'wifi_register',   label: 'Configure WiFi',    desc: 'Scan and join a network using the device’s own radio, then wait for it to register with the controller.' },
+const _emosSteps = () => [
+  { id: 'connect_android', label: t('wizStepConnectDevice'),  desc: t('wizDescConnectDevice') },
+  { id: 'connect_twrp',    label: t('wizStepConnectTwrp'),    desc: t('wizDescConnectTwrpEmos') },
+  { id: 'escrow_boot',     label: t('wizStepEscrowBoot'),     desc: t('wizDescEscrowBoot') },
+  { id: 'install_em',      label: t('wizStepInstallEm'),      desc: t('wizDescInstallEmEmos') },
+  { id: 'install_oww',     label: t('wizStepInstallOww'),     desc: t('wizDescInstallOww') },
+  { id: 'build_emos',      label: t('wizStepBuildEmos'),      desc: t('wizDescBuildEmos') },
+  { id: 'flash_emos',      label: t('wizStepFlashEmos'),      desc: t('wizDescFlashEmos') },
+  { id: 'reboot_watch',    label: t('wizStepRebootWatch'),    desc: t('wizDescRebootWatch') },
+  { id: 'wifi_register',   label: t('wizStepWifi'),           desc: t('wizDescWifiRegister') },
 ];
 
 // ── WifiPanel ──
@@ -3909,11 +3908,11 @@ function WifiPanel({ ready, wifiSsid, setWifiSsid, wifiPsk, setWifiPsk, onScan, 
       {/* Scan row */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Pill small onClick={doScan} disabled={scanning || !ready}>
-          {scanning ? 'Scanning…' : 'Scan for networks'}
+          {scanning ? t('netScanning') : t('wifiScanForNetworks')}
         </Pill>
         {networks.length > 0 && (
           <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)' }}>
-            {networks.length} network{networks.length !== 1 ? 's' : ''} found
+            {S().wifiNetworksFound(networks.length)}
           </span>
         )}
       </div>
@@ -3955,36 +3954,36 @@ function WifiPanel({ ready, wifiSsid, setWifiSsid, wifiPsk, setWifiPsk, onScan, 
 
       {/* Manual SSID entry */}
       <div>
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--text2)', letterSpacing: '0.08em', marginBottom: 4 }}>SSID</div>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--text2)', letterSpacing: '0.08em', marginBottom: 4 }}>{t('netSsid')}</div>
         <input
           type="text" value={wifiSsid} onChange={e => setWifiSsid(e.target.value)}
-          placeholder="Select above or type network name"
+          placeholder={t('wifiSsidPlaceholder')}
           style={{ width: '100%', boxSizing: 'border-box' }}
         />
       </div>
 
       {/* Password */}
       <div>
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--text2)', letterSpacing: '0.08em', marginBottom: 4 }}>PASSWORD</div>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--text2)', letterSpacing: '0.08em', marginBottom: 4 }}>{t('wifiPassword')}</div>
         <div style={{ display: 'flex', gap: 6 }}>
           <input
             type={showPsk ? 'text' : 'password'} value={wifiPsk} onChange={e => setWifiPsk(e.target.value)}
-            placeholder="WPA passphrase" style={{ flex: 1, boxSizing: 'border-box' }}
+            placeholder={t('wifiPassphrasePlaceholder')} style={{ flex: 1, boxSizing: 'border-box' }}
             onKeyDown={e => e.key === 'Enter' && wifiSsid && onConnect()}
           />
           <button onClick={() => setShowPsk(v => !v)} style={{
             background: 'var(--hairline)', border: '1px solid var(--border-soft)', borderRadius: 6,
             fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)',
             padding: '0 8px', cursor: 'pointer', flexShrink: 0,
-          }}>{showPsk ? 'hide' : 'show'}</button>
+          }}>{showPsk ? t('wifiHide') : t('wifiShow')}</button>
         </div>
       </div>
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Pill accent onClick={onConnect} disabled={!wifiSsid || !ready}>Connect</Pill>
-        {onSkip  && <Pill small onClick={onSkip}>Skip (already connected)</Pill>}
-        {onAbort && <Pill small danger onClick={onAbort}>Abort provisioning</Pill>}
+        <Pill accent onClick={onConnect} disabled={!wifiSsid || !ready}>{t('wifiConnect')}</Pill>
+        {onSkip  && <Pill small onClick={onSkip}>{t('wifiSkip')}</Pill>}
+        {onAbort && <Pill small danger onClick={onAbort}>{t('wifiAbort')}</Pill>}
       </div>
     </div>
   );
@@ -4385,7 +4384,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
   // some of them, which is what the ref was protecting against.
   const [flow, setFlow] = useState(_wizardFlow);
   const isEmos = flow === 'emos';
-  const STEPS = isEmos ? _EMOS_STEPS : _WIZARD_STEPS;
+  const STEPS = isEmos ? _emosSteps() : _wizardSteps();
   const STEP_MODE = isEmos ? _EMOS_STEP_MODE : _STEP_MODE;
   const CONNECT = isEmos ? _EMOS_CONNECT_STEPS : CONNECT_STEPS;
   const [step, setStep]         = useState(0);
@@ -4467,7 +4466,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // Step count differs between the flows, so the per-step state has to be
     // rebuilt rather than carried across.
     setFlow(next);
-    setStepState((next === 'emos' ? _EMOS_STEPS : _WIZARD_STEPS).map(() => 'pending'));
+    setStepState((next === 'emos' ? _emosSteps() : _wizardSteps()).map(() => 'pending'));
     setStep(0);
     setLog([]);
     // An intent to migrate belongs to the flow it was expressed in. Carrying
@@ -7595,8 +7594,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         {/* Header */}
         <div style={{ borderBottom: '1px solid var(--line)', padding: '20px 24px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 22, fontWeight: 600, color: 'var(--text)', letterSpacing: '-0.02em' }}>Provision Echo Dot</div>
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 4 }}>Chrome/Edge only · USB-A cable · amonet-biscuit prerequisite</div>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 22, fontWeight: 600, color: 'var(--text)', letterSpacing: '-0.02em' }}>{t('wizTitle')}</div>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 4 }}>{t('wizSubtitle')}</div>
           </div>
           <CircleButton onClick={onClose} title={t('devClose')}>×</CircleButton>
         </div>
@@ -7654,7 +7653,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                 code. */}
             {step === 0 && usbBlocked && (
               <div className="em-panel" style={{ marginBottom: 12, borderColor: 'var(--warn)' }}>
-                <div className="em-label" style={{ marginBottom: 6 }}>USB is unavailable in this browser</div>
+                <div className="em-label" style={{ marginBottom: 6 }}>{t('wizUsbBlocked')}</div>
                 <p style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.6, margin: '0 0 6px' }}>
                   {usbBlocked.why}
                 </p>
@@ -7671,15 +7670,13 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                 which previews the flow being chosen. */}
             {step === 0 && !flowLocked && (
               <div style={{ marginBottom: 12 }}>
-                <div className="em-label" style={{ marginBottom: 6 }}>What to install</div>
+                <div className="em-label" style={{ marginBottom: 6 }}>{t('wizWhatToInstall')}</div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {[
                     { id: 'emos', name: 'emOS',
-                      sub: 'No Amazon software. The 3.5mm jack works.',
-                      warn: 'Newer, and going back to FireOS wipes the device.' },
-                    { id: 'fireos', name: 'FireOS + root',
-                      sub: 'Keeps Android. Every device in the field runs this.',
-                      warn: 'The 3.5mm jack is unreliable on this path.' },
+                      sub: t('wizEmosSub'), warn: t('wizEmosWarn') },
+                    { id: 'fireos', name: t('wizFireosName'),
+                      sub: t('wizFireosSub'), warn: t('wizFireosWarn') },
                   ].map(o => (
                     <div key={o.id} onClick={() => chooseFlow(o.id)}
                       style={{
@@ -7689,7 +7686,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                       }}>
                       <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14, fontWeight: 600,
                                     color: flow === o.id ? 'var(--text)' : 'var(--text2)' }}>
-                        {o.name}{o.id === 'emos' && <span style={{ fontWeight: 400, color: 'var(--muted)' }}> · default</span>}
+                        {o.name}{o.id === 'emos' && <span style={{ fontWeight: 400, color: 'var(--muted)' }}> · {t('wizDefault')}</span>}
                       </div>
                       <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--text2)', marginTop: 4, lineHeight: 1.5, textWrap: 'pretty' }}>{o.sub}</div>
                       <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--warn)', marginTop: 3, lineHeight: 1.5, textWrap: 'pretty' }}>{o.warn}</div>
@@ -7701,7 +7698,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
 
             {upcoming.length > 0 && !isDone && (
               <div className="em-wizard-upcoming">
-                <div className="em-label" style={{ marginBottom: 6 }}>Up next</div>
+                <div className="em-label" style={{ marginBottom: 6 }}>{t('wizUpNext')}</div>
                 {upcoming.map(s => (
                   <div key={s.id} className="em-wizard-upcoming__item">
                     <span className="em-wizard-upcoming__name">{s.label}</span>
@@ -7728,7 +7725,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
             {CONNECT.has(step) && stepState[step] === 'pending' && !running && (
               <div style={{ marginBottom: 10 }}>
                 <Pill disabled={!!usbBlocked} onClick={() => runStep(step)}>
-                  {step === 0 ? 'Connect Device' : step === 1 ? 'Connect to TWRP' : 'Reconnect Device'}
+                  {step === 0 ? t('wizConnectDeviceBtn')
+                    : step === 1 ? t('wizConnectTwrpBtn') : t('wizReconnectDeviceBtn')}
                 </Pill>
               </div>
             )}
@@ -7736,7 +7734,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
             {/* Step 5: reboot button (FireOS flow only — emOS step 5 builds the image) */}
             {!isEmos && step === 5 && stepState[5] === 'pending' && !running && (
               <div style={{ marginBottom: 10 }}>
-                <Pill onClick={() => runStep(5)}>Reboot to Android</Pill>
+                <Pill onClick={() => runStep(5)}>{t('wizRebootToAndroidBtn')}</Pill>
               </div>
             )}
 
@@ -7745,14 +7743,14 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
             {!isEmos && step === 3 && stepState[3] !== 'done' && !running && (
               <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--text2)', letterSpacing: '0.08em' }}>
-                  {stepState[3] === 'error' ? 'SELECT A DIFFERENT FILE' : 'MAGISK-V17.3.ZIP'}
+                  {stepState[3] === 'error' ? t('wizPickDifferentFile') : t('wizMagiskZip')}
                 </div>
                 <input
                   type="file" accept=".zip"
                   onChange={e => setMagiskFile(e.target.files[0])}
                   style={{ fontFamily: "'DM Mono',monospace", fontSize: 11 }}
                 />
-                {!!magiskFile && <Pill onClick={() => runStep(3)}>Flash Magisk</Pill>}
+                {!!magiskFile && <Pill onClick={() => runStep(3)}>{t('wizFlashMagisk')}</Pill>}
               </div>
             )}
 
@@ -7762,26 +7760,26 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
             {!isEmos && step === 11 && stepState[11] !== 'done' && !running && (
               <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Pill accent onClick={() => runStep(11, true)}>Install latest from GitHub</Pill>
+                  <Pill accent onClick={() => runStep(11, true)}>{t('wizInstallLatest')}</Pill>
                   <Pill small onClick={doCheckRelease} disabled={checkingRelease}>
-                    {checkingRelease ? 'Checking…' : 'Check for newer release'}
+                    {checkingRelease ? t('wizChecking') : t('wizCheckNewer')}
                   </Pill>
                   {latestRelease && (
                     <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)' }}>
-                      Latest on GitHub: {latestRelease.version}
+                      {S().wizLatestOnGithub(latestRelease.version)}
                     </span>
                   )}
                 </div>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.04em' }}>— or —</div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.04em' }}>{t('wizOr')}</div>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--text2)', letterSpacing: '0.08em' }}>
-                  {stepState[11] === 'error' ? 'SELECT A DIFFERENT BUILD (ARMv7)' : 'CUSTOM REVOICE SERVER BINARY (ARMv7)'}
+                  {stepState[11] === 'error' ? t('wizPickDifferentBuild') : t('wizCustomBinary')}
                 </div>
                 <input
                   type="file"
                   onChange={e => setBinaryFile(e.target.files[0])}
                   style={{ fontFamily: "'DM Mono',monospace", fontSize: 11 }}
                 />
-                {!!binaryFile && <Pill onClick={() => runStep(11, false)}>Install Custom Build</Pill>}
+                {!!binaryFile && <Pill onClick={() => runStep(11, false)}>{t('wizInstallCustomBuild')}</Pill>}
               </div>
             )}
 
@@ -7790,23 +7788,23 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
             {isEmos && step === 3 && stepState[3] !== 'done' && !running && (
               <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Pill accent onClick={() => runStep(3, true)}>Install latest from GitHub</Pill>
+                  <Pill accent onClick={() => runStep(3, true)}>{t('wizInstallLatest')}</Pill>
                   <Pill small onClick={doCheckRelease} disabled={checkingRelease}>
-                    {checkingRelease ? 'Checking…' : 'Check for newer release'}
+                    {checkingRelease ? t('wizChecking') : t('wizCheckNewer')}
                   </Pill>
                   {latestRelease && (
                     <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)' }}>
-                      Latest on GitHub: {latestRelease.version}
+                      {S().wizLatestOnGithub(latestRelease.version)}
                     </span>
                   )}
                 </div>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.04em' }}>— or —</div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.04em' }}>{t('wizOr')}</div>
                 <input
                   type="file"
                   onChange={e => setBinaryFile(e.target.files[0])}
                   style={{ fontFamily: "'DM Mono',monospace", fontSize: 11 }}
                 />
-                {!!binaryFile && <Pill onClick={() => runStep(3, false)}>Install Custom Build</Pill>}
+                {!!binaryFile && <Pill onClick={() => runStep(3, false)}>{t('wizInstallCustomBuild')}</Pill>}
               </div>
             )}
 
@@ -7815,17 +7813,17 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                 version that is not published yet. */}
             {isEmos && step === 5 && stepState[5] !== 'done' && !running && (
               <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <Pill accent onClick={() => runStep(5, true)}>Build with the latest emOS release</Pill>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.04em' }}>— or —</div>
+                <Pill accent onClick={() => runStep(5, true)}>{t('wizBuildLatestEmos')}</Pill>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.04em' }}>{t('wizOr')}</div>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--text2)', letterSpacing: '0.08em' }}>
-                  {stepState[5] === 'error' ? 'SELECT A DIFFERENT INIT' : 'YOUR OWN INIT BINARY (AARCH64, STATIC)'}
+                  {stepState[5] === 'error' ? t('wizPickDifferentInit') : t('wizCustomInit')}
                 </div>
                 <input
                   type="file"
                   onChange={e => setInitFile(e.target.files[0])}
                   style={{ fontFamily: "'DM Mono',monospace", fontSize: 11 }}
                 />
-                {!!initFile && <Pill onClick={() => runStep(5, false)}>Build with this init</Pill>}
+                {!!initFile && <Pill onClick={() => runStep(5, false)}>{t('wizBuildWithInit')}</Pill>}
               </div>
             )}
 
@@ -7835,10 +7833,9 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
             {isEmos && step === 6 && stepState[6] !== 'done' && !running && (
               <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)' }}>
-                  Writes the built image to {emosTarget || 'the boot partition'}.
-                  Your escrowed image restores it in about ten seconds and leaves /data alone.
+                  {S().wizFlashBlurb(emosTarget || t('wizBootPartition'))}
                 </div>
-                <Pill accent onClick={() => runStep(6)}>Flash emOS</Pill>
+                <Pill accent onClick={() => runStep(6)}>{t('wizFlashEmosBtn')}</Pill>
               </div>
             )}
 
@@ -7853,14 +7850,12 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
               && stepState[step] === 'error' && !running && (
               <div className="em-inset" style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 8, padding: 10 }}>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)' }}>
-                  Put {emosTarget || 'the boot partition'} back to the image escrowed at step 3
-                  {emosRef ? ` (md5 ${emosRef.md5.slice(0, 8)}…)` : ''}. Verified against the
-                  partition afterwards, and /data is untouched — everything installed stays.
+                  {S().wizRestoreBlurb(emosTarget || t('wizBootPartition'),
+                    emosRef ? ` (md5 ${emosRef.md5.slice(0, 8)}…)` : '')}
                 </div>
                 {!emosRef && (
                   <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--warn)' }}>
-                    This session has no escrowed image — choose the
-                    revoice-stock-boot-*.img downloaded at step 3.
+                    {t('wizNoEscrow')}
                   </div>
                 )}
                 <input type="file" accept=".img"
@@ -7868,7 +7863,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                   style={{ fontFamily: "'DM Mono',monospace", fontSize: 10 }} />
                 <Pill danger disabled={!adb || (!emosRef && !restoreFile)}
                   onClick={() => restoreEscrowedBoot(restoreFile)}>
-                  Restore escrowed boot image
+                  {t('wizRestoreEscrow')}
                 </Pill>
               </div>
             )}
@@ -7885,25 +7880,22 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                 itself. */}
             {isEmos && step === 7 && stepState[7] !== 'done' && !running && (
               <div className="em-panel" style={{ marginBottom: 12, borderColor: 'var(--warn)' }}>
-                <div className="em-label" style={{ marginBottom: 6 }}>Watch the light ring on this boot</div>
+                <div className="em-label" style={{ marginBottom: 6 }}>{t('wizRingHeading')}</div>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.7 }}>
-                  <div><strong style={{ color: 'var(--ok)' }}>Filling, then white, then fading</strong> — up and on the network. Done, about 30 seconds.</div>
-                  <div><strong>Two lit segments at the top, throbbing</strong> — waiting for the network. Normal, and most of the boot.</div>
-                  <div><strong style={{ color: 'var(--warn)' }}>Solid amber</strong> — the device is restoring its own last good image. Leave it alone; it reboots itself.</div>
-                  <div><strong style={{ color: 'var(--warn)' }}>Red and stopped</strong> — a boot stage failed. Recoverable, see below.</div>
-                  <div><strong style={{ color: 'var(--error)' }}>A single segment orbiting a full blue ring, for more than a minute</strong> — emOS never started. This is the one that needs you.</div>
+                  <div><strong style={{ color: 'var(--ok)' }}>{t('wizRingFillingBold')}</strong> — {t('wizRingFillingRest')}</div>
+                  <div><strong>{t('wizRingTwoSegBold')}</strong> — {t('wizRingTwoSegRest')}</div>
+                  <div><strong style={{ color: 'var(--warn)' }}>{t('wizRingAmberBold')}</strong> — {t('wizRingAmberRest')}</div>
+                  <div><strong style={{ color: 'var(--warn)' }}>{t('wizRingRedBold')}</strong> — {t('wizRingRedRest')}</div>
+                  <div><strong style={{ color: 'var(--error)' }}>{t('wizRingOrbitBold')}</strong> — {t('wizRingOrbitRest')}</div>
                 </div>
                 <p style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.7, margin: '10px 0 0' }}>
-                  <strong>If it does not come up, do not keep power cycling it.</strong> To reach
-                  TWRP: unplug the power, hold the <strong>mute</strong> button down, and apply
-                  power with it still held — the ring shows an <strong>alternating cyan
-                  pattern</strong> once you are in recovery. Reconnect here and use
-                  <strong> Restore escrowed boot image</strong> below: about ten seconds, and it
-                  leaves everything on /data alone. Repeatedly power cycling a device that will
-                  not boot is what turns a recoverable one into a case-opening job.
+                  <strong>{t('wizNoPowerCycleBold')}</strong>{t('wizNoPowerCyclePre')}
+                  <strong>{t('wizMuteButton')}</strong>{t('wizNoPowerCycleMid')}
+                  <strong>{t('wizCyanPattern')}</strong>{t('wizNoPowerCyclePost')}
+                  <strong>{t('wizRestoreEscrow')}</strong>{t('wizNoPowerCycleEnd')}
                 </p>
                 <div style={{ marginTop: 12 }}>
-                  <Pill accent onClick={() => runStep(7)}>Reboot and Connect Console</Pill>
+                  <Pill accent onClick={() => runStep(7)}>{t('wizRebootConnectConsole')}</Pill>
                 </div>
               </div>
             )}
@@ -7942,22 +7934,22 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                 an issue. */}
             {running && (
               <div style={{ marginBottom: 10, display: 'flex', gap: 8 }}>
-                <Pill danger onClick={() => abandonStep('Step cancelled.')}>Cancel step</Pill>
+                <Pill danger onClick={() => abandonStep('Step cancelled.')}>{t('wizCancelStep')}</Pill>
               </div>
             )}
 
             {/* Retry / recovery — one panel so the primary action is obvious */}
             {stepFailed && !INPUT_STEPS.has(cur.id) && (
               <div className="em-panel em-wizard-recovery">
-                <div className="em-label">This step failed</div>
+                <div className="em-label">{t('wizStepFailed')}</div>
                 <p className="em-wizard-recovery__hint">{recoveryHint()}</p>
                 <div className="em-wizard-recovery__actions">
-                  <Pill accent onClick={() => runStep(step)}>Retry</Pill>
+                  <Pill accent onClick={() => runStep(step)}>{t('wizRetry')}</Pill>
                    {!CONNECT.has(step) && (
-                    <Pill onClick={reconnectAdb}>{adb ? 'Reconnect' : 'Reconnect device'}</Pill>
+                    <Pill onClick={reconnectAdb}>{adb ? t('wizReconnect') : t('wizReconnectDevice')}</Pill>
                   )}
                   {diagnostics && (
-                    <Pill small onClick={downloadDiagnostics}>Download diagnostics</Pill>
+                    <Pill small onClick={downloadDiagnostics}>{t('wizDownloadDiagnostics')}</Pill>
                   )}
                   {/* Migration keeps the row; the delete below throws it away.
                       Offered first because it is what somebody crossing their
@@ -7970,7 +7962,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                       markStep(0, 'pending');
                       addLog(`Will migrate "${duplicateDeviceId}" to emOS and keep its settings. `
                            + 'Run the step again.', 'ok');
-                    }}>Migrate "{duplicateDeviceId}" to emOS (keep its settings)</Pill>
+                    }}>{S().wizMigrateDevice(duplicateDeviceId)}</Pill>
                   )}
                   {step === 0 && duplicateDeviceId && (
                     <Pill danger onClick={async () => {
@@ -7982,7 +7974,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                       } catch (e) {
                         addLog(`Delete failed: ${e.error || e.message || 'unknown error'} — check /api/devices/{id} DELETE exists in em_api.py.`, 'error');
                       }
-                    }}>Delete "{duplicateDeviceId}" from controller</Pill>
+                    }}>{S().wizDeleteDevice(duplicateDeviceId)}</Pill>
                   )}
                 </div>
               </div>
@@ -7990,12 +7982,12 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
 
             {stepFailed && INPUT_STEPS.has(cur.id) && (
               <div className="em-panel em-wizard-recovery">
-                <div className="em-label">This step failed</div>
+                <div className="em-label">{t('wizStepFailed')}</div>
                 <p className="em-wizard-recovery__hint">{recoveryHint()}</p>
                 <div className="em-wizard-recovery__actions">
-                  <Pill onClick={reconnectAdb}>{adb ? 'Reconnect' : 'Reconnect device'}</Pill>
+                  <Pill onClick={reconnectAdb}>{adb ? t('wizReconnect') : t('wizReconnectDevice')}</Pill>
                   {diagnostics && (
-                    <Pill small onClick={downloadDiagnostics}>Download diagnostics</Pill>
+                    <Pill small onClick={downloadDiagnostics}>{t('wizDownloadDiagnostics')}</Pill>
                   )}
                 </div>
               </div>
@@ -8015,10 +8007,9 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
             {isDone && (
               <div style={{ margin: '6px 0 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: 'var(--ok)', lineHeight: 1.7 }}>
-                  Provisioning complete. The device has rebooted and will discover the controller via mDNS,
-                  appearing in the dashboard as a pending device within ~30s.
+                  {t('wizComplete')}
                 </div>
-                <div><Pill accent onClick={onClose}>Done</Pill></div>
+                <div><Pill accent onClick={onClose}>{t('wizDone')}</Pill></div>
               </div>
             )}
 
@@ -8029,7 +8020,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                 scrolling box loses the top of it. */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 10 }}>
               <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.15em' }}>
-                Output{log.length > 0 ? ` — ${log.length} lines` : ''}
+                {t('wizOutput')}{log.length > 0 ? S().wizOutputLines(log.length) : ''}
               </span>
               {log.length > 0 && (
                 <Pill small onClick={() => {
@@ -8037,7 +8028,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                   navigator.clipboard.writeText(text)
                     .then(() => addLog('(transcript copied to clipboard)'))
                     .catch(() => addLog('Clipboard blocked by the browser — select the text manually.', 'warn'));
-                }}>Copy log</Pill>
+                }}>{t('wizCopyLog')}</Pill>
               )}
             </div>
             <div
@@ -8046,7 +8037,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
               style={{ flex: 1, minHeight: 0, marginTop: 10 }}
             >
               {log.length === 0
-                ? <span style={{ color: 'var(--lcd-faint)' }}>— no output yet —</span>
+                ? <span style={{ color: 'var(--lcd-faint)' }}>{t('wizNoOutput')}</span>
                 : log.map((e, i) => (
                   <div key={i} className={_wizardLogClass(e.msg, e.type)}>
                     {e.msg}

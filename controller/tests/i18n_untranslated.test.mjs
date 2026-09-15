@@ -99,15 +99,24 @@ function stripComments(src) {
             .replace(/(?<!:)\/\/[^\n]*/g, '');
 }
 
+// Text inside a thrown Error is a LOG LINE, and CLAUDE.md §6 keeps log
+// lines English: the wizard transcript is what gets pasted into an issue,
+// and issues here are English. A `new Error(` often spans several lines,
+// so the whole call is skipped rather than just the line that opens it.
+const OPENS_ERROR = /new Error\(/;
+
 function scan() {
   const src = stripComments(readFileSync(JSX, 'utf8'));
   const found = {};
   let owner = '(module)';
+  let inError = false;
   // Split on either ending. A Windows working tree is CRLF (.gitattributes
   // normalises on the way in), so an end-of-line anchor matched in CI and
   // silently did not here: the paragraph rule below found nothing at all
   // on the machine it was written on.
   for (const line of src.split(/\r?\n/)) {
+    if (inError) { if (line.includes(');')) inError = false; continue; }
+    if (OPENS_ERROR.test(line)) { inError = !line.includes(');'); continue; }
     const decl = /^(?:function|const|let|class) ([A-Za-z_$][\w$]*)/.exec(line);
     if (decl) owner = decl[1];
     if (EXEMPT_OWNERS.has(owner)) continue;
