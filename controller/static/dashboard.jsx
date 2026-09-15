@@ -1352,7 +1352,7 @@ function TurnObservability({ turns, deviceId, deviceLabel, recordingsOn, nearMis
           {hover != null && recent[hover] && (() => {
             const t = recent[hover]; const seg = turnSegments(t);
             return (
-              <div style={{ marginTop: 10, background: 'var(--hairline)', border: '1px solid var(--track)', borderRadius: 6, padding: '8px 12px', fontFamily: mono, fontSize: 10, color: 'var(--text2)', lineHeight: 1.7 }}>
+              <div style={{ marginTop: 10, background: 'var(--hairline)', border: '1px solid var(--track)', borderRadius: 6, padding: '8px 12px', fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--text2)', lineHeight: 1.7 }}>
                 <span style={{ color: 'var(--muted)' }}>{t.trigger}</span>
                 {' · '}listening {fmtS(seg.listen)} · transcribe {fmtS(seg.transcribe)} · respond {fmtS(seg.respond)} · total {fmtS(Math.max(t.total_ms, 0))}
                 {t.wake_model ? <><br/>wake {t.wake_model.replace(/\.[a-z]+$/, '').split('/').pop()} score {t.wake_score?.toFixed(3)} (thr {t.wake_threshold?.toFixed(2)}) · noise floor {t.noise_floor?.toFixed(4)}</> : null}
@@ -8368,10 +8368,10 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
   // binary is absent.
   const spotifyReady = spotifyStatus === null || spotifyStatus === undefined
     ? true : !!spotifyStatus.ok;
-  const spotifyWhy = (spotifyStatus && spotifyStatus.reason) || 'not installed';
+  const spotifyWhy = (spotifyStatus && spotifyStatus.reason) || t('cfgNotInstalled');
   const airplayReady = airplayStatus === null || airplayStatus === undefined
     ? true : !!airplayStatus.ok;
-  const airplayWhy = (airplayStatus && airplayStatus.reason) || 'not installed';
+  const airplayWhy = (airplayStatus && airplayStatus.reason) || t('cfgNotInstalled');
   // Installed is not running, and only the first was ever shown. Null from
   // either of these keeps the existing sentence unchanged — see
   // endpointHealthLine for why both absences must stay silent.
@@ -8468,7 +8468,7 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
       const resp = await API.upload('/api/oww_models/upload', file, 'model');
       await loadCustomModels();
       if (resp.model?.path) set('owwModel', resp.model.path);
-    } catch (e) { alert(e.error || 'Model upload failed'); }
+    } catch (e) { alert(e.error || t('cfgUploadFailed')); }
   }
 
   async function deleteWakeModel(m) {
@@ -8476,7 +8476,7 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
     try {
       await API.del(`/api/oww_models/${encodeURIComponent(m.file)}`);
       await loadCustomModels();
-    } catch (e) { alert(e.error || 'Delete failed'); }
+    } catch (e) { alert(e.error || t('cfgDeleteFailed')); }
   }
 
   // A selected custom model that no longer exists on disk (or a bare-metal
@@ -8519,16 +8519,16 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
   // there tunes one room.
   const EQ_PRESETS = [
     // The bypass, and the reference for any A/B. Keep it exactly zero.
-    ['Flat',   [0, 0, 0, 0,  0,  0, 0, 0]],
+    [t('eqPresetFlat'),   [0, 0, 0, 0,  0,  0, 0, 0]],
     // Gentler low-mid lift than Music: speech carries little energy below
     // 300Hz, and the boost spends headroom the limiter then reclaims from the
     // midrange. Keeps most of the driver's natural presence — 2-4kHz carries
     // consonants — while taking the harsh edge off the 3150 peak.
-    ['Speech', [0, 4, 2, 0, -2, -5, 0, 0]],
+    [t('eqPresetSpeech'), [0, 4, 2, 0, -2, -5, 0, 0]],
     // The full measured correction, bounded by what this driver will stand.
     // Stock puts +19.9dB at 250Hz; +8 is the honest fraction our ±12 range and
     // the limiter leave room for, and it is a value to walk up by ear.
-    ['Music',  [0, 8, 3, 0, -3, -6, 0, 0]],
+    [t('eqPresetMusic'),  [0, 8, 3, 0, -3, -6, 0, 0]],
   ];
   const activeEqPreset = (EQ_PRESETS.find(([, vals]) => JSON.stringify(vals) === JSON.stringify(bands)) || [null])[0];
 
@@ -8554,9 +8554,9 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
 
       {/* 01 PLAYBACK */}
-      <Stage n="01" title="Playback"
-        chips={<><ScopeChip tone="controller">Controller</ScopeChip><ScopeChip tone="device">Speaker</ScopeChip></>}
-        desc="Response audio: Home Assistant TTS → parametric EQ → resample → device speaker. Presets set the faders; drag any fader for a custom curve."
+      <Stage n="01" title={t('cfgPlayback')}
+        chips={<><ScopeChip tone="controller">{t('scopeController')}</ScopeChip><ScopeChip tone="device">{t('scopeSpeaker')}</ScopeChip></>}
+        desc={t('cfgPlaybackDesc')}
         scope={scopeEl('playback')} dim={secStyle('playback')}>
         <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 28, alignItems: 'start' }}>
           <div>
@@ -8573,7 +8573,7 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
           </div>
           <div>
             <div style={inputStyle}>
-              <Toggle label="Speech boost" sub="presence boost for voice" value={config.eqLoudness ?? false} onChange={v => set('eqLoudness', v)}/>
+              <Toggle label={t('cfgSpeechBoost')} sub={t('cfgSpeechBoostSub')} value={config.eqLoudness ?? false} onChange={v => set('eqLoudness', v)}/>
             </div>
             {/* Speaker protection: ONE toggle for the bass guard, and the
                 limiter is not offered at all.
@@ -8595,18 +8595,18 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 and that is not a preference. Every key still exists and is
                 settable through the API. */}
             <div style={inputStyle}>
-              <Slider label="Duck depth" disabled={!mixCapable}
+              <Slider label={t('cfgDuckDepth')} disabled={!mixCapable}
                 sub={mixCapable
-                  ? "how far music drops under a voice response — it keeps playing instead of pausing"
-                  : "needs firmware that mixes music and voice (v2.10.0+)"}
+                  ? t('cfgDuckDepthSub')
+                  : t('cfgNoMix')}
                 value={config.duckDb ?? -18} min={-40} max={0} step={1} unit="dB"
                 onChange={v => set('duckDb', v)}/>
             </div>
             <div style={inputStyle}>
-              <Slider label="Audio hold-off" disabled={!audioStateCapable}
+              <Slider label={t('cfgAudioHoldoff')} disabled={!audioStateCapable}
                 sub={audioStateCapable
-                  ? "how long the HA \"Audio\" sensor stays on after the last sound — bridges the gap between an answer and the announcement after it, so an amplifier automated on it does not switch input back and forth"
-                  : "needs firmware that reports what its music plane is playing"}
+                  ? t('cfgHoldoffSub')
+                  : t('cfgNoAudioState')}
                 value={config.audioHoldoffMs ?? 5000} min={0} max={30000} step={500} unit="ms"
                 onChange={v => set('audioHoldoffMs', v)}/>
             </div>
@@ -8618,31 +8618,26 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 restarted, and any real volume change overwrote it. Current
                 volume is now shown read-only on the Status tab. */}
             <div style={{ marginTop: 12, fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, textWrap: 'pretty' }}>
-              Volume is remembered per device and restored after a reboot.
-              Change it from Home Assistant or the device buttons; the current
-              level is shown on the Status tab.
+              {t('cfgVolumeNote')}
             </div>
           </div>
         </div>
         <StageAdvanced open={advPlay} onToggle={() => setAdvPlay(o => !o)} disabledStyle={inputStyle}>
           <div style={inputStyle}>
-            <Toggle label="Speaker protection"
-              sub="keeps bass the driver can't deliver from muddying the midrange — leave on"
+            <Toggle label={t('cfgSpeakerProtection')}
+              sub={t('cfgSpeakerProtectionSub')}
               value={config.bassGuardEnabled ?? true} onChange={v => set('bassGuardEnabled', v)}/>
           </div>
-          <div style={{ marginTop: 8, fontFamily: mono, fontSize: 10, color: 'var(--muted)', lineHeight: 1.6 }}>
-            The speaker cannot reproduce the lowest frequencies, and feeding
-            them to it costs cone movement that muddies everything above.
-            Removing them is what keeps the midrange clean. The change is
-            subtle by design and there is no reason to turn it off.
+          <div style={{ marginTop: 8, fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
+            {t('cfgBassGuardNote')}
           </div>
         </StageAdvanced>
       </Stage>
 
       {/* 02 WAKE WORD */}
-      <Stage n="02" title="Wake word"
-        chips={<ScopeChip tone="controller">Controller</ScopeChip>}
-        desc="openwakeword scores the continuous mic stream on the controller. Sensitivity sets the detection threshold — attempts that score close but miss are counted as near-misses (Status tab)."
+      <Stage n="02" title={t('cfgWakeWord')}
+        chips={<ScopeChip tone="controller">{t('scopeController')}</ScopeChip>}
+        desc={t('cfgWakeWordDesc')}
         scope={scopeEl('wakeword')} dim={secStyle('wakeword')}>
         <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'start' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, ...inputStyle }}>
@@ -8672,11 +8667,11 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
               }}>
                 <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, color: 'var(--lcd-line)' }}>{wwModelLabel(m.path)}</div>
                 <div style={{ fontFamily: mono, fontSize: 9, color: m.missing ? 'var(--error)' : 'var(--muted)', marginTop: 2 }}>
-                  {m.missing ? 'missing file' : `custom · ${m.file}`}
+                  {m.missing ? t('cfgMissingFile') : `custom · ${m.file}`}
                 </div>
                 {!disabled && !m.missing && config.owwModel !== m.path && (
                   <div onClick={e => { e.stopPropagation(); deleteWakeModel(m); }}
-                    title="Delete model"
+                    title={t('cfgDeleteModel')}
                     style={{ position: 'absolute', top: 4, right: 7, fontFamily: mono, fontSize: 11,
                       color: 'var(--muted)', cursor: 'pointer' }}>×</div>
                 )}
@@ -8705,10 +8700,10 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
               </div>
             </div>
             <div style={{ marginTop: 16, ...inputStyle }}>
-              <Toggle label="Speex denoise" sub="cleans audio before scoring — try in noisy rooms" value={config.owwSpeexNs ?? false} onChange={v => set('owwSpeexNs', v)}/>
-              <Toggle label="Barge-in" sub="wake word interrupts playback — enable AEC first" value={config.bargeInEnabled ?? false} onChange={v => set('bargeInEnabled', v)}/>
-              <Slider label="Barge threshold" sub="wake confidence needed during playback — raise it if a response cuts itself short" value={config.bargeInThreshold ?? 0.25} min={0.05} max={0.9} step={0.05} onChange={v => set('bargeInThreshold', v)}/>
-              <Slider label="Arbitration window" sub="ms that the first Echo to hear you silences the others — no added delay; 0 disables" value={config.wakeArbitrationMs ?? 700} min={0} max={2000} step={50} unit="ms" onChange={v => set('wakeArbitrationMs', v)}/>
+              <Toggle label={t('cfgSpeexDenoise')} sub={t('cfgSpeexDenoiseSub')} value={config.owwSpeexNs ?? false} onChange={v => set('owwSpeexNs', v)}/>
+              <Toggle label={t('cfgBargeIn')} sub={t('cfgBargeInSub')} value={config.bargeInEnabled ?? false} onChange={v => set('bargeInEnabled', v)}/>
+              <Slider label={t('cfgBargeThreshold')} sub={t('cfgBargeThresholdSub')} value={config.bargeInThreshold ?? 0.25} min={0.05} max={0.9} step={0.05} onChange={v => set('bargeInThreshold', v)}/>
+              <Slider label={t('cfgArbitrationWindow')} sub={t('cfgArbitrationWindowSub')} value={config.wakeArbitrationMs ?? 700} min={0} max={2000} step={50} unit="ms" onChange={v => set('wakeArbitrationMs', v)}/>
               {/* Three modes, so a select rather than a toggle. Each option is
                   offered only when the device says it can do it — capability,
                   not firmware version, because a control that silently does
@@ -8717,18 +8712,18 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                   shipped first and there is firmware in the field that scores
                   and reports without being able to act on it. */}
               <Select
-                label="Wake word detection"
+                label={t('cfgWakeDetection')}
                 sub={!shadowCapable
-                  ? 'needs newer firmware on this Echo — the controller listens for now'
+                  ? t('cfgNoOnDevice')
                   : (config.owwOnDevice ?? 'off') === 'on'
-                    ? 'the Echo decides — no network hop before it hears you, and it keeps working through a controller restart. The controller still scores alongside it, so Activity shows whether they agreed'
+                    ? t('cfgOnDeviceOn')
                     : (config.owwOnDevice ?? 'off') === 'shadow'
-                      ? 'the Echo scores alongside the controller and reports what it would have heard, without acting on it — compare in Activity before trusting it'
-                      : 'the controller listens; the Echo just streams audio'}
+                      ? t('cfgOnDeviceShadow')
+                      : t('cfgOwwControllerOnly')}
                 value={onDeviceMode(config)}
                 options={[
                   { value: 'off',    label: 'Controller' },
-                  { value: 'shadow', label: 'Both (compare)', disabled: !shadowCapable },
+                  { value: 'shadow', label: t('cfgBothCompare'), disabled: !shadowCapable },
                   // Needs the runtime + models installed as well as the
                   // capability, which the Updates tab does — hence the hint
                   // rather than a hard block we cannot verify from here.
@@ -8737,7 +8732,7 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 onChange={v => set('owwOnDevice', v)}/>
               {(config.owwOnDevice ?? 'off') !== 'off' && shadowCapable && (
                 <div className="em-label" style={{ marginTop: 6, color: 'var(--muted)' }}>
-                  Needs the wake word runtime installed on this Echo (Updates tab) — costs ~0.4 of a core while it runs.
+                  {t('cfgOwwRuntimeNote')}
                 </div>
               )}
             </div>
@@ -8746,9 +8741,9 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
       </Stage>
 
       {/* 03 MICROPHONES */}
-      <Stage n="03" title="Microphones"
-        chips={<ScopeChip tone="device">Device</ScopeChip>}
-        desc="Capture from the 7-mic array. Presets steer which perimeter mic is used during voice turns — wake-word listening always uses the centre mic. Gain here is the only gain in the wake path: it sets the level everything downstream hears."
+      <Stage n="03" title={t('cfgMicrophones')}
+        chips={<ScopeChip tone="device">{t('scopeDevice')}</ScopeChip>}
+        desc={t('cfgMicrophonesDesc')}
         scope={scopeEl('microphones')} dim={secStyle('microphones')}>
         <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 20, alignItems: 'center' }}>
           <DeviceDiagram
@@ -8777,35 +8772,35 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
         </div>
         <StageAdvanced open={advMics} onToggle={() => setAdvMics(o => !o)} disabledStyle={inputStyle}>
           <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 24px' }}>
-            <Slider label="MICPGA" sub="analog gain, before the ADC" value={config.adcMicpga ?? 40} min={0} max={59} onChange={v => set('adcMicpga', v)}/>
-            <Slider label="Digital gain" sub="ADC digital gain — affects wake + turns" value={config.adcDigitalGain ?? 88} min={0} max={100} onChange={v => set('adcDigitalGain', v)}/>
-            <Slider label="Mic gain" sub="fixed gain on the 24-bit capture, pre-16-bit stream" value={config.micGainDb ?? 24} min={0} max={42} unit="dB" onChange={v => set('micGainDb', v)}/>
-            <Slider label="Beam angle" sub="-1 = auto (onset-ratio selection)" value={config.beamAngle ?? -1} min={-1} max={359} step={1} onChange={v => set('beamAngle', v)}/>
-            <Toggle label="Beamforming" sub="perimeter mic lock during turns" value={config.beamformingEnabled ?? false} onChange={v => set('beamformingEnabled', v)}/>
-            <Toggle label="Echo cancel (AEC)" sub="subtracts the device's own playback — wake + turns" value={config.aecEnabled ?? false} onChange={v => set('aecEnabled', v)}/>
-            <Toggle label="Noise suppression" sub="DTLN denoise on speech-to-text audio only — helps fans/hum, not TV speech" value={config.nsAsr ?? false} onChange={v => set('nsAsr', v)}/>
-            <Slider label="AEC delay"
+            <Slider label={t('cfgMicpga')} sub={t('cfgMicpgaSub')} value={config.adcMicpga ?? 40} min={0} max={59} onChange={v => set('adcMicpga', v)}/>
+            <Slider label={t('cfgDigitalGain')} sub={t('cfgDigitalGainSub')} value={config.adcDigitalGain ?? 88} min={0} max={100} onChange={v => set('adcDigitalGain', v)}/>
+            <Slider label={t('cfgMicGain')} sub={t('cfgMicGainSub')} value={config.micGainDb ?? 24} min={0} max={42} unit="dB" onChange={v => set('micGainDb', v)}/>
+            <Slider label={t('cfgBeamAngle')} sub={t('cfgBeamAngleSub')} value={config.beamAngle ?? -1} min={-1} max={359} step={1} onChange={v => set('beamAngle', v)}/>
+            <Toggle label={t('cfgBeamforming')} sub={t('cfgBeamformingSub')} value={config.beamformingEnabled ?? false} onChange={v => set('beamformingEnabled', v)}/>
+            <Toggle label={t('cfgAec')} sub={t('cfgAecSub')} value={config.aecEnabled ?? false} onChange={v => set('aecEnabled', v)}/>
+            <Toggle label={t('cfgNoiseSuppression')} sub={t('cfgNoiseSuppressionSub')} value={config.nsAsr ?? false} onChange={v => set('nsAsr', v)}/>
+            <Slider label={t('cfgAecDelay')}
               sub={hwEchoRef
-                ? 'not used — this device has a hardware echo reference'
-                : 'playback write-to-ear latency compensation'}
+                ? t('cfgRefHwNote')
+                : t('cfgAecDelaySub')}
               disabled={hwEchoRef}
               value={config.aecDelayMs ?? 250} min={0} max={1000} step={10} unit="ms" onChange={v => set('aecDelayMs', v)}/>
-            <Slider label="AEC tail" sub="filter length — residual delay error + room reverb" value={config.aecTailMs ?? 300} min={50} max={500} step={10} unit="ms" onChange={v => set('aecTailMs', v)}/>
+            <Slider label={t('cfgAecTail')} sub={t('cfgAecTailSub')} value={config.aecTailMs ?? 300} min={50} max={500} step={10} unit="ms" onChange={v => set('aecTailMs', v)}/>
             {/* Three values, so a select. "Auto" is right almost always —
                 these exist so the two reference paths can be compared on one
                 device without editing an init script on it and restarting
                 the server, which is how that measurement stayed undone. */}
             <Select
-              label="Echo reference"
+              label={t('cfgEchoReference')}
               sub={!hwRefCapable
-                ? 'needs newer firmware on this Echo — the software tap is the only source it has'
+                ? t('cfgNoHwRef')
                 : (config.aecRefSource ?? 'auto') === 'hw'
-                  ? 'pinned to the playback loopback in the mic capture — no delay to compensate, but a board without one cancels nothing'
+                  ? t('cfgRefHw')
                   : (config.aecRefSource ?? 'auto') === 'sw'
-                    ? 'pinned to the tap at the speaker write — uses the AEC delay above, and re-converges after every volume change'
+                    ? t('cfgRefSw')
                     : hwEchoRef
-                      ? 'detected: using the hardware loopback on this Echo'
-                      : 'detects the hardware loopback, falls back to the software tap'}
+                      ? t('cfgRefDetected')
+                      : t('cfgRefAuto')}
               value={String(config.aecRefSource ?? 'auto').toLowerCase()}
               options={[
                 { value: 'auto', label: 'Auto' },
@@ -8813,15 +8808,15 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 { value: 'sw',   label: 'Software tap' },
               ]}
               onChange={v => set('aecRefSource', v)}/>
-            <Toggle label="Save utterances" sub="keeps the last 10 turns' mic audio on the server — play or download from Activity" value={config.saveUtterances ?? false} onChange={v => set('saveUtterances', v)}/>
+            <Toggle label={t('cfgSaveUtterances')} sub={t('cfgSaveUtterancesSub')} value={config.saveUtterances ?? false} onChange={v => set('saveUtterances', v)}/>
           </div>
         </StageAdvanced>
       </Stage>
 
       {/* 04 RING */}
-      <Stage n="04" title="Ring"
-        chips={<ScopeChip tone="controller">Controller</ScopeChip>}
-        desc="Colours for the LED ring during conversations — the solid listening ring and the thinking spinner. The red mute ring and cyan volume arc never change; red always means the mics are off."
+      <Stage n="04" title={t('cfgRing')}
+        chips={<ScopeChip tone="controller">{t('scopeController')}</ScopeChip>}
+        desc={t('cfgRingDesc')}
         scope={scopeEl('ring')} dim={secStyle('ring')}>
         <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24, alignItems: 'start' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, ...inputStyle }}>
@@ -8872,29 +8867,26 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
           )}
         </div>
         <StageAdvanced open={advRing} onToggle={() => setAdvRing(o => !o)} disabledStyle={inputStyle}>
-          <div style={{ fontFamily: mono, fontSize: 10, color: 'var(--text2)', lineHeight: 1.6, marginBottom: 12 }}>
-            While a response plays, the ring throbs with the live speaker level. These shape how
-            hard it throbs — the device renders it locally, so changes apply on the next response
-            with no restart. Defaults are tuned for speech; raise Decay and Gamma for a punchier
-            ring, lower them for a calmer one.
+          <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--text2)', lineHeight: 1.6, marginBottom: 12 }}>
+            {t('cfgRingMeterNote')}
           </div>
           <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 24px' }}>
-            <Slider label="Decay" sub="how fast it falls — higher tracks individual syllables"
+            <Slider label={t('cfgDecay')} sub={t('cfgDecaySub')}
               value={config.meterDecay ?? 0.30} min={0.02} max={1} step={0.02}
               onChange={v => set('meterDecay', v)}/>
-            <Slider label="Attack" sub="how fast it rises on a peak"
+            <Slider label={t('cfgAttack')} sub={t('cfgAttackSub')}
               value={config.meterAttack ?? 0.6} min={0.05} max={1} step={0.05}
               onChange={v => set('meterAttack', v)}/>
-            <Slider label="Gamma" sub="contrast — higher makes the swing more visible"
+            <Slider label={t('cfgGamma')} sub={t('cfgGammaSub')}
               value={config.meterGamma ?? 2.2} min={1} max={3.5} step={0.1}
               onChange={v => set('meterGamma', v)}/>
-            <Slider label="Floor" sub="brightness during silence; 0 = fully dark between words"
+            <Slider label={t('cfgFloor')} sub={t('cfgFloorSub')}
               value={config.meterFloor ?? 0.06} min={0} max={0.6} step={0.02}
               onChange={v => set('meterFloor', v)}/>
-            <Slider label="Reference" sub="speaker level mapped to full brightness — lower = more sensitive"
+            <Slider label={t('cfgReference')} sub={t('cfgReferenceSub')}
               value={config.meterRef ?? 0.22} min={0.02} max={1} step={0.02}
               onChange={v => set('meterRef', v)}/>
-            <Slider label="Curve" sub="below 1 lifts quiet consonants into view"
+            <Slider label={t('cfgCurve')} sub={t('cfgCurveSub')}
               value={config.meterCurve ?? 0.7} min={0.3} max={2} step={0.05}
               onChange={v => set('meterCurve', v)}/>
           </div>
@@ -8902,73 +8894,73 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
       </Stage>
 
       {/* 05 ADVANCED — button-turn internals: processing + speech gate */}
-      <Stage n="05" title="Advanced"
-        chips={<><ScopeChip tone="device">Device</ScopeChip><ScopeChip>Button turns only</ScopeChip></>}
-        desc="Everything here affects only bounded button-press turns — except the action button setting, which decides whether a tap starts one at all. Wake-word turns stream continuously — Home Assistant's VAD endpoints them, and the controller closes accidental wakes after 5s of silence relative to the room's measured noise floor — so none of these settings touch the wake path."
+      <Stage n="05" title={t('cfgAdvanced')}
+        chips={<><ScopeChip tone="device">{t('scopeDevice')}</ScopeChip><ScopeChip>{t('scopeButtonTurns')}</ScopeChip></>}
+        desc={t('cfgAdvancedDesc')}
         scope={scopeEl('advanced')} dim={secStyle('advanced')}>
-        {subHeader('Action button', true)}
+        {subHeader(t('cfgActionButton'), true)}
         <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px', ...inputStyle }}>
           {/* Offered only when the device says it can measure a hold. The
               value still reads through holdCapable so an incapable device
               shows the switch off rather than showing a stored true it
               cannot honour. */}
-          <Toggle label="Tap sends an event" disabled={!holdCapable}
+          <Toggle label={t('cfgTapSendsEvent')} disabled={!holdCapable}
             sub={holdCapable
-              ? "tap fires the HA action-button event instead of starting a turn — hold still fires 'long'; the button can no longer cancel a response. A tap is easy to trigger by accident and the button is unauthenticated — bind destructive automations to 'long' instead"
-              : 'needs newer firmware on this Echo — it has no action-button event for a tap to fire'}
+              ? t('cfgTapEventSub')
+              : t('cfgNoTapEvent')}
             value={holdCapable && (config.buttonSingleTapEvent ?? false)}
             onChange={v => set('buttonSingleTapEvent', v)}/>
-          <Slider label="Multi-tap window" sub="0 = off. Coalesces quick taps into double/triple, at the cost of delaying every tap by this much. Needs 'Tap sends an event'" value={config.buttonMultiTapMs ?? 0} min={0} max={600} step={50} unit="ms" disabled={!(holdCapable && (config.buttonSingleTapEvent ?? false))} onChange={v => set('buttonMultiTapMs', v)}/>
+          <Slider label={t('cfgMultiTapWindow')} sub={t('cfgMultiTapWindowSub')} value={config.buttonMultiTapMs ?? 0} min={0} max={600} step={50} unit="ms" disabled={!(holdCapable && (config.buttonSingleTapEvent ?? false))} onChange={v => set('buttonMultiTapMs', v)}/>
         </div>
-        {subHeader('USB console')}
+        {subHeader(t('cfgUsbConsole'))}
         <div style={{ ...inputStyle }}>
           <PasswordField
-            label="Console password"
+            label={t('cfgConsolePassword')}
             disabled={!emosFleet}
             sub={emosFleet
-              ? "prompts before the USB serial console hands over a root shell. Applies to emOS devices only — FireOS uses adb. Fleet-wide, and pushed straight to every connected device on save; one that is offline picks it up when it reconnects. Forgetting it costs a reflash, not a device."
-              : 'every device in this fleet runs FireOS, which uses adb for USB access — this setting would do nothing'}
+              ? t('cfgConsolePasswordSub')
+              : t('cfgFireosFleet')}
             isSet={config.consolePassword === '__unchanged__'}
             onChange={v => set('consolePassword', v)}/>
           {/* The gate runs when init SPAWNS the console, not per keystroke, so
               a session authenticated before a change keeps its old behaviour
               until something ends it. That is what this ends. */}
           <NumberField
-            label="Console idle timeout"
+            label={t('cfgConsoleIdleTimeout')}
             sub={emosFleet
-              ? 'minutes of no typing before the USB console logs out, 0-90. 0 = never. A long command is not interrupted — only an idle prompt.'
-              : 'every device in this fleet runs FireOS, which uses adb for USB access — this setting would do nothing'}
+              ? t('cfgConsoleTimeoutSub')
+              : t('cfgFireosFleet')}
             value={config.consoleTimeoutMin ?? 0}
             min={0} max={90} unit="min"
             disabled={!emosFleet}
             onChange={v => set('consoleTimeoutMin', v)}/>
         </div>
-        {subHeader('Turn processing')}
+        {subHeader(t('cfgTurnProcessing'))}
         <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px', ...inputStyle }}>
-          <Toggle label="Auto gain (AGC)" sub="levels button-turn speech; never the wake stream" value={config.agcEnabled ?? true} onChange={v => set('agcEnabled', v)}/>
+          <Toggle label={t('cfgAgc')} sub={t('cfgAgcSub')} value={config.agcEnabled ?? true} onChange={v => set('agcEnabled', v)}/>
         </div>
         {subHeader('Speech gate')}
         <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px 20px', ...inputStyle }}>
-          <Slider label="Threshold" sub="RMS above this = speech (pre-gain units)" value={config.vadThreshold ?? 0.001} min={0.0001} max={0.02} step={0.0001} onChange={v => set('vadThreshold', v)}/>
-          <Slider label="Speech gate" sub="speech needed to open" value={config.vadSpeechMs ?? 160} min={32} max={320} step={32} unit="ms" onChange={v => set('vadSpeechMs', v)}/>
-          <Slider label="Silence gate" sub="silence needed to close" value={config.vadSilenceMs ?? 800} min={200} max={2000} step={100} unit="ms" onChange={v => set('vadSilenceMs', v)}/>
+          <Slider label={t('cfgThreshold')} sub={t('cfgThresholdSub')} value={config.vadThreshold ?? 0.001} min={0.0001} max={0.02} step={0.0001} onChange={v => set('vadThreshold', v)}/>
+          <Slider label={t('cfgSpeechGate')} sub={t('cfgSpeechGateSub')} value={config.vadSpeechMs ?? 160} min={32} max={320} step={32} unit="ms" onChange={v => set('vadSpeechMs', v)}/>
+          <Slider label={t('cfgSilenceGate')} sub={t('cfgSilenceGateSub')} value={config.vadSilenceMs ?? 800} min={200} max={2000} step={100} unit="ms" onChange={v => set('vadSilenceMs', v)}/>
         </div>
       </Stage>
 
       {/* 06 BLUETOOTH */}
-      <Stage n="06" title="Bluetooth"
-        chips={<><ScopeChip tone="device">Device</ScopeChip><ScopeChip tone="controller">Controller</ScopeChip></>}
-        desc="Turns the device into a Home Assistant Bluetooth proxy: it passively listens for BLE advertisements (presence beacons, temperature sensors) and forwards them to HA as a separate ESPHome device — independent of the voice assistant. Enabling permanently switches the Dot's Bluetooth chip away from Android's stack (Bluetooth speaker pairing, never used by Revoice, stops being possible)."
+      <Stage n="06" title={t('cfgBluetooth')}
+        chips={<><ScopeChip tone="device">{t('scopeDevice')}</ScopeChip><ScopeChip tone="controller">{t('scopeController')}</ScopeChip></>}
+        desc={t('cfgBluetoothDesc')}
         scope={scopeEl('bluetooth')} dim={secStyle('bluetooth')}>
         <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px', ...inputStyle }}>
-          <Toggle label="Bluetooth proxy" sub="passive BLE scan → HA (Bermuda, BLE sensors)" value={config.bleProxyEnabled ?? false} onChange={v => set('bleProxyEnabled', v)}/>
+          <Toggle label={t('cfgBluetoothProxy')} sub={t('cfgBluetoothProxySub')} value={config.bleProxyEnabled ?? false} onChange={v => set('bleProxyEnabled', v)}/>
         </div>
       </Stage>
 
       {/* 07 STREAMING */}
-      <Stage n="07" title="Streaming"
-        chips={<><ScopeChip tone="device">Device</ScopeChip></>}
-        desc="Protocols the Echo speaks for itself, with no controller in the path. Music reaches the speaker straight from the source, so it keeps playing through a controller restart — and it is mixed with voice on the device, so a spoken question ducks it rather than stopping it. A voice request through Home Assistant always wins: the Echo leaves the group and plays what it was asked for, and does not rejoin by itself."
+      <Stage n="07" title={t('cfgStreaming')}
+        chips={<><ScopeChip tone="device">{t('scopeDevice')}</ScopeChip></>}
+        desc={t('cfgStreamingDesc')}
         scope={scopeEl('streaming')} dim={secStyle('streaming')}
         footer={
           /* The NAMES sit outside the dim, because they are the one thing in
@@ -8978,20 +8970,20 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
              at all, so it says so rather than accepting a value that would
              make every device answer to one name. */
           <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px', ...inputStyle }}>
-            <TextField label="Spotify name"
+            <TextField label={t('cfgSpotifyName')}
               sub={scoped
-                ? 'what THIS Echo is called in the Spotify app. Blank uses its serial, which nobody picks out of a list'
-                : 'set per device — two Echos announcing the same name make the picker useless'}
+                ? t('cfgSpotifyNameSub')
+                : t('cfgNameScoped')}
               value={scoped ? (config.spotifyName ?? '') : ''}
-              placeholder={scoped ? undefined : 'per device'}
+              placeholder={scoped ? undefined : t('cfgPerDevice')}
               disabled={!scoped || !spotifyCapable || !spotifyReady}
               onChange={v => set('spotifyName', v)}/>
-            <TextField label="AirPlay name"
+            <TextField label={t('cfgAirplayName')}
               sub={scoped
-                ? 'what THIS Echo is called in the AirPlay list. Blank uses its serial'
-                : 'set per device — two Echos announcing the same name make the picker useless'}
+                ? t('cfgAirplayNameSub')
+                : t('cfgNameScoped')}
               value={scoped ? (config.airplayName ?? '') : ''}
-              placeholder={scoped ? undefined : 'per device'}
+              placeholder={scoped ? undefined : t('cfgPerDevice')}
               disabled={!scoped || !airplayCapable || !airplayReady}
               onChange={v => set('airplayName', v)}/>
           </div>
@@ -9001,10 +8993,10 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
               through sendspinCapable so an incapable device shows the
               switch off rather than a stored true it cannot honour — the
               same shape as the tap-as-event toggle above. */}
-          <Toggle label="Sendspin" disabled={!sendspinCapable}
+          <Toggle label={t('cfgSendspin')} disabled={!sendspinCapable}
             sub={sendspinCapable
-              ? "join Music Assistant groups directly — synchronised multi-room, no controller hop. The Echo appears as a speaker in Music Assistant once enabled"
-              : 'needs newer firmware on this Echo — it has no Sendspin client'}
+              ? t('cfgSendspinSub')
+              : t('cfgNoSendspin')}
             value={sendspinCapable && (config.sendspinEnabled ?? false)}
             onChange={v => set('sendspinEnabled', v)}/>
           {/* Two gates, not one. The capability says the firmware can run a
@@ -9012,9 +9004,9 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
               actually on the device. Collapsing them would tell somebody
               their firmware is too old when the real answer is that a file
               was never pushed — a different problem with a different fix. */}
-          <Toggle label="Spotify Connect" disabled={!spotifyCapable || !spotifyReady}
+          <Toggle label={t('cfgSpotifyConnect')} disabled={!spotifyCapable || !spotifyReady}
             sub={!spotifyCapable
-              ? 'needs newer firmware on this Echo — it has no Spotify endpoint'
+              ? t('cfgNoSpotify')
               : (spotifyReady
                 // Whether the binary is INSTALLED belongs here: it is why the
                 // toggle is disabled, which is a question about the setting.
@@ -9022,8 +9014,8 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 // that is state, and a reading of state under a switch is
                 // where nobody looks for it (found the hard way, 2026-09-12:
                 // it sat here for weeks and its owner had never seen it).
-                ? 'the Echo appears in the Spotify app as a speaker and plays from it directly, with no Home Assistant in the path'
-                : `librespot is not installed on this Echo (${spotifyWhy})`)}
+                ? t('cfgSpotifySub')
+                : `${t('cfgLibrespotMissing')} (${spotifyWhy})`)}
             value={spotifyCapable && spotifyReady && (config.spotifyEnabled ?? false)}
             onChange={v => set('spotifyEnabled', v)}/>
           {/* Classic AirPlay, and the sub-label says so rather than letting
@@ -9033,12 +9025,12 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
               floor and none of the dependencies is blocked by the platform.
               What is true is that the build does not exist yet, so that is
               what it says now. Do not restate the old reasons here. */}
-          <Toggle label="AirPlay" disabled={!airplayCapable || !airplayReady}
+          <Toggle label={t('cfgAirplay')} disabled={!airplayCapable || !airplayReady}
             sub={!airplayCapable
-              ? 'needs newer firmware on this Echo — it has no AirPlay receiver'
+              ? t('cfgNoAirplayRx')
               : (airplayReady
-                ? 'the Echo appears in the AirPlay list and plays from a phone or Mac directly. Classic AirPlay — an AirPlay 2 build has not been made for this hardware yet'
-                : `shairport-sync is not installed on this Echo (${airplayWhy})`)}
+                ? t('cfgAirplaySub')
+                : `${t('cfgShairportMissing')} (${airplayWhy})`)}
             value={airplayCapable && airplayReady && (config.airplayEnabled ?? false)}
             onChange={v => set('airplayEnabled', v)}/>
           {/* The consequence is IN THE LABEL, which is the whole reason this
@@ -9048,18 +9040,18 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
               of "set the device volume" — but discovering it the first time
               the assistant whispers an answer is not, so it is chosen here
               instead of being the behaviour. */}
-          <Toggle label="AirPlay volume moves this Echo"
+          <Toggle label={t('cfgAirplayVolume')}
             disabled={!airplayCapable || !airplayReady}
-            sub="the slider on a phone sets the Echo's own volume and flashes the ring, instead of being turned down inside the AirPlay receiver where nothing else can see it. Note this Echo has ONE volume: turn AirPlay down and the assistant's next answer is quieter too. Takes effect when AirPlay next starts"
+            sub={t('cfgAirplayVolumeSub')}
             value={config.airplayVolumeControl ?? false}
             onChange={v => set('airplayVolumeControl', v)}/>
           {/* The same choice for Spotify, and its own switch rather than one
               shared with AirPlay: the two endpoints are enabled and used
               independently, and wanting the Spotify slider to own the room
               says nothing about AirPlay. */}
-          <Toggle label="Spotify volume moves this Echo"
+          <Toggle label={t('cfgSpotifyVolume')}
             disabled={!spotifyCapable || !spotifyReady}
-            sub="the slider in the Spotify app sets the Echo's own volume and flashes the ring, instead of being turned down inside librespot where nothing else can see it. Note this Echo has ONE volume: turn Spotify down and the assistant's next answer is quieter too. Takes effect when Spotify Connect next starts"
+            sub={t('cfgSpotifyVolumeSub')}
             value={config.spotifyVolumeControl ?? false}
             onChange={v => set('spotifyVolumeControl', v)}/>
         </div>
@@ -9314,7 +9306,10 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
   // Support is admin-only because the endpoint is: the bundle spans the whole
   // fleet, so a tab a non-admin can only be refused by is worse than no tab.
   const TABS = isAdmin ? ['fleet', 'users', 'account', 'support'] : ['fleet', 'account'];
-  const SETTINGS_TAB_LABELS = { fleet: 'Config', users: 'Users', account: 'Account', support: 'Support' };
+  const SETTINGS_TAB_LABELS = {
+    fleet: t('settingsTabConfig'), users: t('settingsTabUsers'),
+    account: t('settingsTabAccount'), support: t('settingsTabSupport'),
+  };
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(180,176,168,0.5)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:200, backdropFilter:'blur(8px)' }}
@@ -9326,7 +9321,7 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
         {/* Header */}
         <div className="em-modal-head" style={{ background:'linear-gradient(180deg,var(--card),var(--bg))', borderBottom:'1px solid var(--border-hard)', padding:'20px 24px 0', boxShadow:'0 1px 0 var(--sheen) inset' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
-            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:22, color:'var(--text)', fontWeight:600, letterSpacing:'-0.02em' }}>Settings</div>
+            <div style={{ fontFamily:"'Instrument Sans',sans-serif", fontSize:24, color:'var(--text)', fontWeight:600, letterSpacing:'-0.01em' }}>{t('settings')}</div>
             <CircleButton onClick={onClose} title="Close">×</CircleButton>
           </div>
           {/* Same raised folder-tab treatment as the device Detail modal —
@@ -9352,7 +9347,7 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
           {tab === 'fleet' && (
             <>
               <div style={{ fontFamily:"'Instrument Sans',sans-serif", fontSize:14, color:'var(--text2)', marginBottom:24, lineHeight:1.6, textWrap:'pretty' }}>
-                Default config applied to all devices unless overridden per-device.
+                {t('settingsFleetBlurb')}
               </div>
               <DeviceConfigForm config={config} onChange={setConf} disabled={false}
                 emosFleet={emosFleet}/>

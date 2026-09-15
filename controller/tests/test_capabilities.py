@@ -404,11 +404,28 @@ def test_airplay_volume_control_is_off_by_default_at_both_ends():
 
     jsx = (root / "static" / "dashboard.jsx").read_text()
     assert "airplayVolumeControl" in jsx, "no control for it in the dashboard"
+
     # The consequence has to be stated where the choice is made, or the
     # setting is just the same surprise behind one more click.
-    i = jsx.index("AirPlay volume moves this Echo")
-    assert "ONE volume" in jsx[i:i + 900], \
-        "the shared-volume consequence is not stated on the control"
+    #
+    # The copy itself moved out of the JSX into static/strings.js when the
+    # dashboard became bilingual, so this reads it there — and it reads
+    # BOTH languages, because a warning that survives only in English is
+    # not a warning for the reader who needs it. The label is looked up by
+    # its key rather than by its English text, or this guard would pass on
+    # a German build that had quietly lost the sentence.
+    strings = (root / "static" / "strings.js").read_text(encoding="utf-8")
+    assert "cfgAirplayVolume:" in strings, \
+        "no label for the AirPlay volume control"
+    for language, consequence in (("en", "ONE volume"), ("de", "EINE Lautstärke")):
+        i = strings.index(f"\n    {language}: {{")
+        j = strings.index("\n    },", i)
+        section = strings[i:j]
+        assert "cfgAirplayVolumeSub:" in section, \
+            f"the {language} strings have no sub for the AirPlay volume control"
+        k = section.index("cfgAirplayVolumeSub:")
+        assert consequence in section[k:k + 900], \
+            f"the shared-volume consequence is not stated in {language}"
 
 
 def test_airplay_metadata_is_built_and_read():

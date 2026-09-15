@@ -138,6 +138,10 @@ const SHOTS = [
   { name: 'device',   page: 'dark.html',  w: 1440, h: 900,  open: 'Lounge' },
   { name: 'approve',  page: 'light.html', w: 1440, h: 900,  open: 'G090LF1180570XYZ' },
   { name: 'settings', page: 'dark.html',  w: 1440, h: 900,  click: 'Settings' },
+  // The click target is a LABEL, so it is language-dependent — which is
+  // itself worth shooting: if the German build ever stopped translating the
+  // header, this shot would fail rather than quietly photograph English.
+  { name: 'settings-de', page: 'dark.html', w: 1440, h: 1200, click: 'Einstellungen', lang: 'de' },
   { name: 'wizard',   page: 'dark.html',  w: 1440, h: 900,  click: 'Set up an Echo Dot' },
   // The landing page, which is the first thing anyone sees and the only
   // page here that is not the dashboard.
