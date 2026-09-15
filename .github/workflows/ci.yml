@@ -106,6 +106,7 @@ jobs:
           node controller/tests/emos_connect_advice.test.mjs
           node controller/tests/device_state.test.mjs
           node controller/tests/fleet_summary.test.mjs
+          node controller/tests/dashboard_definitions.test.mjs
 
   device-tests:
     name: Device Go tests
