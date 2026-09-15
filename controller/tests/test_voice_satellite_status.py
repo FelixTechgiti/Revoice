@@ -100,13 +100,23 @@ def test_dashboard_renders_the_state_and_not_just_the_port():
     """
     src = _strip_js_comments(
         (CONTROLLER / "static" / "dashboard.jsx").read_text())
+    strings = (CONTROLLER / "static" / "strings.js").read_text(encoding="utf-8")
     assert "device.voiceSatellite" in src, \
         "the Status tab must read the satellite state"
-    assert "'Voice assistant'" in src, \
+    # The label and the four states moved to `strings.js`, so this looks for
+    # the KEY in the markup and the text in the resource file — and demands
+    # BOTH languages carry it. A row that reports a fault only in English is
+    # not a fault report for whoever has the fault. Same correction
+    # test_capabilities needed when the config pane was translated.
+    assert "t('devRowVoiceAssistant')" in src, \
         "the row must be labelled for what it reports, not for the protocol"
+    for key in ("devRowVoiceAssistant", "devVaNoServer", "devVaHaConnected",
+                "devVaWaiting", "devVaPortDown"):
+        assert strings.count(key) >= 2, \
+            f"{key} must exist in both languages, not just English"
     for state in ("HA connected", "Waiting for HA", "Port down",
                   "No satellite server"):
-        assert state in src, f"missing the {state!r} state"
+        assert state in strings, f"missing the {state!r} state"
     # A row that renders nothing when the field is absent is the failure
     # this whole change exists to prevent, one level up.
     assert "if (!vs)" in src, \

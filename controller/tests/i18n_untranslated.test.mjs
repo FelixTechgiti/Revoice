@@ -49,6 +49,11 @@ const NOT_PROSE = new Set([
 // distinction a "does it look English" test otherwise gets wrong — and it is
 // deliberately generous, because a false positive costs one allowlist entry
 // and a false negative is the bug this file exists for.
+// Module-scope values that are payloads rather than prose. `_INIT_RC_APPEND`
+// is the init.rc fragment the wizard writes onto the device: translating a
+// line of it would produce a service Android cannot start.
+const EXEMPT_OWNERS = new Set(['_INIT_RC_APPEND']);
+
 const PROSE = /[A-Za-z]{3,}/;
 // A JSX text node spanning several lines has no angle brackets on the
 // lines in the middle, so the between-the-brackets rule cannot see them —
@@ -71,6 +76,22 @@ const IS_CODE = /&&|\|\||=>|===|!==|^\s*[=<>]/;
 // sentence does not are excluded: a keyword at the front, a semicolon at
 // the end.
 const IS_STATEMENT = /;\s*$|^\s*(if|return|const|let|var|for|while|else|import|export|await|throw)\b/;
+// A call and a property access are the two remaining code shapes that
+// survive the rules above: `setScan(await API.get(` and
+// `device.connected` are both letters and punctuation. A bracket
+// straight after a letter is a call; prose puts a space before one.
+// The fourth position text comes from, and the one a `>...<` rule cannot
+// see at all: a button whose label depends on state, written as
+// `{busy ? 'Saving…' : 'Save'}`. Both arms are UI text. Matched as the
+// shape rather than as any string literal, because a literal on its own
+// is far more often a css value than a sentence.
+const TERNARY_LABELS = /\?\s*(['"])(.+?)\1\s*:\s*(['"])(.+?)\3/g;
+
+const IS_CALL = /[A-Za-z_$]\(/;
+const IS_MEMBER = /^[a-z_$][\w$]*\.[\w$]+$/;
+// A css value is two words too: `2px solid transparent` is a border, not
+// a sentence, and it reaches the ternary rule as both of its arms.
+const IS_CSS = /\d(px|em|rem|%)\b|\bvar\(--|\b(solid|dashed|transparent|inherit|none|auto|inset)\b/;
 const DISPLAY_PROP = /\b(label|sub|title|placeholder|note|unit|desc)\s*=\s*(['"])(.*?)\2/g;
 
 function stripComments(src) {
@@ -87,11 +108,27 @@ function scan() {
   // silently did not here: the paragraph rule below found nothing at all
   // on the machine it was written on.
   for (const line of src.split(/\r?\n/)) {
-    const fn = /^function ([A-Z]\w*)/.exec(line);
-    if (fn) owner = fn[1];
+    const decl = /^(?:function|const|let|class) ([A-Za-z_$][\w$]*)/.exec(line);
+    if (decl) owner = decl[1];
+    if (EXEMPT_OWNERS.has(owner)) continue;
     const hits = [];
     for (const m of line.matchAll(/>([^<>{}\n]*)</g)) hits.push(m[1]);
     for (const m of line.matchAll(DISPLAY_PROP)) hits.push(m[3]);
+    for (const m of line.matchAll(TERNARY_LABELS)) {
+      // Only an arm that reads as a PHRASE. A ternary between two
+      // technical tokens is the far commoner shape here —
+      // `freq >= 4900 ? '5GHz' : '2.4GHz'`, `tls ? 'wss' : 'ws'`, a colour, a
+      // css keyword — and counting those buries the handful of button
+      // labels this rule exists for. A space or a trailing ellipsis is
+      // what a label has and a token does not.
+      for (const arm of [m[2], m[4]]) {
+        // A CHAINED ternary defeats the lazy match: the arm comes back as
+        // `ok' : s.wifiRssi > -70 ? 'ok' : 'warn`, which is three arms and
+        // two operators. A real label carries no quote and no operator.
+        if (/['"]|\s[?:]\s/.test(arm)) continue;
+        if (/ |…$/.test(arm)) hits.push(arm);
+      }
+    }
     // Two words at least, so a lone identifier on its own line is not
     // mistaken for a sentence.
     if (BARE_PROSE.test(line) && !IS_STATEMENT.test(line)
@@ -100,7 +137,9 @@ function scan() {
     }
     for (const raw of hits) {
       const s = raw.trim().replace(/^[+·—–]\s*/, '');
-      if (!s || !PROSE.test(s) || NOT_PROSE.has(s) || IS_CODE.test(s)) continue;
+      if (!s || !PROSE.test(s) || NOT_PROSE.has(s) || IS_CODE.test(s)
+          || IS_CALL.test(s) || IS_MEMBER.test(s)
+          || IS_CSS.test(s)) continue;
       (found[owner] ||= []).push(s);
     }
   }

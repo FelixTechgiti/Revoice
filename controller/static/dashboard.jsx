@@ -338,10 +338,14 @@ function LanguageToggle({ lang, onChange }) {
 // has a map of its own with the same job and different keys — one shadowing
 // the other means deleting the local one silently renders every settings
 // tab as `undefined` rather than failing.
-const DEVICE_TAB_LABELS = {
-  status: 'Status', activity: 'Turns', config: 'Config',
-  console: 'Console', updates: 'Updates', logs: 'Logs',
-};
+// A FUNCTION, not a constant. A module-scope object is built once at load,
+// which freezes it in whatever language was active then — and the language
+// toggle re-renders rather than reloading, so the tabs would have been the
+// one strip of the window that never changed.
+const deviceTabLabel = key => ({
+  status: t('devTabStatus'), activity: t('devTabTurns'), config: t('devTabConfig'),
+  console: t('devTabConsole'), updates: t('devTabUpdates'), logs: t('devTabLogs'),
+}[key] || key);
 
 // ─── Components ───────────────────────────────────────────────────────────────
 
@@ -703,25 +707,25 @@ function PasswordField({ label, sub, isSet, onChange, disabled = false }) {
       <div style={{ marginBottom: 6 }}>
         <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: disabled ? 'var(--muted)' : 'var(--text2)' }}>{label}</span>
         <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', marginLeft: 8 }}>
-          {disabled ? '' : (isSet ? 'set' : 'not set')}
+          {disabled ? '' : (isSet ? t('pwSet') : t('pwNotSet'))}
         </span>
       </div>
       {sub && <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 8 }}>{sub}</div>}
       {!disabled && (editing ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <input type="password" autoFocus value={text} placeholder="new password"
+          <input type="password" autoFocus value={text} placeholder={t('pwNewPassword')}
             onChange={e => { setText(e.target.value); onChange(e.target.value); }}
             className="em-inset"
             style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, flex: '1 1 180px', minWidth: 0,
                      color: 'var(--text)', border: '1px solid var(--border-hard)' }}/>
-          <Pill small onClick={() => { onChange('__unchanged__'); stop(); }}>Cancel</Pill>
+          <Pill small onClick={() => { onChange('__unchanged__'); stop(); }}>{t('netCancel')}</Pill>
         </div>
       ) : (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Pill small onClick={() => { setEditing(true); setText(''); onChange(''); }}>
-            {isSet ? 'Change' : 'Set password'}
+            {isSet ? t('pwChange') : t('pwSetPassword')}
           </Pill>
-          {isSet && <Pill small danger onClick={() => onChange('')}>Remove</Pill>}
+          {isSet && <Pill small danger onClick={() => onChange('')}>{t('pwRemove')}</Pill>}
         </div>
       ))}
     </div>
@@ -1280,20 +1284,20 @@ function TurnObservability({ turns, deviceId, deviceLabel, recordingsOn, nearMis
     <div>
       {/* Stat tiles */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
-        <Lcd label="State" value={stateLabel} color={stateColor} size={16}/>
-        <Lcd label="Turns (last 50)" value={turns.length} color="var(--lcd-green)" size={16}/>
-        <Lcd label="Success" value={successPct != null ? successPct + '%' : '—'}
+        <Lcd label={t('turnsState')} value={stateLabel} color={stateColor} size={16}/>
+        <Lcd label={t('turnsLast50')} value={turns.length} color="var(--lcd-green)" size={16}/>
+        <Lcd label={t('turnsSuccess')} value={successPct != null ? successPct + '%' : '—'}
              color={successPct == null ? 'var(--lcd-dim)' : successPct >= 80 ? 'var(--lcd-green)' : 'var(--lcd-amber)'} size={16}/>
-        <Lcd label="Median reply" value={medianReply != null ? fmtS(medianReply) : '—'} color="var(--lcd-dim)" size={16}/>
-        <Lcd label="Near-misses" value={nearMisses != null ? nearMisses : '—'}
+        <Lcd label={t('turnsMedianReply')} value={medianReply != null ? fmtS(medianReply) : '—'} color="var(--lcd-dim)" size={16}/>
+        <Lcd label={t('turnsNearMisses')} value={nearMisses != null ? nearMisses : '—'}
              color={nearMisses > 0 ? 'var(--lcd-amber)' : 'var(--lcd-dim)'} size={16}/>
-        <Lcd label="Underruns" value={turns.reduce((s, t) => s + (t.underruns || 0), 0)}
+        <Lcd label={t('turnsUnderruns')} value={turns.reduce((s, t) => s + (t.underruns || 0), 0)}
              color={turns.some(t => t.underruns > 0) ? 'var(--lcd-amber)' : 'var(--lcd-dim)'} size={16}/>
       </div>
 
       {recent.length === 0 ? (
         <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--muted)' }}>
-          No voice turns recorded yet — history starts when the device is next used.
+          {t('turnsEmpty')}
         </div>
       ) : (
         <div style={{ position: 'relative' }}>
@@ -1341,11 +1345,11 @@ function TurnObservability({ turns, deviceId, deviceLabel, recordingsOn, nearMis
                 <span style={{ width: 34, flexShrink: 0, display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                   {isAdmin && t.audio_file && !gone.has(t.turn_id) && (<>
                     <button onClick={() => toggleAudio(t)}
-                      title={playing === t.turn_id ? 'Stop' : 'Play the mic audio for this turn'}
+                      title={playing === t.turn_id ? t('turnsStopAudio') : t('turnsPlayAudio')}
                       style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 10, lineHeight: 1, color: playing === t.turn_id ? 'var(--warn)' : 'var(--text2)' }}>
                       {playing === t.turn_id ? '▮' : '▶'}
                     </button>
-                    <button onClick={() => downloadAudio(t)} title="Download the WAV"
+                    <button onClick={() => downloadAudio(t)} title={t('turnsDownloadWav')}
                       style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 10, lineHeight: 1, color: 'var(--muted)' }}>⤓</button>
                   </>)}
                 </span>
@@ -1451,28 +1455,28 @@ function ConnectivityTab({ device, row }) {
       )}
 
       <div className="em-grid2" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, alignItems:'start' }}>
-        <Panel label="Current connection">
-          {row('Network', currentSsid || '—')}
+        <Panel label={t('netCurrentConnection')}>
+          {row(t('netNetwork'), currentSsid || '—')}
           {row('IP', device.ip && device.ip !== '127.0.0.1' ? device.ip : '—')}
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-            <span style={{ fontFamily:mono, fontSize:10, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' }}>Signal</span>
+            <span style={{ fontFamily:mono, fontSize:10, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' }}>{t('netSignal')}</span>
             <div style={{ display:'flex', alignItems:'center', gap:8 }}>
               <span style={{ fontFamily:mono, fontSize:10, color:'var(--text2)' }}>{s?.wifiRssi != null ? `${s.wifiRssi} dBm` : '—'}</span>
               <SignalBars rssi={s?.wifiRssi ?? null}/>
             </div>
           </div>
-          {!s && <div style={{ fontFamily:mono, fontSize:9, color:'var(--muted)', marginTop:8 }}>waiting for device stats…</div>}
+          {!s && <div style={{ fontFamily:mono, fontSize:9, color:'var(--muted)', marginTop:8 }}>{t('waitingForDeviceStats')}</div>}
         </Panel>
 
-        <Panel label="Visible networks">
+        <Panel label={t('netVisibleNetworks')}>
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
             <Pill small disabled={scanning || !device.connected || busy} onClick={doScan}>
-              {scanning ? 'Scanning…' : networks ? 'Rescan' : 'Scan'}
+              {scanning ? t('netScanning') : networks ? t('netRescan') : t('netScan')}
             </Pill>
             {scanError && <span style={{ fontFamily:mono, fontSize:10, color:'var(--warn)' }}>{scanError}</span>}
           </div>
           {networks && networks.length === 0 && (
-            <div style={{ fontFamily:mono, fontSize:10, color:'var(--muted)' }}>No networks found.</div>
+            <div style={{ fontFamily:mono, fontSize:10, color:'var(--muted)' }}>{t('netNoNetworks')}</div>
           )}
           {networks && networks.length > 0 && (
             <div style={{ maxHeight:170, overflowY:'auto' }}>
@@ -1490,47 +1494,45 @@ function ConnectivityTab({ device, row }) {
         </Panel>
       </div>
 
-      <Panel label="Change network">
+      <Panel label={t('netChangeNetwork')}>
         <div style={{ fontFamily:mono, fontSize:10, color:'var(--muted)', marginBottom:12 }}>
-          The device applies the change itself and rolls back automatically if the new network doesn't
-          work out — including when it connects but can't reach this controller (wrong VLAN, isolated
-          guest network). The previous network is only discarded once the device reports back here.
+          {t('netChangeBlurb')}
         </div>
         <div className="em-grid2" style={{ display:'grid', gridTemplateColumns:'1fr 1fr auto', gap:12, alignItems:'end' }}>
           <div>
-            <div style={{ fontFamily:mono, fontSize:9, color:'var(--text2)', letterSpacing:'0.08em', marginBottom:4 }}>SSID</div>
+            <div style={{ fontFamily:mono, fontSize:9, color:'var(--text2)', letterSpacing:'0.08em', marginBottom:4 }}>{t('netSsid')}</div>
             <input type="text" value={ssid} disabled={busy} onChange={e => setSsid(e.target.value)}
-              placeholder="Network name" style={{ width:'100%', boxSizing:'border-box' }}/>
+              placeholder={t('netSsidPlaceholder')} style={{ width:'100%', boxSizing:'border-box' }}/>
           </div>
           <div>
-            <div style={{ fontFamily:mono, fontSize:9, color:'var(--text2)', letterSpacing:'0.08em', marginBottom:4 }}>Passphrase</div>
+            <div style={{ fontFamily:mono, fontSize:9, color:'var(--text2)', letterSpacing:'0.08em', marginBottom:4 }}>{t('netPassphrase')}</div>
             <div style={{ display:'flex', gap:6 }}>
               <input type={showPsk ? 'text' : 'password'} value={psk} disabled={busy} onChange={e => setPsk(e.target.value)}
-                placeholder="WPA passphrase (blank = open)" style={{ flex:1, boxSizing:'border-box' }}/>
-              <Pill small onClick={() => setShowPsk(v => !v)}>{showPsk ? 'Hide' : 'Show'}</Pill>
+                placeholder={t('netPassphrasePlaceholder')} style={{ flex:1, boxSizing:'border-box' }}/>
+              <Pill small onClick={() => setShowPsk(v => !v)}>{showPsk ? t('netHide') : t('netShow')}</Pill>
             </div>
           </div>
           {!confirming ? (
-            <Pill accent disabled={!valid || busy || !device.connected} onClick={() => setConfirming(true)}>Switch…</Pill>
+            <Pill accent disabled={!valid || busy || !device.connected} onClick={() => setConfirming(true)}>{t('netSwitch')}</Pill>
           ) : (
             <div style={{ display:'flex', gap:8 }}>
-              <Pill danger onClick={doSwitch}>Confirm switch</Pill>
-              <Pill small onClick={() => setConfirming(false)}>Cancel</Pill>
+              <Pill danger onClick={doSwitch}>{t('netConfirmSwitch')}</Pill>
+              <Pill small onClick={() => setConfirming(false)}>{t('netCancel')}</Pill>
             </div>
           )}
         </div>
         {ssid && !valid && (
           <div style={{ fontFamily:mono, fontSize:10, color:'var(--warn)', marginTop:8 }}>
             {/["\\]/.test(ssid + psk)
-              ? 'SSID/passphrase cannot contain " or \\ characters.'
-              : 'WPA passphrase must be 8–63 characters (leave blank for an open network).'}
+              ? t('netBadChars')
+              : t('netBadPassphrase')}
           </div>
         )}
         {submitError && (
           <div style={{ fontFamily:mono, fontSize:10, color:'var(--warn)', marginTop:8 }}>{submitError}</div>
         )}
         {!device.connected && (
-          <div style={{ fontFamily:mono, fontSize:10, color:'var(--warn)', marginTop:8 }}>Device offline — connect it before changing networks.</div>
+          <div style={{ fontFamily:mono, fontSize:10, color:'var(--warn)', marginTop:8 }}>{t('netOfflineNotice')}</div>
         )}
       </Panel>
     </div>
@@ -2199,13 +2201,13 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     }}
                     style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 20, fontWeight: 600, padding: '4px 8px', maxWidth: 280 }}
                   />
-                  <Pill small onClick={doRename} disabled={renameSaving}>{renameSaving ? 'Saving…' : 'Save'}</Pill>
-                  <Pill small onClick={() => { setRenaming(false); setRenameValue(device.label || ''); }}>Cancel</Pill>
+                  <Pill small onClick={doRename} disabled={renameSaving}>{renameSaving ? t('devSaving') : t('devSave')}</Pill>
+                  <Pill small onClick={() => { setRenaming(false); setRenameValue(device.label || ''); }}>{t('devCancel')}</Pill>
                 </div>
               ) : (
                 <div
                   onClick={() => isAdmin && setRenaming(true)}
-                  title={isAdmin ? 'Click to rename' : undefined}
+                  title={isAdmin ? t('devClickToRename') : undefined}
                   style={{
                     fontFamily: "'Instrument Sans',sans-serif", fontSize: 24, color: 'var(--text)', fontWeight: 600,
                     letterSpacing: '-0.01em', lineHeight: 1.2, cursor: isAdmin ? 'pointer' : 'default',
@@ -2220,25 +2222,25 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', marginTop: 4, letterSpacing: '0.05em' }}>
                 {(() => {
                   const ip = device.ip && device.ip !== '127.0.0.1' ? device.ip : null;
-                  const ipStr = device.connected ? (ip || '—') : (ip ? `${ip} (last seen)` : '—');
-                  return <>{ipStr} · {device.device_id} · {device.firmware_ver || 'unknown'}</>;
+                  const ipStr = device.connected ? (ip || '—') : (ip ? `${ip} ${t('devLastSeenSuffix')}` : '—');
+                  return <>{ipStr} · {device.device_id} · {device.firmware_ver || t('devUnknownVersion')}</>;
                 })()}
-                {needsUpdate && <span style={{ color: 'var(--warn)', marginLeft: 10 }}>Update available</span>}
+                {needsUpdate && <span style={{ color: 'var(--warn)', marginLeft: 10 }}>{t('devUpdateAvailable')}</span>}
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <StateChip state={state}/>
               {isAdmin && !confirmDelete && (
-                <CircleButton onClick={() => setConfirmDelete(true)} title="Delete device" color="var(--error)">🗑</CircleButton>
+                <CircleButton onClick={() => setConfirmDelete(true)} title={t('devDeleteDevice')} color="var(--error)">🗑</CircleButton>
               )}
               {isAdmin && confirmDelete && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--error)' }}>Delete?</span>
-                  <Pill small danger disabled={deleting} onClick={doDelete}>{deleting ? '…' : 'Confirm'}</Pill>
-                  <Pill small onClick={() => setConfirmDelete(false)} disabled={deleting}>Cancel</Pill>
+                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--error)' }}>{t('devDeleteAsk')}</span>
+                  <Pill small danger disabled={deleting} onClick={doDelete}>{deleting ? '…' : t('devDeleteConfirm')}</Pill>
+                  <Pill small onClick={() => setConfirmDelete(false)} disabled={deleting}>{t('devCancel')}</Pill>
                 </div>
               )}
-              <CircleButton onClick={onClose} title="Close">×</CircleButton>
+              <CircleButton onClick={onClose} title={t('devClose')}>×</CircleButton>
             </div>
           </div>
           {device.approved ? (
@@ -2252,7 +2254,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   padding: '7px 14px', cursor: 'pointer',
                   color: tab === t ? 'var(--text)' : 'var(--muted)',
                   transition: 'background 0.12s, border-color 0.12s, color 0.12s',
-                }}>{DEVICE_TAB_LABELS[t] || t}</button>
+                }}>{deviceTabLabel(t)}</button>
               ))}
             </div>
           ) : (
@@ -2271,15 +2273,15 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
           {/* APPROVE */}
           {!device.approved && (
             <div style={{ maxWidth: 400 }}>
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 16 }}>New Device — Pending Approval</div>
-              {row('Serial', device.device_id)}
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: 16 }}>{t('devPendingHeading')}</div>
+              {row(t('devRowSerial'), device.device_id)}
               {row('IP', device.ip && device.ip !== '127.0.0.1' ? device.ip : '—')}
-              {row('First seen', relTime(device.first_seen))}
+              {row(t('devRowFirstSeen'), relTime(device.first_seen))}
               <div style={{ marginTop: 24, marginBottom: 8 }}>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>Label</div>
-                <input type="text" value={approveLabel} onChange={e => setApproveLabel(e.target.value)} placeholder="e.g. Kitchen" onKeyDown={e => e.key === 'Enter' && doApprove()}/>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>{t('devLabel')}</div>
+                <input type="text" value={approveLabel} onChange={e => setApproveLabel(e.target.value)} placeholder={t('devLabelPlaceholder')} onKeyDown={e => e.key === 'Enter' && doApprove()}/>
                 <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
-                  Names the device everywhere — the dashboard, and “{approveLabel.trim() || '…'} Voice Assistant” in Home Assistant.
+                  {S().devNameHint(approveLabel.trim() || '…')}
                 </div>
               </div>
               {/* Approval is the consequential act on this screen, not a
@@ -2320,11 +2322,11 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   ))}
                 </div>
                 <Pill big accent disabled={approving || !approveLabel.trim()} onClick={doApprove}>
-                  {approving ? 'Approving…' : 'Approve & Add to Fleet'}
+                  {approving ? t('devApproving') : t('devApproveAction')}
                 </Pill>
                 {!approveLabel.trim() && (
                   <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: 'var(--muted)', marginTop: 10 }}>
-                    Enter a label above to continue.
+                    {t('devApproveNeedsLabel')}
                   </div>
                 )}
               </div>
@@ -2414,13 +2416,13 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   </Panel>
                 )}
                 <div className="em-grid2" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
-                  <Panel label="Device">
+                  <Panel label={t('devPanelDevice')}>
                     {row('IP', (() => {
                       const ip = device.ip && device.ip !== '127.0.0.1' ? device.ip : null;
-                      return device.connected ? (ip || '—') : (ip ? `${ip} (last seen)` : '—');
+                      return device.connected ? (ip || '—') : (ip ? `${ip} ${t('devLastSeenSuffix')}` : '—');
                     })())}
-                    {row('Firmware', device.firmware_ver || '—')}
-                    {row('WiFi network', s?.wifiSsid || '—')}
+                    {row(t('devRowFirmware'), device.firmware_ver || '—')}
+                    {row(t('devRowWifiNetwork'), s?.wifiSsid || '—')}
                     {/* Was a bare port number, which answered "which port" and
                         never the question anyone opens this panel with — is
                         Home Assistant actually on the other end of it (#349).
@@ -2434,14 +2436,14 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                         The port stays, appended: it is what a stale HA config
                         entry is keyed on, so it is the first thing needed the
                         moment this row says Waiting. */}
-                    {row('Voice assistant', (() => {
+                    {row(t('devRowVoiceAssistant'), (() => {
                       const vs = device.voiceSatellite;
                       const p  = vs?.port ?? device.esphome_port;
-                      const at = p != null ? ` · port ${p}` : '';
-                      if (!vs)            return 'No satellite server';
-                      if (vs.haConnected) return `HA connected${at}`;
-                      if (vs.listening)   return `Waiting for HA${at}`;
-                      return `Port down${at}`;
+                      const at = p != null ? S().devVaPort(p) : '';
+                      if (!vs)            return t('devVaNoServer');
+                      if (vs.haConnected) return S().devVaHaConnected(at);
+                      if (vs.listening)   return S().devVaWaiting(at);
+                      return S().devVaPortDown(at);
                     })(), (() => {
                       const vs = device.voiceSatellite;
                       // Not-connected is amber rather than red: HA reconnects
@@ -2457,25 +2459,25 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                         last-seen time says nothing, and while offline the
                         Yes/No says nothing the timestamp doesn't. Merging
                         them frees a row for Volume without the panel growing. */}
-                    {row('Status',
-                         device.connected ? 'Online' : `Offline · last seen ${relTime(device.last_seen)}`,
+                    {row(t('devRowStatus'),
+                         device.connected ? t('devOnline') : S().devOfflineSince(relTime(device.last_seen)),
                          device.connected ? 'var(--ok)' : 'var(--warn)')}
-                    {row('Volume', volumePct(device) != null
+                    {row(t('devRowVolume'), volumePct(device) != null
                          ? `${volumePct(device)}%`
                          : (s?.volumePct != null ? `${s.volumePct}%` : '—'))}
-                    {row('Link', device.connected ? (device.linkTls ? 'wss (TLS)' : 'plain ws') : '—',
+                    {row(t('devRowLink'), device.connected ? (device.linkTls ? t('devLinkTls') : t('devLinkPlain')) : '—',
                          device.connected ? (device.linkTls ? 'var(--ok)' : 'var(--warn)') : undefined)}
-                    {row('Config', (() => {
+                    {row(t('devRowConfig'), (() => {
                       const n = (device.config_sections ?? []).length;
                       const total = Object.keys(CONFIG_SECTIONS).length;
-                      return n === 0 ? 'Fleet' : `Local override (${n} of ${total})`;
+                      return n === 0 ? t('devConfigFleet') : S().devConfigOverride(n, total);
                     })())}
                     {isAdmin && (
                       <div style={{ marginTop: 8, display:'flex', gap:6,
                                     flexWrap:'wrap' }}>
                         {device.connected && !device.linkTls && (
                           <Pill small accent disabled={securing} onClick={doSecureLink}>
-                            {securing ? 'Securing…' : 'Secure link'}
+                            {securing ? t('devSecuring') : t('devSecureLink')}
                           </Pill>
                         )}
                         {/* No `device.connected` guard, and that is the
@@ -2487,10 +2489,10 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                             look identical from every other panel here. */}
                         <Pill small disabled={diagBusy || !device.connected}
                               onClick={doNetDiag}>
-                          {diagBusy ? 'Checking…' : 'Inbound reachability'}
+                          {diagBusy ? t('devChecking') : t('devInboundReachability')}
                         </Pill>
                         <Pill small disabled={scanning} onClick={doMdnsScan}>
-                          {scanning ? 'Scanning…' : 'Network visibility'}
+                          {scanning ? t('devScanning') : t('devNetworkVisibility')}
                         </Pill>
                       </div>
                     )}
@@ -2505,7 +2507,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                           <div style={{ marginBottom: 6 }}>{scan.summary}</div>
                           {(scan.services || []).map(v => {
                             const label = v.service === 'spotify'
-                              ? 'Spotify Connect' : 'AirPlay';
+                              ? t('devSpotifyConnect') : t('devAirplay');
                             // Four states, four colours, because each pair
                             // of them is a different conclusion that used to
                             // read the same. Amber is "the scan found nothing
@@ -2530,8 +2532,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                                 <strong>{label}</strong> — {v.detail}
                                 {others != null && (
                                   <span style={{ color:'var(--muted)' }}>
-                                    {' '}({others} other host{others === 1 ? '' : 's'}
-                                    {' '}answered)
+                                    {' '}{S().devOtherHostsAnswered(others)}
                                   </span>
                                 )}
                                 {v.note && (
@@ -2542,10 +2543,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                                 )}
                                 {v.port_open === false && (
                                   <div style={{ color:'var(--error)' }}>
-                                    Advertised, but the controller cannot open a
-                                    connection to it. Spotify Connect and AirPlay
-                                    both need your phone to reach the device, so
-                                    nothing can use this endpoint.
+                                    {t('devPortClosed')}
                                   </div>
                                 )}
                                 {(v.advertised || []).map(a => (
@@ -2560,10 +2558,10 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                       </div>
                     )}
                   </Panel>
-                  <Panel label="Resources">
+                  <Panel label={t('devPanelResources')}>
                     <StatBar label="CPU"     pct={s?.cpuPct}    text={cpuText}/>
                     <StatBar label="RAM"     pct={ramPct}        text={ramText}/>
-                    <StatBar label="Storage" pct={stoPct}        text={stoText}/>
+                    <StatBar label={t('devStatStorage')} pct={stoPct}        text={stoText}/>
                     {/* Scalar health metrics as one deliberate row rather than
                         three label/value lines stacked after the bars. Ordered
                         by how often they are the answer on this hardware: the
@@ -2582,7 +2580,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                           own tile — it qualifies the link reading, it is not
                           a separate health metric. */}
                       <StatTile
-                        label="Link" value={s?.wifiRssi != null ? s.wifiRssi : null} unit="dBm"
+                        label={t('devRowLink')} value={s?.wifiRssi != null ? s.wifiRssi : null} unit="dBm"
                         sev={s?.wifiRssi == null ? 'ok' : s.wifiRssi > -70 ? 'ok' : s.wifiRssi > -80 ? 'warn' : 'bad'}
                         pct={s?.wifiRssi == null ? null : Math.max(0, Math.min(100, (s.wifiRssi + 95) / 35 * 100))}
                         glyph={<SignalBars rssi={s?.wifiRssi ?? null}/>}
@@ -2593,7 +2591,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                       {/* Amber past 200ms, red past 1s — the same thresholds the
                           RTT instrumentation counts excursions against. */}
                       <StatTile
-                        label="Latency" value={device.rttMs != null ? device.rttMs : null} unit="ms"
+                        label={t('devStatLatency')} value={device.rttMs != null ? device.rttMs : null} unit="ms"
                         sev={device.rttMs == null ? 'ok' : device.rttMs >= 1000 ? 'bad' : device.rttMs >= 200 ? 'warn' : 'ok'}
                         pct={device.rttMs == null ? null : Math.min(100, device.rttMs / 500 * 100)}
                       />
@@ -2603,7 +2601,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                           bites before any temperature looks alarming — so that
                           is the one thing in this row allowed to shout. */}
                       <StatTile
-                        label="Temp" value={tempC != null ? tempC.toFixed(1) : null} unit="°C"
+                        label={t('devStatTemp')} value={tempC != null ? tempC.toFixed(1) : null} unit="°C"
                         sev={tempC == null ? 'ok' : tempC >= 85 ? 'bad' : tempC >= 70 ? 'warn' : 'ok'}
                         pct={tempC == null ? null : Math.max(0, Math.min(100, (tempC - 20) / 70 * 100))}
                         note={throttled ? `throttled ${s.thermalCoreLimit}/${s.coresTotal}` : null}
@@ -2612,33 +2610,33 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                           : null}
                       />
                     </div>
-                    {!s && <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:8 }}>waiting for device stats…</div>}
+                    {!s && <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:8 }}>{t('waitingForDeviceStats')}</div>}
                   </Panel>
                 </div>
                 {device.bleProxy && (() => {
                   const b  = s?.ble || null;          // device-side scanner stats
                   const bp = device.bleProxy;         // controller-side proxy state
-                  const haState = bp.haSubscribed ? 'Streaming to HA'
-                    : bp.haConnected ? 'HA connected (not subscribed)'
-                    : bp.listening ? 'Waiting for HA' : 'Port down (device offline)';
+                  const haState = bp.haSubscribed ? t('devBleStreaming')
+                    : bp.haConnected ? t('devBleConnectedNotSub')
+                    : bp.listening ? t('devBleWaiting') : t('devBlePortDown');
                   return (
-                    <Panel label="Bluetooth proxy">
+                    <Panel label={t('devPanelBleProxy')}>
                       <div className="em-grid2" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 24px' }}>
                         <div>
-                          {row('Scanner', b ? (b.scanning ? 'Scanning' : 'Stopped') : '—', b?.scanning ? 'var(--ok)' : undefined)}
-                          {row('Adverts seen', b ? String(b.advertsSeen ?? 0) : '—')}
-                          {row('Nearby devices (5 min)', b ? String(b.uniqueAddrs ?? 0) : '—')}
-                          {row('BT address', b?.bdAddr || '—')}
+                          {row(t('devBleRowScanner'), b ? (b.scanning ? t('devBleScanning') : t('devBleStopped')) : '—', b?.scanning ? 'var(--ok)' : undefined)}
+                          {row(t('devBleRowAdverts'), b ? String(b.advertsSeen ?? 0) : '—')}
+                          {row(t('devBleRowNearby'), b ? String(b.uniqueAddrs ?? 0) : '—')}
+                          {row(t('devBleRowAddress'), b?.bdAddr || '—')}
                         </div>
                         <div>
-                          {row('Home Assistant', haState, bp.haSubscribed ? 'var(--ok)' : undefined)}
-                          {row('Forwarded to HA', String(bp.advertsForwarded ?? 0))}
-                          {row('ESPHome port', String(bp.port))}
+                          {row(t('devBleRowHa'), haState, bp.haSubscribed ? 'var(--ok)' : undefined)}
+                          {row(t('devBleRowForwarded'), String(bp.advertsForwarded ?? 0))}
+                          {row(t('devBleRowPort'), String(bp.port))}
                           {/* Amber on any non-zero: reopening /dev/stpbt
                               re-initialises the combo radio WiFi shares, so
                               this is the first thing to check against an
                               unexplained link drop on this device. */}
-                          {row('HCI errors / restarts',
+                          {row(t('devBleRowErrors'),
                                b ? `${b.hciErrors ?? 0} / ${b.restarts ?? 0}` : '—',
                                b && ((b.hciErrors ?? 0) > 0 || (b.restarts ?? 0) > 0)
                                  ? 'var(--warn)' : undefined)}
@@ -2671,14 +2669,14 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     device.endpointHealthCapable);
                   if (!sp && !ap) return null;
                   return (
-                    <Panel label="Audio endpoints">
+                    <Panel label={t('devPanelAudioEndpoints')}>
                       <div className="em-grid2" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 24px' }}>
                         <div>
-                          {sp && row('Spotify Connect', sp,
+                          {sp && row(t('devSpotifyConnect'), sp,
                                      sp.startsWith('running') ? 'var(--ok)' : 'var(--warn)')}
                         </div>
                         <div>
-                          {ap && row('AirPlay', ap,
+                          {ap && row(t('devAirplay'), ap,
                                      ap.startsWith('running') ? 'var(--ok)' : 'var(--warn)')}
                         </div>
                       </div>
@@ -2734,18 +2732,18 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   <div>
                     <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: 'var(--text2)' }}>
                       {sections.length
-                        ? `Local override (${sections.length} of ${Object.keys(CONFIG_SECTIONS).length})`
-                        : 'Following fleet config'}
+                        ? S().devConfigOverride(sections.length, Object.keys(CONFIG_SECTIONS).length)
+                        : t('devFollowingFleet')}
                     </div>
                     <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>
                       {sections.length
-                        ? `Overriding: ${sections.map(s => SECTION_LABELS[s] || s).join(', ')} — everything else tracks the fleet`
-                        : 'Switch any section below to Device to customise just that part'}
+                        ? S().devOverridingList(sections.map(s => SECTION_LABELS[s] || s).join(', '))
+                        : t('devScopeHint')}
                     </div>
                   </div>
                   {sections.length > 0 && (
                     <Pill onClick={() => { setSections([]); setDirty(true); }}>
-                      Revert all to fleet
+                      {t('devRevertAllToFleet')}
                     </Pill>
                   )}
                 </div>
@@ -2782,13 +2780,13 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
               {isAdmin && dirty && (
                 <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
                   <Pill accent disabled={saving} onClick={pushConfig}>
-                    {saving ? 'Pushing…' : 'Push config'}
+                    {saving ? t('devPushing') : t('devPushConfig')}
                   </Pill>
                   <Pill onClick={() => {
                     setConfig(effectiveConfig(globalConfig, device));
                     setSections(device.config_sections ?? []);
                     setDirty(false);
-                  }}>Cancel</Pill>
+                  }}>{t('devCancel')}</Pill>
                 </div>
               )}
             </div>
@@ -2798,7 +2796,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
           {tab === 'console' && (
             device.connected
               ? <div style={{ height: '100%' }}><Shell deviceId={device.device_id} token={token} height="100%"/></div>
-              : <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: 'var(--warn)' }}>Device offline — console unavailable</div>
+              : <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: 'var(--warn)' }}>{t('devConsoleOffline')}</div>
           )}
 
           {/* UPDATES */}
@@ -7544,7 +7542,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
             <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 22, fontWeight: 600, color: 'var(--text)', letterSpacing: '-0.02em' }}>Provision Echo Dot</div>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: 'var(--muted)', letterSpacing: '0.12em', textTransform: 'uppercase', marginTop: 4 }}>Chrome/Edge only · USB-A cable · amonet-biscuit prerequisite</div>
           </div>
-          <CircleButton onClick={onClose} title="Close">×</CircleButton>
+          <CircleButton onClick={onClose} title={t('devClose')}>×</CircleButton>
         </div>
 
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
@@ -9177,25 +9175,25 @@ function DeployAllModal({ release, devices, deployState, onStarted, onDismiss, o
     d.approved && d.connected && d.firmware_ver !== release?.version);
 
   const SKIP_REASONS = {
-    not_approved:       'not approved',
-    already_current:    'already up to date',
-    update_in_progress: 'update already running',
+    not_approved:       t('deploySkipNotApproved'),
+    already_current:    t('deploySkipAlreadyCurrent'),
+    update_in_progress: t('deploySkipInProgress'),
   };
 
   function statusFor(id) {
     const d = byId[id];
-    if (!d)                              return { text: 'unknown',      color: 'var(--muted)' };
+    if (!d)                              return { text: t('deployStatusUnknown'), color: 'var(--muted)' };
     if (d.connected && d.firmware_ver === target)
-                                         return { text: '✓ updated',    color: 'var(--ok)' };
+                                         return { text: t('deployStatusUpdated'), color: 'var(--ok)' };
     // A recorded failure is terminal — without this the row (and the header
     // progress pill) sat at "updating…" forever after an aborted update.
     if (d.update_error)                  return { text: `✗ ${d.update_error}`, color: 'var(--error)' };
     // Queued outranks "rebooting…": a device waiting its turn has had nothing
     // sent to it, and a disconnected one in the queue is offline for its own
     // reasons, not because we restarted it.
-    if (d.update_queued)                 return { text: 'queued',       color: 'var(--muted)' };
-    if (!d.connected)                    return { text: 'rebooting…',   color: 'var(--warn)' };
-    return { text: 'updating…', color: 'var(--accent)' };
+    if (d.update_queued)                 return { text: t('deployStatusQueued'), color: 'var(--muted)' };
+    if (!d.connected)                    return { text: t('deployStatusRebooting'), color: 'var(--warn)' };
+    return { text: t('deployStatusUpdating'), color: 'var(--accent)' };
   }
 
   const started = view?.started || [];
@@ -9215,7 +9213,7 @@ function DeployAllModal({ release, devices, deployState, onStarted, onDismiss, o
       const res = await API.post('/api/releases/deploy', {});
       onStarted(res); // lift to App so it persists across close/reopen
     } catch (e) {
-      if (mounted.current) setError(e.error || 'Deploy failed');
+      if (mounted.current) setError(e.error || t('deployFailed'));
     }
     if (mounted.current) setRunning(false);
   }
@@ -9223,29 +9221,29 @@ function DeployAllModal({ release, devices, deployState, onStarted, onDismiss, o
   const label = d => d?.label || d?.device_id || '?';
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(30,28,24,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 14, padding: '28px 32px', width: 440, maxWidth: '92vw' }}>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 16, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
-          Deploy to fleet
+          {t('deployTitle')}
         </div>
         <div style={{ fontFamily: mono, fontSize: 10, color: 'var(--muted)', marginBottom: 18 }}>
-          Target: {release?.version || '—'} · devices update over WiFi and auto-roll-back on failure
+          {S().deployTarget(release?.version || '—')}
         </div>
 
         {!view ? (
           <>
             <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.8 }}>
               {eligible.length === 0
-                ? 'Every connected device is already on this version.'
-                : <>Will update <b>{eligible.length}</b> device{eligible.length === 1 ? '' : 's'}:{' '}
+                ? t('deployAllCurrent')
+                : <>{t('deployWillUpdatePre')}<b>{eligible.length}</b>{S().deployWillUpdatePost(eligible.length)}{' '}
                     {eligible.map(d => `${label(d)} (${d.firmware_ver || '?'})`).join(', ')}</>}
             </div>
             {error && <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--error)', marginBottom: 12 }}>{error}</div>}
             <div style={{ display: 'flex', gap: 10 }}>
               <Pill accent disabled={running || eligible.length === 0} onClick={deploy}>
-                {running ? 'Starting…' : `Deploy ${release?.version || ''}`}
+                {running ? t('deployStarting') : S().deployAction(release?.version || '')}
               </Pill>
-              <Pill onClick={onClose}>Cancel</Pill>
+              <Pill onClick={onClose}>{t('deployCancel')}</Pill>
             </div>
           </>
         ) : (
@@ -9262,23 +9260,23 @@ function DeployAllModal({ release, devices, deployState, onStarted, onDismiss, o
             {(view.skipped || []).map(s => (
               <div key={s.device_id} style={{ display: 'flex', justifyContent: 'space-between', fontFamily: mono, fontSize: 11, padding: '5px 0', borderBottom: '1px solid var(--hairline)' }}>
                 <span style={{ color: 'var(--muted)' }}>{label(byId[s.device_id])}</span>
-                <span style={{ color: 'var(--muted)' }}>skipped — {SKIP_REASONS[s.reason] || s.reason}</span>
+                <span style={{ color: 'var(--muted)' }}>{t('deploySkipped')} — {SKIP_REASONS[s.reason] || s.reason}</span>
               </div>
             ))}
             {(view.started || []).length === 0 && (view.skipped || []).length === 0 && (
-              <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--muted)' }}>Nothing to do.</div>
+              <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--muted)' }}>{t('deployNothingToDo')}</div>
             )}
             <div style={{ fontFamily: mono, fontSize: 10, color: 'var(--muted)', marginTop: 14 }}>
               {allDone
                 ? (failedCount > 0
-                    ? `Finished — ${failedCount} device${failedCount === 1 ? '' : 's'} failed (see device logs).`
-                    : 'All devices updated.')
-                : 'Updates run in the background — you can close this and reopen it from the header to check progress.'}
+                    ? S().deployFinishedFailed(failedCount)
+                    : t('deployAllUpdated'))
+                : t('deployBackground')}
             </div>
             <div style={{ marginTop: 14, display: 'flex', gap: 10 }}>
               {allDone
-                ? <Pill accent onClick={() => { onDismiss(); onClose(); }}>Done</Pill>
-                : <Pill onClick={onClose}>Close (keeps running)</Pill>}
+                ? <Pill accent onClick={() => { onDismiss(); onClose(); }}>{t('deployDone')}</Pill>
+                : <Pill onClick={onClose}>{t('deployCloseKeepsRunning')}</Pill>}
             </div>
           </>
         )}
@@ -9412,7 +9410,7 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
         <div className="em-modal-head" style={{ borderBottom:'1px solid var(--line)', padding:'20px 24px 0' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
             <div style={{ fontFamily:"'Instrument Sans',sans-serif", fontSize:24, color:'var(--text)', fontWeight:600, letterSpacing:'-0.01em' }}>{t('settings')}</div>
-            <CircleButton onClick={onClose} title="Close">×</CircleButton>
+            <CircleButton onClick={onClose} title={t('devClose')}>×</CircleButton>
           </div>
           {/* Same raised folder-tab treatment as the device Detail modal —
               one tab style across the dashboard. */}
