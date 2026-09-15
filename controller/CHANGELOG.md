@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.49.0-fx.1
+
+### emOS lässt sich ohne Kabel neu flashen
+
+**Ein Gerät auf emOS hat kein adbd** — das ist der Sinn der USB-Konsole, aber
+es heisst auch, dass der Einrichtungsassistent dort kein Gerät findet und der
+einzige Weg zu einem Update bisher `/init recovery`, TWRP und ein Kabel war.
+
+Der Controller kann das jetzt über das Netz: Er liest das laufende Boot-Image
+vom Gerät, packt es mit dem neuen emOS-Init neu zusammen und schreibt es
+zurück — über dieselbe Verbindung, die ohnehin schon steht.
+
+**Das Sicherheitsnetz ist emOS' eigenes.** Ein Boot gilt als bestätigt, sobald
+das Netzwerk da ist; nach drei unbestätigten Boots stellt emOS das letzte
+funktionierende Image wieder her und zeigt einen bernsteinfarbenen Ring. Ein
+Gerät ohne dieses gesicherte Image wird abgelehnt statt gewarnt — ohne die
+Datei gibt es kein Netz.
+
+**Noch nicht am Gerät erprobt.** Der Weg ist gebaut und geprüft, aber kein
+einziges Byte davon ist bisher gegen echte Hardware gelaufen. Das steht auch
+im Code und im Issue.
+
+### Und der DNS-Fix, den es ausliefert
+
+Zusammen mit emOS 0.6.0-fx.1 löst ein emOS-Gerät wieder Namen auf, womit
+**Spotify Connect dort erstmals funktioniert**. Details in emOS' eigenem
+Changelog.
+
 ## 2.48.0-fx.1
 
 ### Der Einrichtungsassistent konnte kein Gerät mehr verbinden
