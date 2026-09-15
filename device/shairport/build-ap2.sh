@@ -45,15 +45,29 @@ rooted Echo it can. shairport-sync reads the clock nqptp publishes through a
 shared-memory object; on bionic that is a file under /dev (a tmpfs), not POSIX
 shared memory, which is what compat/android_shm.c exists for.
 
-Install by hand while the device supervision for this is being written:
+The device supervision exists — internal/airplay's PlanNqptp starts nqptp
+before the receiver, but only when the shairport-sync it finds reports
+AirPlay 2 in its own version string. So a classic binary beside an nqptp is
+inert rather than wrong.
+
+Install through the dashboard: Updates -> Streaming endpoints, which verifies
+the md5 on arrival and renames into place only on a match. shairport-sync-ap2
+goes in as the AirPlay kind -- the device runs ONE shairport-sync and the
+firmware asks the file which protocol it speaks -- and nqptp has a kind of its
+own. Over a cable, if you would rather:
 
   adb push $OUT/shairport-sync-ap2 /data/local/bin/shairport-sync
   adb push $OUT/nqptp              /data/local/bin/nqptp
   adb shell chmod 755 /data/local/bin/shairport-sync /data/local/bin/nqptp
 
-And note FireOS drops every inbound port it was not told about, so a device
-that advertises AirPlay 2 perfectly can still be unreachable. See
-internal/netfilter and the "Advertised is not reachable" section in
-device/CLAUDE.md — AirPlay 2 needs TCP 7000 and the UDP range, and nqptp needs
-319/320 inbound, none of which the classic rules cover.
+**On FireOS this is not enough, and the gap is a firewall rather than a
+build.** Every AirPlay 2 session binds two extra TCP sockets on ephemeral
+ports the kernel picks, and shairport-sync has no setting for either
+(rtsp.c: local_event_port = 0, local_buffered_audio_port = 0). FireOS ships
+-P INPUT DROP, so the session negotiates and then stalls -- a speaker that
+appears, accepts a connection and plays nothing. internal/netfilter has the
+three ways out and why none of them was taken.
+
+**On emOS the question does not arise**: there is no default-deny policy, so
+nothing has to be told about a port chosen at runtime.
 EOF
