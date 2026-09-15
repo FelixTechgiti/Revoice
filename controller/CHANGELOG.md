@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.48.0-fx.1
+
+### Der Einrichtungsassistent konnte kein Gerät mehr verbinden
+
+**Wer seit dem 13. September versucht hat, einen Echo einzurichten oder auf
+emOS umzustellen, kam nicht am ersten Schritt vorbei.** Der Klick auf „Gerät
+verbinden" tat nichts — Chrome fragte nicht einmal nach einem USB-Gerät.
+
+Das ist auch der Grund, warum es so schwer zu erkennen war: Chrome zeigt einen
+**leeren** Auswahldialog, wenn kein passendes Gerät da ist. Kam gar kein
+Dialog, wurde nie gefragt. Von außen sieht das aus wie ein kaputtes Kabel, und
+wer den Fehler hatte, hat vermutlich zuerst Kabel getauscht.
+
+**Am Gerät lag es nicht.** Der ADB-Client des Dashboards war bei einem Umbau
+versehentlich gelöscht worden, seine Aufrufe aber stehen geblieben. Er ist
+unverändert wiederhergestellt.
+
+Dazu eine Prüfung, die genau diese Art von Fehler künftig beim Bauen
+abfängt — vorher konnte gelöschter Code sauber durchlaufen, weil beim Bauen
+niemand nachsieht, ob die aufgerufenen Funktionen überhaupt existieren.
+
+**Zu tun ist nichts.** Nach dem Update funktioniert der Assistent wieder.
+
 ## 2.47.0-fx.1
 
 ### Das Dashboard sieht anders aus
