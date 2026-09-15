@@ -151,6 +151,10 @@ const SHOTS = [
   { name: 'dense',    page: 'dark.html',  w: 1440, h: 700,  density: 'dense' },
   { name: 'dense-de', page: 'dark.html',  w: 1440, h: 700,  density: 'dense', lang: 'de' },
   { name: 'device',   page: 'dark.html',  w: 1440, h: 900,  open: 'Lounge' },
+  // The device window in German. It is the pane with the most strings
+  // in the dashboard, so it is the one where four words left behind are
+  // hardest to notice by reading the diff.
+  { name: 'device-de', page: 'dark.html', w: 1440, h: 1100, open: 'Lounge', lang: 'de' },
   { name: 'approve',  page: 'light.html', w: 1440, h: 900,  open: 'G090LF1180570XYZ' },
   { name: 'settings', page: 'dark.html',  w: 1440, h: 900,  click: 'Settings' },
   // The same pane in the other theme. Both bugs this shot was added for
