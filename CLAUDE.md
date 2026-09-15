@@ -795,6 +795,7 @@ cd emos/init && cc -O2 -o /tmp/ringsim ringsim.c -lm && /tmp/ringsim --check
 cd emos/init && cc -O2 -o /tmp/pwcheck pwcheck.c && /tmp/pwcheck
 cd emos/init && cc -O2 -o /tmp/tmoutcheck tmoutcheck.c && /tmp/tmoutcheck
 cd emos/init && cc -O2 -o /tmp/wpacheck wpacheck.c && /tmp/wpacheck
+cd emos/init && cc -O2 -o /tmp/dnscheck dnscheck.c && /tmp/dnscheck
 ```
 
 Both suites plus `go vet` run in CI on every push/PR
@@ -808,8 +809,10 @@ hash the controller has to agree with, `tmoutcheck` for the idle-timeout
 parser, `pathcheck` for finding either record across the rename, `nodecheck`
 for taking device numbers from the kernel rather than the compiled-in table
 — char devices from `/sys/class`, and the block half from the GPT, which init
-currently only REPORTS on (#131) — and `wpacheck` for finding the
-supplicant's control socket in whichever conf is in use. They all `#include
+currently only REPORTS on (#131) — `wpacheck` for finding the
+supplicant's control socket in whichever conf is in use, and `dnscheck` for
+the DNS proxy's wire format, which is netd's protocol as bionic's client reads
+it. They all `#include
 init.c` whole and drive the real functions, so none can drift from the
 device. **They exist where a wrong answer is SILENT on hardware** — that is
 the criterion for adding another: a parser over a file written by the other

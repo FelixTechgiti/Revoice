@@ -34,6 +34,8 @@
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <arpa/inet.h>
 #include <sys/stat.h>
 #include <stdint.h>
 #include <sys/syscall.h>
@@ -1419,6 +1421,495 @@ static void write_resolv_conf(void)
     netlog("resolv.conf nameserver %s\n", gwip);
 }
 
+/* ── DNS for bionic ──────────────────────────────────────────────────────────
+ *
+ * The file written above is read by NOTHING. Measured on the device
+ * 2026-09-15: `strings /system/lib/libc.so` contains "/dev/socket/dnsproxyd",
+ * "ANDROID_DNS_MODE" and "/dev/__properties__", and the substring
+ * "resolv.conf" **zero times**. Amazon's bionic does not resolve names; it
+ * hands them to netd over a unix socket, and emOS runs no netd. So every
+ * bionic-linked program here — librespot, shairport-sync, Amazon's own
+ * busybox — fails to resolve anything, while ping and TCP to a literal
+ * address work perfectly. A DNS query is never even sent: conntrack shows no
+ * udp/53 entry after a lookup.
+ *
+ * It presents as a healthy device with one dead service. Spotify Connect exits
+ * with `could not initialize spirc` and is restarted for ever; the Revoice
+ * link is fine, because it finds its controller over mDNS and connects by IP.
+ * The comment above `gwip` already said the resolvers live somewhere we do not
+ * run — what nobody joined up is that this takes Spotify with it.
+ *
+ * So init answers on that socket itself. The protocol is netd's, and it is
+ * short enough to implement exactly: the request is one NUL-terminated line,
+ * the reply is a 4-byte ASCII code then length-prefixed records. It is
+ * transcribed from bionic's own `android_getaddrinfo_proxy` (AOSP
+ * android-5.1.1_r38), which is the client this has to satisfy — not from
+ * netd, because what matters is what the caller reads, not what Android
+ * happened to write.
+ *
+ * `ANDROID_DNS_MODE=local` is NOT the cheaper way round. It was tried on the
+ * device first: bionic then skips this socket and wants its servers out of
+ * `/dev/__properties__`, which emOS does not have either. Two missing pieces
+ * instead of one, and the property area is a versioned binary layout where
+ * this is a text protocol.
+ *
+ * Only `getaddrinfo` is answered, and only with A records. IPv6 on this device
+ * is link-local, so handing back a AAAA would be an address the caller cannot
+ * reach — worse than not answering, because it fails after connecting rather
+ * than at resolution. `gethostbyname` has its own serialisation and no caller
+ * that has been measured to need it.
+ */
+#define DNSPROXY_SOCK "/dev/socket/dnsproxyd"
+
+/* Every length below is written big-endian, because the client calls ntohl on
+ * it. Written a byte at a time rather than with htonl so the shape is visible
+ * where it is read, and so it cannot depend on the init's own endianness. */
+static void be32(unsigned char *p, uint32_t v)
+{
+    p[0] = (unsigned char)(v >> 24);
+    p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);
+    p[3] = (unsigned char)v;
+}
+
+/* THE STRUCT ON THE WIRE IS THE CLIENT'S, NEVER OURS.
+ *
+ * Every caller is a 32-bit bionic process out of Amazon's /system, whatever
+ * this init was built for — the init matches the KERNEL, and the userspace
+ * beside it is armv7a on both. `struct addrinfo` there is five 32-bit ints
+ * followed by three 32-bit pointers: 32 bytes. Built as aarch64 the same
+ * struct is 48, because the pointers grow and the compiler pads.
+ *
+ * `sizeof(struct addrinfo)` would therefore be right on one build and wrong on
+ * the other, and the client compares the length it is handed against its own
+ * sizeof — so the wrong answer is a resolver that works on FireOS 5's kernel
+ * and silently refuses every name on FireOS 6's. Hence fixed offsets and a
+ * fixed length, from a local type never.
+ *
+ * Only the first five fields are read: the client nulls the three pointers the
+ * moment it has the blob, and fills them from the records that follow. */
+#define AI_WIRE_LEN 32
+
+static void ai_wire(unsigned char b[AI_WIRE_LEN], int flags, int family,
+                    int socktype, int protocol, int addrlen)
+{
+    memset(b, 0, AI_WIRE_LEN);
+    memcpy(b + 0,  &flags,    4);
+    memcpy(b + 4,  &family,   4);
+    memcpy(b + 8,  &socktype, 4);
+    memcpy(b + 12, &protocol, 4);
+    memcpy(b + 16, &addrlen,  4);
+}
+
+/* sockaddr_in, 16 bytes, by hand for the reason above — though this one is the
+ * same size on both builds, writing one struct by hand and taking the other
+ * from a header is how the pair drifts. sin_family is HOST order and the two
+ * numbers after it are network order; that asymmetry is the sockets API's, not
+ * a mistake here. */
+static void sin_wire(unsigned char b[16], uint32_t addr_be, uint16_t port)
+{
+    unsigned short fam = AF_INET;
+    memset(b, 0, 16);
+    memcpy(b + 0, &fam, 2);
+    b[2] = (unsigned char)(port >> 8);
+    b[3] = (unsigned char)port;
+    memcpy(b + 4, &addr_be, 4);
+}
+
+/* ── Talking to a nameserver ─────────────────────────────────────────────── */
+
+/* Encode `name` as DNS labels and build a query. Returns the message length,
+ * or -1 for a name that cannot be encoded — a label over 63 bytes, or a name
+ * that would not fit. Rejecting is right: a truncated name would query
+ * something else and answer confidently. */
+static int dns_build_query(unsigned char *buf, int cap, const char *name,
+                           int qtype, unsigned id)
+{
+    int n = 0;
+    if (cap < 12)
+        return -1;
+    be32(buf, 0);                       /* id + flags, filled below */
+    buf[0] = (unsigned char)(id >> 8);
+    buf[1] = (unsigned char)id;
+    buf[2] = 0x01;                      /* RD — we are not a resolver */
+    buf[3] = 0x00;
+    buf[4] = 0; buf[5] = 1;             /* QDCOUNT */
+    buf[6] = 0; buf[7] = 0;
+    buf[8] = 0; buf[9] = 0;
+    buf[10] = 0; buf[11] = 0;
+    n = 12;
+
+    const char *p = name;
+    while (*p) {
+        const char *dot = strchr(p, '.');
+        int len = dot ? (int)(dot - p) : (int)strlen(p);
+        if (len == 0 || len > 63 || n + 1 + len + 5 > cap)
+            return -1;
+        buf[n++] = (unsigned char)len;
+        memcpy(buf + n, p, (size_t)len);
+        n += len;
+        if (!dot)
+            break;
+        p = dot + 1;
+    }
+    buf[n++] = 0;
+    buf[n++] = 0; buf[n++] = (unsigned char)qtype;
+    buf[n++] = 0; buf[n++] = 1;         /* IN */
+    return n;
+}
+
+/* Step over a name, following compression pointers. Returns the offset just
+ * past it, or -1 on anything malformed.
+ *
+ * A pointer is followed only to VALIDATE nothing; the caller never needs the
+ * name itself, so this walks the encoded form and stops at the first pointer,
+ * which is where the encoded name ends. A loop is therefore impossible by
+ * construction rather than by a counter. */
+static int dns_skip_name(const unsigned char *msg, int len, int off)
+{
+    while (off >= 0 && off < len) {
+        unsigned c = msg[off];
+        if (c == 0)
+            return off + 1;
+        if ((c & 0xc0) == 0xc0)
+            return (off + 2 <= len) ? off + 2 : -1;
+        if (c > 63)
+            return -1;
+        off += 1 + (int)c;
+    }
+    return -1;
+}
+
+/* Collect every A record from an answer to `id`. Returns how many were
+ * written, or -1 when this is not a usable answer.
+ *
+ * CNAMEs need no special handling: the server puts the A records for the
+ * target in the same answer section, so walking every record and keeping the
+ * A ones follows the chain for free. */
+static int dns_parse_a(const unsigned char *msg, int len, unsigned id,
+                       uint32_t *out, int max)
+{
+    if (len < 12)
+        return -1;
+    unsigned got = ((unsigned)msg[0] << 8) | msg[1];
+    if (got != id)
+        return -1;
+    if (!(msg[2] & 0x80))               /* not a response */
+        return -1;
+    if (msg[3] & 0x0f)                  /* RCODE: NXDOMAIN, SERVFAIL, … */
+        return -1;
+
+    int qd = (msg[4] << 8) | msg[5];
+    int an = (msg[6] << 8) | msg[7];
+    int off = 12;
+    for (int i = 0; i < qd; i++) {
+        off = dns_skip_name(msg, len, off);
+        if (off < 0 || off + 4 > len)
+            return -1;
+        off += 4;
+    }
+
+    int n = 0;
+    for (int i = 0; i < an && n < max; i++) {
+        off = dns_skip_name(msg, len, off);
+        if (off < 0 || off + 10 > len)
+            return -1;
+        int type = (msg[off] << 8) | msg[off + 1];
+        int rdlen = (msg[off + 8] << 8) | msg[off + 9];
+        off += 10;
+        if (off + rdlen > len)
+            return -1;
+        if (type == 1 && rdlen == 4) {
+            uint32_t a;
+            memcpy(&a, msg + off, 4);   /* kept network order end to end */
+            out[n++] = a;
+        }
+        off += rdlen;
+    }
+    return n;
+}
+
+/* The nameservers to ask, from the file written above.
+ *
+ * Reading our own file rather than trusting `gwip` alone: the two agree today,
+ * and a file somebody edited by hand is the more specific answer. `gwip` is
+ * the fallback for a boot where the file is not there yet. */
+static int dns_servers(char out[][32], int max)
+{
+    int n = 0;
+    FILE *f = fopen("/etc/resolv.conf", "r");
+    if (f) {
+        char line[128];
+        while (n < max && fgets(line, sizeof line, f)) {
+            char ip[64];
+            if (sscanf(line, " nameserver %63s", ip) == 1 && strlen(ip) < 32)
+                strcpy(out[n++], ip);
+        }
+        fclose(f);
+    }
+    if (n == 0 && gwip[0] && strlen(gwip) < 32)
+        strcpy(out[n++], gwip);
+    return n;
+}
+
+/* Ask each server in turn, twice, two seconds a try.
+ *
+ * Bounded on purpose: the caller is BLOCKED in getaddrinfo for however long
+ * this takes, and a program that hangs resolving looks like a program that has
+ * crashed. Worst case here is two servers times two tries times two seconds. */
+static int dns_lookup_a(const char *name, uint32_t *out, int max)
+{
+    char servers[3][32];
+    int ns = dns_servers(servers, 3);
+    if (ns == 0)
+        return -1;
+
+    unsigned char q[512], r[1500];
+    unsigned id = (unsigned)(getpid() ^ (unsigned)time(NULL)) & 0xffff;
+    int qlen = dns_build_query(q, sizeof q, name, 1 /* A */, id);
+    if (qlen < 0)
+        return -1;
+
+    for (int try = 0; try < 2; try++) {
+        for (int s = 0; s < ns; s++) {
+            int fd = socket(AF_INET, SOCK_DGRAM, 0);
+            if (fd < 0)
+                continue;
+            struct timeval tv = { 2, 0 };
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+
+            struct sockaddr_in to;
+            memset(&to, 0, sizeof to);
+            to.sin_family = AF_INET;
+            to.sin_port = htons(53);
+            if (inet_pton(AF_INET, servers[s], &to.sin_addr) != 1) {
+                close(fd);
+                continue;
+            }
+            if (sendto(fd, q, (size_t)qlen, 0, (struct sockaddr *)&to,
+                       sizeof to) == qlen) {
+                ssize_t got = recv(fd, r, sizeof r, 0);
+                if (got > 0) {
+                    int n = dns_parse_a(r, (int)got, id, out, max);
+                    close(fd);
+                    if (n > 0)
+                        return n;
+                    /* A well-formed NXDOMAIN is an ANSWER, not a timeout:
+                     * asking the second server would give the same one. */
+                    if (n == 0)
+                        return 0;
+                    continue;
+                }
+            }
+            close(fd);
+        }
+    }
+    return -1;
+}
+
+/* ── netd's protocol ─────────────────────────────────────────────────────── */
+
+struct gai_req {
+    char host[256];
+    char serv[64];
+    int flags, family, socktype, protocol;
+};
+
+/* "getaddrinfo <host> <serv> <flags> <family> <socktype> <protocol> <netid>".
+ *
+ * "^" stands for a NULL argument. The client refuses to send a host or service
+ * containing whitespace or a caret, so the fields cannot be ambiguous and
+ * scanning on spaces is safe — that guarantee is the client's, and it is why
+ * this does not need a quoting parser. */
+static int gai_parse(const char *cmd, struct gai_req *r)
+{
+    unsigned netid;
+    memset(r, 0, sizeof *r);
+    if (sscanf(cmd, "getaddrinfo %255s %63s %d %d %d %d %u",
+               r->host, r->serv, &r->flags, &r->family,
+               &r->socktype, &r->protocol, &netid) != 7)
+        return -1;
+    if (!strcmp(r->host, "^"))
+        r->host[0] = 0;
+    if (!strcmp(r->serv, "^"))
+        r->serv[0] = 0;
+    return 0;
+}
+
+/* A numeric service, or one of the two names worth having without
+ * /etc/services. An unknown name resolves to port 0 rather than failing the
+ * whole lookup: the address is the part the caller could not work out for
+ * itself. */
+static int serv_port(const char *serv)
+{
+    if (!serv || !serv[0])
+        return 0;
+    if (serv[0] >= '0' && serv[0] <= '9')
+        return atoi(serv);
+    if (!strcmp(serv, "http"))
+        return 80;
+    if (!strcmp(serv, "https"))
+        return 443;
+    return 0;
+}
+
+/* Write one result: the addrinfo blob, the sockaddr, and an empty canonical
+ * name. Each is preceded by its big-endian length; a zero length means the
+ * field is absent, and a zero ADDRINFO length ends the list. */
+static int gai_send_one(int fd, int flags, int socktype, int protocol,
+                        uint32_t addr_be, uint16_t port)
+{
+    unsigned char len[4], ai[AI_WIRE_LEN], sa[16];
+
+    ai_wire(ai, flags, AF_INET, socktype, protocol, 16);
+    sin_wire(sa, addr_be, port);
+
+    be32(len, AI_WIRE_LEN);
+    if (write(fd, len, 4) != 4 || write(fd, ai, AI_WIRE_LEN) != AI_WIRE_LEN)
+        return -1;
+    be32(len, 16);
+    if (write(fd, len, 4) != 4 || write(fd, sa, 16) != 16)
+        return -1;
+    be32(len, 0);                       /* no canonical name */
+    if (write(fd, len, 4) != 4)
+        return -1;
+    return 0;
+}
+
+/* Answer one request on an accepted connection.
+ *
+ * The failure reply is a code that is not 222 followed by four more bytes,
+ * because that is exactly what the client reads before giving up: it takes the
+ * first four bytes as ASCII, and on anything but 222 it consumes four more and
+ * returns EAI_NODATA. Sending only the code leaves it blocked in fread until
+ * the socket closes. */
+static void dnsproxy_serve(int fd)
+{
+    char cmd[512];
+    int n = 0;
+    while (n < (int)sizeof cmd - 1) {
+        ssize_t got = read(fd, cmd + n, 1);
+        if (got != 1)
+            return;
+        if (cmd[n] == 0)
+            break;
+        n++;
+    }
+    cmd[n] = 0;
+
+    struct gai_req r;
+    uint32_t addrs[8];
+    int count = -1;
+
+    if (gai_parse(cmd, &r) == 0 && r.host[0] &&
+        (r.family == AF_INET || r.family == AF_UNSPEC || r.family <= 0)) {
+        struct in_addr lit;
+        if (inet_pton(AF_INET, r.host, &lit) == 1) {
+            /* A literal address must not become a DNS query. */
+            memcpy(&addrs[0], &lit, 4);
+            count = 1;
+        } else {
+            count = dns_lookup_a(r.host, addrs, 8);
+        }
+    }
+
+    if (count <= 0) {
+        write(fd, "501 ", 4);
+        write(fd, "0\0\0\0", 4);
+        return;
+    }
+
+    if (write(fd, "222 ", 4) != 4)
+        return;
+
+    uint16_t port = (uint16_t)serv_port(r.serv);
+    for (int i = 0; i < count; i++) {
+        /* With no socktype asked for, return both — that is what a caller
+         * passing no hints expects, and librespot passes none. */
+        if (r.socktype == SOCK_STREAM || r.socktype <= 0)
+            if (gai_send_one(fd, r.flags, SOCK_STREAM, IPPROTO_TCP,
+                             addrs[i], port) < 0)
+                return;
+        if (r.socktype == SOCK_DGRAM || r.socktype <= 0)
+            if (gai_send_one(fd, r.flags, SOCK_DGRAM, IPPROTO_UDP,
+                             addrs[i], port) < 0)
+                return;
+    }
+
+    unsigned char end[4];
+    be32(end, 0);
+    write(fd, end, 4);
+}
+
+/* Bind the socket bionic looks for. */
+static int dnsproxy_listen(void)
+{
+    mkdir("/dev/socket", 0755);
+    unlink(DNSPROXY_SOCK);
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0)
+        return -1;
+    struct sockaddr_un a;
+    memset(&a, 0, sizeof a);
+    a.sun_family = AF_UNIX;
+    strncpy(a.sun_path, DNSPROXY_SOCK, sizeof a.sun_path - 1);
+    if (bind(fd, (struct sockaddr *)&a, sizeof a) < 0 || listen(fd, 8) < 0) {
+        close(fd);
+        return -1;
+    }
+    /* The endpoints do not all run as root, and a socket nobody may open is
+     * the same as no socket at all. */
+    chmod(DNSPROXY_SOCK, 0666);
+    return fd;
+}
+
+/* Run the proxy in a child, one process per connection.
+ *
+ * A child rather than the init loop, for the reason the ring animation is a
+ * child: this blocks, and PID 1 must not. A process per connection rather than
+ * a loop, because a lookup takes up to eight seconds and two programs starting
+ * at once is the normal case on this device — serialising them would make the
+ * second one's resolution look like a hang. */
+static pid_t dnsproxy_start(void)
+{
+    int lfd = dnsproxy_listen();
+    if (lfd < 0) {
+        netlog("dnsproxyd: could not bind %s: %s\n",
+               DNSPROXY_SOCK, strerror(errno));
+        return -1;
+    }
+
+    pid_t p = fork();
+    if (p < 0) {
+        close(lfd);
+        return -1;
+    }
+    if (p > 0) {
+        close(lfd);
+        return p;
+    }
+
+    signal(SIGCHLD, SIG_IGN);           /* no zombies from the per-connection children */
+    for (;;) {
+        int c = accept(lfd, NULL, NULL);
+        if (c < 0) {
+            if (errno == EINTR)
+                continue;
+            _exit(1);
+        }
+        pid_t k = fork();
+        if (k == 0) {
+            close(lfd);
+            dnsproxy_serve(c);
+            close(c);
+            _exit(0);
+        }
+        close(c);
+    }
+}
+
+
 /* Outbound-only packet filter, applied BEFORE the interface comes up.
  *
  * The device already holds no listening sockets at all — verified with
@@ -1955,6 +2446,10 @@ static void net_main(void)
                      "ntpd", "-n", "-p", gwip, NULL };
     pid_t wpa = -1;
     pid_t dhc = -1, ntp = -1;
+    /* Held so the bind happens once. It is not supervised beside the others:
+     * losing it costs name resolution, not the boot, and a restart loop
+     * against a socket that will not bind is worse than one that is gone. */
+    pid_t dnsproxy = -1;
     int nudges = 0, dry = 0, netup = 0;
     /* Loop turns spent with a conf in place but no carrier. The ring goes red
      * after WIFI_FAIL_TURNS of them, because at that point the credentials
@@ -1969,6 +2464,12 @@ static void net_main(void)
             else if (d == wpa)   wpa = -1;
             else if (d == dhc)   dhc = -1;
             else if (d == ntp)   ntp = netup ? spawn(ntpd) : -1;
+            /* Same shape as ntp above: restarted only while the network is
+             * up, and at most once per pass of this loop, so a proxy that
+             * cannot bind costs one attempt every five seconds rather than a
+             * spin. `dnsproxy_listen` unlinks the socket first, so the rebind
+             * is not blocked by the dead child's own. */
+            else if (d == dnsproxy) dnsproxy = netup ? dnsproxy_start() : -1;
         }
 
         /* No credentials yet: hold here rather than failing.
@@ -2055,6 +2556,11 @@ static void net_main(void)
                     write_state(0);
                     promote_good();
                     write_resolv_conf();
+                    /* After resolv.conf, because the proxy reads it; and only
+                     * once, because a second bind would fail and leave the
+                     * first child serving. */
+                    if (dnsproxy < 0)
+                        dnsproxy = dnsproxy_start();
                     ntp = spawn(ntpd);
                 }
             } else if (++dry >= 4) {

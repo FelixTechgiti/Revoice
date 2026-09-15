@@ -1,5 +1,34 @@
 # emOS changelog
 
+## 0.6.0-fx.1
+
+### Namen lassen sich jetzt auflösen
+
+**Spotify Connect hat auf emOS nicht funktioniert, und der Grund war, dass es
+gar keine Namensauflösung gab.** librespot konnte `apresolve.spotify.com` nicht
+nachschlagen, ist beendet worden und endlos neu gestartet. Am Gerät gemessen
+(2026-09-15): Netz und Routing in Ordnung, Ping und TCP gehen — aber eine
+DNS-Anfrage verlässt das Gerät nicht einmal.
+
+Amazons bionic löst Namen nicht selbst auf. Sie reicht sie über einen
+Unix-Socket an Androids `netd` weiter, und den gibt es hier nicht. In der libc
+des Geräts kommt `/dev/socket/dnsproxyd` vor, die Zeichenkette `resolv.conf`
+dagegen **null Mal** — die Datei, die emOS schreibt, hat nie jemand gelesen.
+
+emOS' Init beantwortet diesen Socket jetzt selbst: es nimmt die Anfrage an,
+fragt den Nameserver aus `/etc/resolv.conf` und gibt die Adressen im Format
+zurück, das bionic erwartet. Damit hat **jedes gegen bionic gelinkte Programm**
+auf dem Gerät wieder DNS, nicht nur librespot.
+
+### Was du merkst
+
+- **Spotify Connect läuft.** Der Echo taucht in der Spotify-App auf und spielt.
+- **Zu tun ist nichts**, ausser dieses emOS-Update einzuspielen.
+- IPv6 wird bewusst nicht beantwortet: Dieses Gerät hat nur eine link-lokale
+  IPv6-Adresse, und eine AAAA-Antwort wäre ein Ziel, das der Aufrufer nicht
+  erreicht — das scheitert dann erst beim Verbinden statt beim Auflösen, was
+  schlechter zu finden ist.
+
 Release notes for the emOS init, one section per version. The heading is
 the version WITHOUT the `emos-v` prefix, because that is what
 `.github/workflows/cut-release.yml` matches when it builds the tag
