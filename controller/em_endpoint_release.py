@@ -97,8 +97,14 @@ def write_provenance(data: dict, db_path: str | None = None) -> bool:
 
 
 def asset_names() -> dict[str, str]:
-    """The asset filename each kind is published under, keyed by kind."""
-    return {k.key: k.filename for k in bins.KINDS.values()}
+    """The asset filename each kind is published under, keyed by kind.
+
+    Only the kinds a release actually carries. A kind that exists so a device
+    can be given the file — nqptp, until a release publishes it — is
+    installable but not published, and listing it here would make `select()`
+    refuse every release for missing an asset none of them ever had.
+    """
+    return {k.key: k.filename for k in bins.KINDS.values() if k.in_release}
 
 
 def select(releases: list) -> dict | None:
@@ -311,7 +317,12 @@ def needs_fetch(tag: str, prov: dict, store: dict,
     """
     out = []
     same_tag = (prov.get("tag") == tag)
-    for key in bins.KINDS:
+    # Published kinds only, for asset_names()'s reason: a kind no release
+    # carries would be reported as needing a fetch for ever, and every attempt
+    # would look for an asset that is not there.
+    for key, k in bins.KINDS.items():
+        if not k.in_release:
+            continue
         have = store.get(key)
         if have is None:
             out.append(key)

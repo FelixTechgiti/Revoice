@@ -43,6 +43,60 @@ def test_dest_matches_device_binary_path(kind_key, go_file):
     assert ebins.KINDS[kind_key].dest == m.group(1)
 
 
+def test_nqptp_dest_matches_the_device_constant():
+    """The clock daemon's own path, which is NqptpPath rather than BinaryPath.
+
+    Same failure as the two above and worth its own test because the constant
+    is spelled differently: the controller installs a perfectly good binary
+    somewhere the firmware never looks, the md5 verifies, the install reports
+    success, and AirPlay 2 still has no clock.
+    """
+    src = (REPO / "device/internal/airplay/ap2.go").read_text()
+    m = re.search(r'const\s+NqptpPath\s*=\s*"([^"]+)"', src)
+    assert m, "NqptpPath constant not found in ap2.go"
+    assert ebins.KINDS["nqptp"].dest == m.group(1)
+
+
+def test_nqptp_is_installable_but_not_expected_in_a_release():
+    """Installable and published are different facts.
+
+    `select()` refuses a release that carries some expected assets and not
+    others — deliberately, so half a publish is never half adopted. So a kind
+    no release has ever carried must not be listed as one a release should
+    have, or every existing release becomes unusable and the automatic fetch
+    stops for librespot and shairport-sync too. That is not a hypothetical:
+    it is what adding this kind did before the flag existed.
+    """
+    assert ebins.KINDS["nqptp"].in_release is False
+    assert ebins.KINDS["spotify"].in_release is True
+    assert ebins.KINDS["airplay"].in_release is True
+
+
+def test_nqptp_rides_on_the_airplay_toggle():
+    """It is AirPlay 2's second process, not an endpoint of its own.
+
+    Sharing the toggle is what makes a device that turns AirPlay on end up
+    with both halves. A device running a CLASSIC shairport-sync gets an
+    unused copy, which `PlanNqptp` never starts — inert, and tens of
+    kilobytes against librespot's twenty megabytes.
+    """
+    ap, nq = ebins.KINDS["airplay"], ebins.KINDS["nqptp"]
+    assert (nq.config_key, nq.capability, nq.status_attr) == (
+        ap.config_key, ap.capability, ap.status_attr)
+
+
+def test_no_two_kinds_install_to_the_same_place():
+    """A second kind writing shairport-sync's path would be a second opinion.
+
+    Whether the receiver speaks AirPlay 2 is a property of how that one file
+    was compiled — the firmware asks the binary rather than reading a config
+    key — so there is no AirPlay 2 kind beside `airplay`, and nothing should
+    quietly add one.
+    """
+    dests = [k.dest for k in ebins.KINDS.values()]
+    assert len(dests) == len(set(dests))
+
+
 def test_filename_is_the_basename_of_dest():
     # The store names the file the same as the device does, so what is
     # uploaded, what is stored and what is installed are one name in the UI.
@@ -138,7 +192,12 @@ def test_store_dir_sits_beside_the_database(store, tmp_path):
 
 
 def test_empty_store_reports_every_kind_as_absent(store):
-    assert ebins.scan() == {"spotify": None, "airplay": None}
+    # Derived from KINDS rather than spelled out. What this guards is that
+    # scan() answers for EVERY kind — a kind missing from the scan reads as
+    # "not applicable" in the dashboard rather than "not installed" — and
+    # naming the kinds here would make a fourth one fail this test for being
+    # new instead of for being unscanned.
+    assert ebins.scan() == {key: None for key in ebins.KINDS}
 
 
 def test_stored_reports_size_and_md5(store):

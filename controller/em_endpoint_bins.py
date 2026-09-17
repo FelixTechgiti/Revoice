@@ -70,13 +70,23 @@ class Kind:
     release exists would spend a lossy link on a program nobody asked to run;
     turning the toggle on IS the ask, and it is the only signal that carries
     the user's intent for this device rather than for the store.
+
+    `in_release` says whether an `endpoints-v*` release publishes this kind,
+    and it is NOT the same question as whether a device can be given one.
+    Conflating them is what a third kind found: `select()` refuses a release
+    that carries some of its assets and not others — deliberately, so half a
+    publish is never half adopted — so a kind that no release has ever carried
+    would make every existing release unusable and silently stop the automatic
+    fetch for the two kinds that do ship. Installable and published are
+    different facts, and the flag is where they are kept apart. Flip it when a
+    release starts carrying the asset.
     """
 
     __slots__ = ("key", "filename", "dest", "capability", "status_attr",
-                 "label", "source", "config_key")
+                 "label", "source", "config_key", "in_release")
 
     def __init__(self, key, filename, dest, capability, status_attr, label,
-                 source, config_key):
+                 source, config_key, in_release=True):
         self.key         = key
         self.filename    = filename
         self.dest        = dest
@@ -85,6 +95,7 @@ class Kind:
         self.label       = label
         self.source      = source
         self.config_key  = config_key
+        self.in_release  = in_release
 
 
 KINDS: dict[str, Kind] = {
@@ -107,6 +118,46 @@ KINDS: dict[str, Kind] = {
         label="AirPlay (shairport-sync)",
         source="device/shairport/build.sh",
         config_key="airplayEnabled",
+    ),
+    # AirPlay 2's clock daemon. A second PROCESS, which is what makes it a
+    # kind of its own rather than something the airplay upload could carry:
+    # shairport-sync reads the clock nqptp publishes through shared memory,
+    # and the two are separate files at separate paths.
+    #
+    # **There is deliberately no AirPlay 2 kind beside `airplay`.** A device
+    # runs ONE shairport-sync, and whether it speaks AirPlay 2 is a property
+    # of how that file was compiled — which is why the firmware asks the
+    # binary (`get_version_string`, the `-AirPlay2-smi<N>` token) instead of
+    # reading a config key. A second kind writing the same destination would
+    # be a second opinion about a question the file already answers, and the
+    # two could disagree.
+    #
+    # It therefore shares `airplay`'s capability, status and toggle. Sharing
+    # the toggle means turning AirPlay on pushes nqptp too, to a device that
+    # may be running a classic build which will never start it — and that is
+    # the right trade here, against the usual rule about not spending a lossy
+    # link on a program nobody asked for: nqptp is tens of kilobytes where
+    # librespot is twenty megabytes, and the alternative is a device that
+    # advertises AirPlay 2 and cannot time it. `PlanNqptp` on the device
+    # decides whether to run it, so an unused copy is inert rather than
+    # wrong.
+    "nqptp": Kind(
+        key="nqptp",
+        filename="nqptp",
+        dest="/data/local/bin/nqptp",
+        capability="airplay",
+        status_attr="airplay_status",
+        label="AirPlay 2 clock (nqptp)",
+        source="device/shairport/build-ap2.sh",
+        config_key="airplayEnabled",
+        # No endpoints-v* release carries nqptp yet — the workflow that builds
+        # it landed with this kind. Until one does it arrives by upload, from
+        # the `endpoint-binaries` artifact. Flip this in the same change that
+        # first publishes the asset, not before: `select()` refuses a release
+        # missing any expected asset, so an early True makes every existing
+        # release unusable and stops the automatic fetch for librespot and
+        # shairport-sync as well.
+        in_release=False,
     ),
 }
 
