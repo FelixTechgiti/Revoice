@@ -777,7 +777,22 @@ Credential delivery: the provisioning wizard installs credentials over adb pre-f
 
 `config.ConfigMessage` JSON fields (camelCase) are sent from controller to device on connect and on per-device config change. Non-zero fields are applied; zero/nil fields are ignored (partial update). Changes take effect immediately — no restart required.
 
-Configurable parameters: `consolePassword`, `consoleTimeoutMin`, `vadThreshold`, `vadSpeechMs`, `vadSilenceMs`, `owwThreshold`, `owwModel`, `owwSpeexNs`, `adcDigitalGain`, `adcMicpga`, `micGainDb`, `startupVolume`, `beamAngle`, `beamformingEnabled`, `aecEnabled`, `aecDelayMs`, `aecTailMs`, `aecRefSource`, `agcEnabled`, `nsAsr`, `bargeInEnabled`, `bargeInThreshold`, `bleProxyEnabled`, `eqBands`, `eqLoudness`, `limiterEnabled`, `limiterThreshold`, `limiterRelease`, `bassGuardEnabled`, `bassGuardDb`, `ledScene`, `ledListenColor`, `ledThinkColor`, `meterAttack`, `meterDecay`, `meterFloor`, `meterGamma`, `meterRef`, `meterCurve`, `wakeArbitrationMs`, `duckDb`, `buttonSingleTapEvent`, `buttonMultiTapMs`, `sendspinEnabled`, `spotifyEnabled`, `spotifyName`, `spotifyVolumeControl`, `airplayEnabled`, `airplayName`, `airplayVolumeControl`, `owwOnDevice`, `saveUtterances` and `audioHoldoffMs` (`consolePassword` and `consoleTimeoutMin` are written to disk for emOS's init rather than acted on — the console must work when the firmware is not running — and their EMPTY/zero value is meaningful, so both ride as POINTERS and the "non-zero means set" rule above does not apply to them; the last two are controller-consumed for scoping purposes, though `owwOnDevice` IS acted on by the device; `saveUtterances`, `audioHoldoffMs`, `wakeArbitrationMs` and the two `button*` keys are ignored by it).
+Configurable parameters: `consolePassword`, `consoleTimeoutMin`, `vadThreshold`, `vadSpeechMs`, `vadSilenceMs`, `owwThreshold`, `owwModel`, `owwSpeexNs`, `adcDigitalGain`, `adcMicpga`, `micGainDb`, `startupVolume`, `beamAngle`, `beamformingEnabled`, `aecEnabled`, `aecDelayMs`, `aecTailMs`, `aecRefSource`, `agcEnabled`, `nsAsr`, `bargeInEnabled`, `bargeInThreshold`, `bleProxyEnabled`, `eqBands`, `eqLoudness`, `limiterEnabled`, `limiterThreshold`, `limiterRelease`, `bassGuardEnabled`, `bassGuardDb`, `ledScene`, `ledListenColor`, `ledThinkColor`, `meterAttack`, `meterDecay`, `meterFloor`, `meterGamma`, `meterRef`, `meterCurve`, `wakeArbitrationMs`, `duckDb`, `buttonSingleTapEvent`, `buttonMultiTapMs`, `sendspinEnabled`, `spotifyEnabled`, `spotifyName`, `spotifyVolumeControl`, `airplayEnabled`, `airplay2Enabled`, `airplayName`, `airplayVolumeControl`, `owwOnDevice`, `saveUtterances` and `audioHoldoffMs` (`consolePassword` and `consoleTimeoutMin` are written to disk for emOS's init rather than acted on — the console must work when the firmware is not running — and their EMPTY/zero value is meaningful, so both ride as POINTERS and the "non-zero means set" rule above does not apply to them; the last two are controller-consumed for scoping purposes, though `owwOnDevice` IS acted on by the device; `saveUtterances`, `audioHoldoffMs`, `wakeArbitrationMs` and the two `button*` keys are ignored by it).
+
+**`airplay2Enabled` selects a BINARY, and that is the one thing it is allowed
+to mean.** The device has two receivers at two paths — `shairport-sync` and
+`shairport-sync-ap2` — and this key says which one to exec. What the chosen
+file IS, the firmware still asks the file (`DetectFlavour`, the `-AirPlay2`
+token in its own version string), and the clock daemon is started off THAT
+answer. So there is still no key claiming "this device speaks AirPlay 2": a
+setting and a file can disagree, a file cannot disagree with itself.
+
+The fallback is the compatibility rule rather than politeness: a device asked
+for AirPlay 2 that has not been given the binary yet runs the classic one and
+says so, instead of serving no AirPlay at all while it waits. It is gated on
+the `airplay2` capability, which is separate from `airplay` for the
+`oww_shadow`/`oww_trigger` reason — the receiver shipped first, so firmware in
+the field runs AirPlay, ignores this key and has exactly one path to exec.
 
 **Upstream's copy of this list says the output-chain keys are ignored by the device, and on upstream that is true — here it is not.** Upstream has no `device/internal/outchain` and announces no `output_chain`, so its controller shapes every stream. This fork moved the chain onto the device, which is why the paragraph below exists and why the merge kept it: taking upstream's sentence wholesale would have documented a controller-only chain into a tree that has both halves, and the failure that follows from believing it is two limiters in series.
 

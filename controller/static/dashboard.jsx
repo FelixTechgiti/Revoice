@@ -2820,6 +2820,8 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                 spotifyCapable={!device.connected || !!device.spotifyCapable}
                 spotifyStatus={device.spotifyStatus}
                 airplayCapable={!device.connected || !!device.airplayCapable}
+                airplay2Capable={!device.connected || !!device.airplay2Capable}
+                deviceBaseOs={device.baseOs}
                 airplayStatus={device.airplayStatus}
                 endpointHealth={device.endpointHealth}
                 endpointHealthCapable={device.endpointHealthCapable}
@@ -8374,7 +8376,7 @@ const CONFIG_SECTIONS = {
   "ring": ["ledScene", "ledListenColor", "ledThinkColor", "meterAttack", "meterDecay", "meterFloor", "meterGamma", "meterRef", "meterCurve"],
   "advanced": ["agcEnabled", "vadThreshold", "vadSpeechMs", "vadSilenceMs", "buttonSingleTapEvent", "buttonMultiTapMs", "consolePassword", "consoleTimeoutMin"],
   "bluetooth": ["bleProxyEnabled"],
-  "streaming": ["sendspinEnabled", "spotifyEnabled", "spotifyName", "airplayEnabled", "airplayName", "airplayVolumeControl", "spotifyVolumeControl"]
+  "streaming": ["sendspinEnabled", "spotifyEnabled", "spotifyName", "airplayEnabled", "airplay2Enabled", "airplayName", "airplayVolumeControl", "spotifyVolumeControl"]
 };
 
 // Display labels for the section ids, and the reverse key -> section index
@@ -8521,7 +8523,8 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                             hwEchoRef = false, hwRefCapable = true,
                             sendspinCapable = true,
                             spotifyCapable = true, spotifyStatus = null,
-                            airplayCapable = true, airplayStatus = null,
+                            airplayCapable = true, airplay2Capable = true,
+                            deviceBaseOs = null, airplayStatus = null,
                             endpointHealth = null, endpointHealthCapable = false,
                             emosFleet = true }) {
   // null means "we have not heard from this device", which is neither
@@ -8533,6 +8536,22 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
   const airplayReady = airplayStatus === null || airplayStatus === undefined
     ? true : !!airplayStatus.ok;
   const airplayWhy = (airplayStatus && airplayStatus.reason) || t('cfgNotInstalled');
+  // The AirPlay 2 RECEIVER is a second file, and it reports in its own block.
+  // Absent means the firmware does not split them — which is firmware without
+  // the capability, so the toggle is disabled for that reason first and this
+  // never has to stand in for an answer it does not have.
+  const ap2Status = (airplayStatus && airplayStatus.ap2) || null;
+  const ap2Ready  = ap2Status === null ? false : !!ap2Status.ok;
+  // FireOS cannot serve AirPlay 2 at all: every session binds two extra TCP
+  // ports the kernel picks at runtime, and FireOS drops everything it was not
+  // told about in advance (#107). The session negotiates and then plays
+  // nothing, which reads as a broken speaker rather than as a firewall — so
+  // it is said here, in front of the switch, rather than discovered.
+  //
+  // Absence is NOT FireOS: firmware too old to report base_os is exactly the
+  // firmware without the airplay2 capability, so it is already disabled, and
+  // a warning about a platform nobody confirmed would be a guess on screen.
+  const ap2OnFireOS = deviceBaseOs === 'fireos';
   // Installed is not running, and only the first was ever shown. Null from
   // either of these keeps the existing sentence unchanged — see
   // endpointHealthLine for why both absences must stay silent.
@@ -9175,13 +9194,12 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 : `${t('cfgLibrespotMissing')} (${spotifyWhy})`)}
             value={spotifyCapable && spotifyReady && (config.spotifyEnabled ?? false)}
             onChange={v => set('spotifyEnabled', v)}/>
-          {/* Classic AirPlay, and the sub-label says so rather than letting
-              somebody discover it. The sub-label used to say AirPlay 2 needed
-              "libraries this hardware cannot carry", which was wrong on every
-              count checked (#79) — the hardware meets shairport-sync's stated
-              floor and none of the dependencies is blocked by the platform.
-              What is true is that the build does not exist yet, so that is
-              what it says now. Do not restate the old reasons here. */}
+          {/* The receiver, either flavour. This sub-label has been wrong twice
+              in the same place and both times by restating a reason rather
+              than a state: first that AirPlay 2 needed "libraries this
+              hardware cannot carry" (wrong on every count, #79), then that
+              the build did not exist (true until it did). It says what this
+              switch does and leaves AirPlay 2 to the switch below. */}
           <Toggle label={t('cfgAirplay')} disabled={!airplayCapable || !airplayReady}
             sub={!airplayCapable
               ? t('cfgNoAirplayRx')
@@ -9190,6 +9208,30 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 : `${t('cfgShairportMissing')} (${airplayWhy})`)}
             value={airplayCapable && airplayReady && (config.airplayEnabled ?? false)}
             onChange={v => set('airplayEnabled', v)}/>
+          {/* Which RECEIVER, not whether AirPlay runs — so it is under the
+              AirPlay switch and disabled with AirPlay off, because choosing a
+              flavour of something that is not running is a setting with
+              nothing to do.
+
+              Three separate reasons it can be unavailable, and each says its
+              own: the firmware cannot select a second receiver, the binary is
+              not on the device yet, or this is FireOS, where AirPlay 2
+              negotiates a session and then plays nothing. A single "not
+              available" would send somebody looking in the wrong place for
+              all three. */}
+          <Toggle label={t('cfgAirplay2')}
+            disabled={!airplayCapable || !airplay2Capable || !ap2Ready
+                      || ap2OnFireOS || !(config.airplayEnabled ?? false)}
+            sub={!airplay2Capable
+              ? t('cfgNoAirplay2')
+              : (ap2OnFireOS
+                ? t('cfgAirplay2FireOS')
+                : (!ap2Ready
+                  ? t('cfgAirplay2Missing')
+                  : t('cfgAirplay2Sub')))}
+            value={airplay2Capable && ap2Ready && !ap2OnFireOS
+                   && (config.airplay2Enabled ?? false)}
+            onChange={v => set('airplay2Enabled', v)}/>
           {/* The consequence is IN THE LABEL, which is the whole reason this
               is a setting at all. An Echo has one volume and shares it with
               the assistant, so a phone that drops AirPlay to 20% drops the

@@ -268,22 +268,29 @@ DEFAULT_DEVICE_CONFIG = {
     # Spotify, including the separate airplay_status that says whether the
     # binary is actually installed.
     #
-    # ⚠ CLASSIC AirPlay, not AirPlay 2, and the difference is not a setting.
-    # The three blockers recorded here were all wrong, checked 2026-09-11
-    # (#79): Avahi is not required (configure.ac ties AirPlay 2 to no mDNS
-    # backend — the gap is ~100 lines in mdns_tinysvcmdns.c, which declares
-    # ap2name and secondary_txt_records unused), nqptp does not use hardware
-    # timestamping and says so in its own README, and the stated floor is a
-    # Pi 2 / Pi Zero 2 W rather than a Pi B — which a 1.3GHz quad-A53 meets.
-    # What is real: shm_open is absent from bionic and is the nqptp<->
-    # shairport clock interface, ffmpeg has to be cross-built, and 512MB is
-    # shared with Android. Classic ships first because it has not yet been
-    # proven to RUN on a Dot (#16), not because AirPlay 2 is out of reach.
+    # This paragraph said for months that AirPlay 2 "is not a setting", and
+    # named three blockers that were all wrong (#79, checked 2026-09-11).
+    # Both halves have moved: the blockers are gone and there IS a setting.
     #
-    # The device side does not care which it gets: both put PCM on stdout.
-    # Not the sample rate, though — AirPlay 2's Buffered Audio is AAC-LC at
-    # 44.1kHz, not 48kHz, so internal/resample stays in the path either way.
+    # airplay2Enabled selects WHICH RECEIVER the device runs — a second
+    # binary at a second path, not a mode of the first. What that file IS,
+    # the firmware still asks the file, which is why there is still no key
+    # claiming "this device speaks AirPlay 2": the setting picks the file,
+    # the file answers for itself, and the two cannot contradict each other.
+    #
+    # **False, and that is not caution about the code.** AirPlay 2 has never
+    # been run on this hardware, and on FireOS it cannot work at all: every
+    # session binds two extra TCP ports the kernel picks at runtime (#107),
+    # which no firewall rule can name, so the session negotiates and then
+    # plays nothing. emOS has no default-deny policy and is where this is
+    # worth trying. Defaulting it on would switch a fleet that is mostly
+    # FireOS onto a receiver that cannot work there.
+    #
+    # What it buys where it does work: ~0.5s of protocol latency against
+    # classic AirPlay's ~2s, inclusion in the Home app, and synchronisation
+    # with other AirPlay 2 speakers.
     "airplayEnabled":   False,
+    "airplay2Enabled":  False,
     "airplayName":      "",
     # airplayVolumeControl: whether the AirPlay slider on a phone moves THIS
     # DEVICE'S volume, instead of being attenuated in software inside

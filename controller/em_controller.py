@@ -967,6 +967,24 @@ class Device:
         return "airplay" in (self.capabilities or [])
 
     @property
+    def airplay2_capable(self) -> bool:
+        """
+        Whether this firmware can run the AIRPLAY 2 receiver.
+
+        Separate from airplay_capable, because the receiver shipped first:
+        there is firmware in the field that runs AirPlay, ignores
+        `airplay2Enabled`, and has exactly one path to run a receiver from.
+        Offering it the setting would be a control that saves, reports
+        "pushed" and changes nothing — while the controller installed a
+        binary at a path nothing would ever exec and called that a success.
+
+        It says nothing about whether the AirPlay 2 BINARY is on the device.
+        That is `airplay_status["ap2"]`, the same "could it" against "is it"
+        split spotify_status exists for.
+        """
+        return "airplay2" in (self.capabilities or [])
+
+    @property
     def airplay_ready(self) -> bool:
         """Whether shairport-sync is actually installed on the device."""
         st = getattr(self, "airplay_status", None) or {}

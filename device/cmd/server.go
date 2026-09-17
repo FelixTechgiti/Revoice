@@ -1602,6 +1602,23 @@ func applyAirplayConfig(c *airplay.Client, s *server.Server) {
 	// Before Start below, so a device coming up with the setting already on
 	// writes the metadata block into the config it launches with.
 	c.SetVolumeHandler(airplayVolume(s))
+
+	// Which RECEIVER, before deciding whether to run one. A change has to
+	// restart the process, because the choice is made when it is exec'd —
+	// without this the setting would save, report success and go on running
+	// the other binary until something else happened to restart it, which is
+	// the failure this codebase names most often.
+	//
+	// Only on a CHANGE. The config push repeats every setting on every
+	// reconnect, and this fleet reconnects often; restarting each time would
+	// drop whatever is playing once per reconnect.
+	prefer := snap.Airplay2Enabled != nil && *snap.Airplay2Enabled
+	if c.SetPreferAirPlay2(prefer) {
+		if c.Restart() {
+			log.Printf("[cmd] AirPlay receiver switched to %s", airplay.SelectedName(prefer))
+		}
+	}
+
 	if snap.AirplayEnabled != nil && *snap.AirplayEnabled {
 		// The clock daemon FIRST. shairport-sync reads the PTP record nqptp
 		// publishes; starting it second means the receiver's first look finds
@@ -1621,19 +1638,24 @@ func applyAirplayConfig(c *airplay.Client, s *server.Server) {
 // 319 and 320 to itself and a second instance could only fail to bind them.
 var nqptp = &airplay.Nqptp{}
 
-// startNqptpIfNeeded asks the INSTALLED BINARY whether this device speaks
+// startNqptpIfNeeded asks the SELECTED BINARY whether this device speaks
 // AirPlay 2, and runs the clock daemon only if it does.
 //
-// There is deliberately no config key for it. The device has one shairport-
-// sync at a fixed path and whether it is an AirPlay 2 build is a property of
-// how that file was compiled — a toggle would be a second opinion about a
-// question the file already answers, and the two could disagree.
+// **There is still no config key saying "this device speaks AirPlay 2", and
+// `airplay2Enabled` is not one.** That key selects which of two files to run;
+// what the chosen file IS, this asks the file. So the setting and the binary
+// cannot contradict each other — a device set to AirPlay 2 that has not been
+// given the binary yet runs the classic one and gets no clock daemon, which
+// is correct and is what the report says.
 //
 // Every failure here is logged and survived. An AirPlay 2 binary with no
 // nqptp still serves CLASSIC AirPlay, so refusing to continue would trade a
 // degraded feature for no feature at all.
 func startNqptpIfNeeded() {
-	f, err := airplay.DetectFlavour(airplay.BinaryPath, nil)
+	snap := config.Get().Snapshot()
+	prefer := snap.Airplay2Enabled != nil && *snap.Airplay2Enabled
+	choice := airplay.ResolveBinary(airplay.BinaryPath, airplay.AP2BinaryPath, prefer)
+	f, err := airplay.DetectFlavour(choice.Path, nil)
 	if err != nil {
 		log.Printf("[cmd] cannot tell which AirPlay flavour is installed: %v", err)
 		return

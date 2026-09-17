@@ -1,4 +1,4 @@
-name: Endpoint Release (librespot + shairport-sync)
+name: Endpoint Release (librespot + both shairport-syncs + nqptp)
 
 # Publishes the two streaming endpoint binaries as release assets, so the
 # CONTROLLER can fetch and install them the way it fetches firmware — no file
@@ -20,6 +20,20 @@ name: Endpoint Release (librespot + shairport-sync)
 #     and an MIT `LICENSES` at its root; there is no GPL anywhere in it. The
 #     error was conservative, promising more than was owed, which is exactly
 #     why nothing ever caught it.
+#   * **nqptp IS GPLv2, and it is the one asset here that is.** Checked at
+#     tag 1.2.8: a `COPYING` that is GPL-2, and a per-file header saying
+#     "version 2" with no or-later. So the correction above must not be read
+#     as "these are all MIT" — it was about shairport-sync, and AirPlay 2
+#     brought a second program with a different answer.
+#
+#     What GPLv2 asks of a binary release is the COMPLETE CORRESPONDING
+#     SOURCE, which is a stronger duty than LGPL 6's relink offer below and
+#     is discharged the same way: nqptp is built unmodified from the pinned
+#     upstream tag, the shims linked into it are this repository's own MIT
+#     code, and `device/shairport/ap2/in-container.sh` is the recipe. All of
+#     it is public, at this release's commit. The notes say so in those
+#     words rather than by implication, because a reader has to be able to
+#     ACT on the offer.
 #   * The obligation that IS real sits one layer down, in what the static
 #     link pulls in: **libconfig v1.8.2 is LGPL-2.1**. LGPL §6 wants a user
 #     to be able to relink against their own build of it, and what discharges
@@ -59,14 +73,30 @@ jobs:
         working-directory: device/shairport
         run: ./build.sh
 
-      # Both, or neither. A release carrying one binary is one the controller
-      # would install happily and then report the other as "not installed",
-      # which is indistinguishable from a device that never received it.
-      - name: Both binaries must be ARM
+      # The AirPlay 2 receiver and its clock daemon, published BESIDE the
+      # classic receiver rather than instead of it. They install to paths of
+      # their own and the device runs whichever `airplay2Enabled` selects, so
+      # a release carrying both is not a fleet-wide switch — it is the choice
+      # existing, per device, with a rollback that costs no transfer.
+      #
+      # 120 minutes is the job's budget and this recipe is most of the reason:
+      # six more cross-compiled dependencies than classic, ffmpeg among them.
+      - name: Build shairport-sync (AirPlay 2) and nqptp
+        working-directory: device/shairport
+        run: ./build-ap2.sh
+
+      # ALL of them, or none. A release carrying some assets and not others
+      # is one `em_endpoint_release.select()` refuses outright — deliberately,
+      # so half a publish is never half adopted — which means a missing file
+      # here does not degrade this release, it retires the automatic fetch for
+      # every endpoint until the next one.
+      - name: Every binary must be ARM
         run: |
           set -e
           for f in device/librespot/out/librespot \
-                   device/shairport/out/shairport-sync; do
+                   device/shairport/out/shairport-sync \
+                   device/shairport/out/shairport-sync-ap2 \
+                   device/shairport/out/nqptp; do
             if [ ! -f "$f" ]; then
               echo "::error::$f was not produced — a release needs both"
               exit 1
@@ -104,6 +134,28 @@ jobs:
             echo "  the exact tag: \`device/shairport/\`. Linked into it:"
             echo "  **Mbed TLS** v2.28.8 (Apache-2.0), **libconfig** v1.8.2"
             echo "  (LGPL-2.1-or-later) and **popt** 1.19 (MIT)."
+            echo "- **shairport-sync-ap2** — the same program built with AirPlay 2,"
+            echo "  so MIT as well, including the bundled \`pair_ap\` (MIT)."
+            echo "  Everything above is linked into it, and in addition:"
+            echo "  **libgcrypt** 1.12.4 and **libgpg-error** 1.61"
+            echo "  (LGPL-2.1-or-later), **libplist** 2.7.0 (LGPL-2.1-or-later),"
+            echo "  **libsodium** 1.0.22 (ISC) and **FFmpeg** n7.1.5"
+            echo "  (LGPL-2.1-or-later — built without \`--enable-gpl\`, with only"
+            echo "  the AAC and ALAC decoders enabled). Recipe:"
+            echo "  \`device/shairport/ap2/in-container.sh\`."
+            echo "- **nqptp** 1.2.8 — **GPL-2.0-only**. Source:"
+            echo "  <https://github.com/mikebrady/nqptp>. This is the one binary"
+            echo "  here under the GPL, and GPLv2 section 3 asks for the complete"
+            echo "  corresponding source rather than the relink offer LGPL asks"
+            echo "  for. It is all public and all at this release's commit:"
+            echo "  nqptp is built **unmodified** from tag \`1.2.8\`; the recipe"
+            echo "  that builds it is \`device/shairport/ap2/in-container.sh\`;"
+            echo "  and the only other code inside the binary is this"
+            echo "  repository's own \`device/shairport/compat/\` (MIT), which"
+            echo "  supplies \`shm_open\` and pthread cancellation because bionic"
+            echo "  has neither. Nothing is patched — the shims are injected"
+            echo "  with \`-include\`, which is why the 1.2.8 pin still means"
+            echo "  exactly what upstream published."
             echo
             echo "libconfig is LGPL and linked statically. LGPL-2.1 §6 asks that"
             echo "you be able to relink against your own build of it, and you can:"
@@ -113,11 +165,16 @@ jobs:
             echo
             echo "The Android compat shims (\`device/librespot/ifaddrs_alias.c\` and"
             echo "\`device/shairport/compat/\`) are this repository's own code, MIT,"
-            echo "and are compiled into these binaries."
+            echo "and are compiled into these binaries. MIT is GPL-compatible, so"
+            echo "the combined nqptp binary is conveyed under the GPL-2.0 above"
+            echo "while the shim sources remain MIT where they live."
             echo
-            echo "The corresponding source for both binaries is therefore the"
+            echo "The corresponding source for every binary here is therefore the"
             echo "named upstream tags plus this repository at this release's commit."
-            for f in device/librespot/out/librespot device/shairport/out/shairport-sync; do
+            for f in device/librespot/out/librespot \
+                     device/shairport/out/shairport-sync \
+                     device/shairport/out/shairport-sync-ap2 \
+                     device/shairport/out/nqptp; do
               echo
               echo "\`\`\`"
               echo "$(basename "$f"): $(file -b "$f")"
@@ -134,6 +191,8 @@ jobs:
           files: |
             device/librespot/out/librespot
             device/shairport/out/shairport-sync
+            device/shairport/out/shairport-sync-ap2
+            device/shairport/out/nqptp
           body_path: /tmp/endpoint-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

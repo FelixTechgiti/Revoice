@@ -17,10 +17,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import em_endpoint_bins as bins
 import em_endpoint_release as rel
 
 
-def _release(tag, *, names=("librespot", "shairport-sync"), prerelease=False):
+# Every kind a release is expected to carry, read off KINDS rather than
+# written down again: the whole hazard `in_release` exists for is a list here
+# and a list there drifting apart, and a fixture that hardcoded two asset
+# names is what made adding a third kind look like sixteen unrelated failures.
+ALL_ASSETS = tuple(k.filename for k in bins.KINDS.values() if k.in_release)
+
+
+def _release(tag, *, names=ALL_ASSETS, prerelease=False):
     return {
         "tag_name": tag,
         "prerelease": prerelease,
@@ -58,49 +66,62 @@ def test_prereleases_are_skipped():
     assert rel.select([_release("endpoints-v1.0.0", prerelease=True)]) is None
 
 
-def test_both_assets_are_returned_with_their_urls():
+def test_every_asset_is_returned_with_its_url():
     picked = rel.select([_release("endpoints-v1.0.0")])
-    assert set(picked["assets"]) == {"spotify", "airplay"}
+    assert set(picked["assets"]) == {
+        k.key for k in bins.KINDS.values() if k.in_release}
     assert picked["assets"]["spotify"]["name"] == "librespot"
     assert picked["assets"]["airplay"]["name"] == "shairport-sync"
+    assert picked["assets"]["airplay2"]["name"] == "shairport-sync-ap2"
+    assert picked["assets"]["nqptp"]["name"] == "nqptp"
 
 
 # ─── needs_fetch ─────────────────────────────────────────────────────────────
+#
+# Built from KINDS rather than from two names written out, for the reason the
+# fixture above is: these tests are about the PROVENANCE RULE, and a kind
+# added later must not make them fail for having nothing to do with it.
+
+KEYS = sorted(k.key for k in bins.KINDS.values() if k.in_release)
+
+
+def _store(**overrides):
+    """A store holding every published kind, minus or plus what is named."""
+    have = {k: {"md5": f"md5-{k}"} for k in KEYS}
+    have.update(overrides)
+    return have
+
+
+def _prov(tag):
+    return {"tag": tag, "kinds": {k: {"md5": f"md5-{k}"} for k in KEYS}}
+
 
 def test_an_empty_store_fetches_everything():
     assert sorted(rel.needs_fetch("endpoints-v1.0.0", {},
-                                  {"spotify": None, "airplay": None})) == \
-        ["airplay", "spotify"]
+                                  {k: None for k in KEYS})) == KEYS
 
 
 def test_our_own_copy_is_left_alone_while_the_tag_has_not_moved():
-    prov = {"tag": "endpoints-v1.0.0",
-            "kinds": {"spotify": {"md5": "aaa"}, "airplay": {"md5": "bbb"}}}
-    store = {"spotify": {"md5": "aaa"}, "airplay": {"md5": "bbb"}}
-    assert rel.needs_fetch("endpoints-v1.0.0", prov, store) == []
+    tag = "endpoints-v1.0.0"
+    assert rel.needs_fetch(tag, _prov(tag), _store()) == []
 
 
 def test_our_own_copy_is_replaced_when_the_tag_moves():
-    prov = {"tag": "endpoints-v1.0.0",
-            "kinds": {"spotify": {"md5": "aaa"}, "airplay": {"md5": "bbb"}}}
-    store = {"spotify": {"md5": "aaa"}, "airplay": {"md5": "bbb"}}
-    assert sorted(rel.needs_fetch("endpoints-v1.1.0", prov, store)) == \
-        ["airplay", "spotify"]
+    assert sorted(rel.needs_fetch("endpoints-v1.1.0",
+                                  _prov("endpoints-v1.0.0"), _store())) == KEYS
 
 
 def test_a_hand_uploaded_binary_is_never_overwritten():
     # The md5 in the store is not the one we recorded, so a person put it
     # there — a patched librespot being tested, most likely. Replacing it on
-    # a timer would undo their build silently.
-    prov = {"tag": "endpoints-v1.0.0",
-            "kinds": {"spotify": {"md5": "aaa"}, "airplay": {"md5": "bbb"}}}
-    store = {"spotify": {"md5": "HAND-BUILT"}, "airplay": {"md5": "bbb"}}
-    assert rel.needs_fetch("endpoints-v1.1.0", prov, store) == ["airplay"]
+    # a timer would undo their build silently, and only that one is spared.
+    got = rel.needs_fetch("endpoints-v1.1.0", _prov("endpoints-v1.0.0"),
+                          _store(spotify={"md5": "HAND-BUILT"}))
+    assert sorted(got) == [k for k in KEYS if k != "spotify"]
 
 
 def test_no_provenance_means_the_store_is_not_ours_to_replace():
-    store = {"spotify": {"md5": "aaa"}, "airplay": {"md5": "bbb"}}
-    assert rel.needs_fetch("endpoints-v1.1.0", {}, store) == []
+    assert rel.needs_fetch("endpoints-v1.1.0", {}, _store()) == []
 
 
 # ─── published_state ─────────────────────────────────────────────────────────
