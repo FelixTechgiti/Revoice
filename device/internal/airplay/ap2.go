@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wilbowes/EchoMuse/internal/endpoint"
 	"github.com/wilbowes/EchoMuse/internal/orphan"
 )
 
@@ -159,11 +160,13 @@ type Nqptp struct {
 	Path   string
 	ShmDir string
 
-	mu       sync.Mutex
-	running  bool
-	cancel   context.CancelFunc
-	restarts int
-	lastExit string
+	mu        sync.Mutex
+	running   bool
+	cancel    context.CancelFunc
+	restarts  int
+	lastExit  string
+	proc      *os.Process
+	startedAt time.Time
 }
 
 // ErrNoNqptp means the clock daemon is not installed.
@@ -268,6 +271,58 @@ func (n *Nqptp) Restarts() (int, string) {
 	return n.restarts, n.lastExit
 }
 
+// Health is what the clock daemon says about itself, in the same three fields
+// the streaming endpoints use — and it is here for the reason the endpoint
+// package was written at all: "installed" is not "working", and nqptp's one
+// likely failure is invisible from every other panel.
+//
+// It cannot bind UDP 319 and 320 if anything else holds them, and it exits
+// immediately when it cannot. From the outside that is a device with an
+// AirPlay 2 binary, an nqptp file of the right size, and audio that will not
+// synchronise — with the restart counter climbing once a second as the only
+// thing anywhere that says so.
+func (n *Nqptp) Health() endpoint.Health {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	h := endpoint.Health{
+		Enabled:  n.running,
+		Alive:    n.proc != nil,
+		Restarts: n.restarts,
+		LastExit: n.lastExit,
+	}
+	if n.proc != nil && !n.startedAt.IsZero() {
+		h.UptimeS = int(time.Since(n.startedAt).Seconds())
+	}
+	return h
+}
+
+// Restart re-executes the daemon so a REPLACED BINARY takes effect, and
+// reports whether there was anything to restart.
+//
+// Same reasoning as the receiver's Restart, and the same failure behind it: a
+// rename replaces a directory entry, not the inode a process is executing, so
+// installing a new nqptp over a running one succeeds, matches its md5, and
+// leaves the old code running indefinitely. nqptp needs this more than the
+// receiver does, because nothing a user can see changes when it happens —
+// AirPlay 2 goes on playing out of sync.
+func (n *Nqptp) Restart() bool {
+	n.mu.Lock()
+	proc, running := n.proc, n.running
+	n.mu.Unlock()
+	if !running || proc == nil {
+		// Not enabled, or between attempts: the next exec opens the new
+		// inode by itself, and claiming a restart that did not happen is
+		// what this whole path exists to stop.
+		return false
+	}
+	log.Printf("[airplay] restarting nqptp to pick up a replaced binary")
+	n.mu.Lock()
+	n.proc = nil
+	n.mu.Unlock()
+	_ = proc.Kill()
+	return true
+}
+
 func (n *Nqptp) supervise(ctx context.Context) {
 	backoff := restartMin
 	for {
@@ -330,7 +385,21 @@ func (n *Nqptp) session(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	n.mu.Lock()
+	n.proc = cmd.Process
+	n.startedAt = time.Now()
+	n.mu.Unlock()
 	go relayLog(stdout)
 	go relayLog(stderr)
-	return cmd.Wait()
+	err = cmd.Wait()
+	// Cleared here rather than by the supervisor, so Alive is false for the
+	// whole of the backoff rather than only until the next loop iteration.
+	// The distinction is the one Health exists for: a daemon failing every
+	// second is Enabled and not Alive, and a sample that caught it mid-loop
+	// would say it was fine.
+	n.mu.Lock()
+	n.proc = nil
+	n.startedAt = time.Time{}
+	n.mu.Unlock()
+	return err
 }

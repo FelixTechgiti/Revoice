@@ -71,6 +71,16 @@ class Kind:
     turning the toggle on IS the ask, and it is the only signal that carries
     the user's intent for this device rather than for the store.
 
+    `status_sub` is the key INSIDE `status_attr` that answers for this
+    file, for a kind that shares another's status object. Sharing the
+    attribute outright was wrong in both directions and neither showed up
+    until a device had one file and not the other: reading it meant nqptp
+    reported as installed on the strength of shairport-sync being there,
+    and writing it meant an nqptp install overwrote the receiver's whole
+    status — flavour, version and all — with a stat of a different file.
+    The device already reports the nested answer (`airplay_status.nqptp`,
+    from `describeFlavour`), so nothing new crosses the wire.
+
     `in_release` says whether an `endpoints-v*` release publishes this kind,
     and it is NOT the same question as whether a device can be given one.
     Conflating them is what a third kind found: `select()` refuses a release
@@ -83,10 +93,10 @@ class Kind:
     """
 
     __slots__ = ("key", "filename", "dest", "capability", "status_attr",
-                 "label", "source", "config_key", "in_release")
+                 "label", "source", "config_key", "in_release", "status_sub")
 
     def __init__(self, key, filename, dest, capability, status_attr, label,
-                 source, config_key, in_release=True):
+                 source, config_key, in_release=True, status_sub=None):
         self.key         = key
         self.filename    = filename
         self.dest        = dest
@@ -96,6 +106,7 @@ class Kind:
         self.source      = source
         self.config_key  = config_key
         self.in_release  = in_release
+        self.status_sub  = status_sub
 
 
 KINDS: dict[str, Kind] = {
@@ -150,6 +161,7 @@ KINDS: dict[str, Kind] = {
         label="AirPlay 2 clock (nqptp)",
         source="device/shairport/build-ap2.sh",
         config_key="airplayEnabled",
+        status_sub="nqptp",
         # No endpoints-v* release carries nqptp yet — the workflow that builds
         # it landed with this kind. Until one does it arrives by upload, from
         # the `endpoint-binaries` artifact. Flip this in the same change that
@@ -316,6 +328,11 @@ def device_state(k: Kind, live, db_path: str | None = None) -> dict:
                      registers again.
       `missing`      firmware support, no working binary. The install case.
       `installed`    a binary the device reports as runnable.
+      `not_needed`   only for a `status_sub` kind: the receiver beside it is
+                     a CLASSIC build, so the clock daemon would sit unused.
+                     Not an error and not a missing file — the honest answer
+                     to "should this be here", and it still installs, because
+                     the two files arrive in whichever order somebody clicks.
 
     `matches_store` is deliberately three-valued. The device reports a size
     and no md5 — the firmware stats the file, it does not hash it — so a
@@ -323,15 +340,25 @@ def device_state(k: Kind, live, db_path: str | None = None) -> dict:
     rather than "no". Claiming a match from a size is how a device would be
     reported as carrying a rebuild it does not have.
     """
-    have = stored(k, db_path)
-    st   = (getattr(live, k.status_attr, None) if live is not None else None)
+    have   = stored(k, db_path)
+    parent = (getattr(live, k.status_attr, None) if live is not None else None)
+    # A sub-kind answers from its own nested block and never from the
+    # parent's `ok`, which belongs to a different file at a different path.
+    st = (parent or {}).get(k.status_sub) if k.status_sub else parent
 
     if live is None:
         status = "unknown"
     elif k.capability not in (getattr(live, "capabilities", None) or []):
         status = "unsupported"
     elif st is None:
-        status = "unknown"
+        # Absence means something different for a sub-kind. The device
+        # reports the nested block only for an AirPlay 2 build, so a classic
+        # one is a real answer rather than silence — and firmware that has
+        # not re-registered since its receiver was replaced has genuinely
+        # not said, which is neither "missing" nor "offline".
+        status = ("not_needed"
+                  if k.status_sub and (parent or {}).get("flavour") == "classic"
+                  else "unknown")
     elif st.get("ok"):
         status = "installed"
     else:
@@ -354,8 +381,36 @@ def device_state(k: Kind, live, db_path: str | None = None) -> dict:
         "device_size":   (st or {}).get("size"),
         "stored":        have,
         "matches_store": matches,
-        "installable":   status in ("missing", "installed") and have is not None,
+        # A sub-kind must stay installable while its own state is unknown or
+        # not yet needed: an install does not refresh the receiver's
+        # register-time flavour, so requiring "missing" would disable the
+        # nqptp button for the whole session after somebody installed the
+        # AirPlay 2 binary — exactly when they are about to click it.
+        "installable":   have is not None and (
+            status in ("missing", "installed")
+            or (k.status_sub is not None
+                and live is not None
+                and status in ("unknown", "not_needed"))),
     }
+
+
+def merged_status(existing, k: Kind, status: dict | None):
+    """
+    What to store on the live Device after reading one binary's state.
+
+    A plain kind owns its whole status object and replaces it. A sub-kind
+    owns one key inside somebody else's, and assigning over the parent
+    would delete the receiver's flavour, version and shared-memory ABI
+    number — leaving the dashboard reporting the size of an entirely
+    different file as shairport-sync's.
+    """
+    if status is None:
+        return existing
+    if not k.status_sub:
+        return status
+    merged = dict(existing or {})
+    merged[k.status_sub] = status
+    return merged
 
 
 def refuse_install(k: Kind, live, db_path: str | None = None) -> str | None:

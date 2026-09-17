@@ -433,6 +433,12 @@ func main() {
 			return spotifyClient.Restart()
 		case "airplay":
 			return airplayClient.Restart()
+		case "nqptp":
+			// A third kind, because nqptp is a second PROCESS at a second
+			// path. It matters more here than for the receiver: replacing
+			// the clock daemon under a running one changes nothing anybody
+			// can hear — AirPlay 2 simply goes on playing out of sync.
+			return nqptp.Restart()
 		}
 		log.Printf("[cmd] endpoint_restart for unknown kind %q — ignoring", kind)
 		return false
@@ -599,7 +605,7 @@ func main() {
 			st.Ble = bleScanner.Stats()
 			st.OwwShadow = shadowStats(dataClient)
 			st.AecRef = canceller.RefSource()
-			st.Endpoints = endpointHealth(spotifyClient, airplayClient)
+			st.Endpoints = endpointHealth(spotifyClient, airplayClient, nqptp)
 			controlClient.SendStats(st)
 		}()
 		// Deliver any unacknowledged WiFi change outcome (including the
@@ -832,7 +838,7 @@ func main() {
 			st.Ble = bleScanner.Stats()
 			st.OwwShadow = shadowStats(dataClient)
 			st.AecRef = canceller.RefSource()
-			st.Endpoints = endpointHealth(spotifyClient, airplayClient)
+			st.Endpoints = endpointHealth(spotifyClient, airplayClient, nqptp)
 			controlClient.SendStats(st)
 			if tick%10 == 0 {
 				var ms runtime.MemStats
@@ -923,13 +929,23 @@ func shadowStats(dc *client.DataClient) interface{} {
 // returns nil, which the omitempty on the field turns into an absent key —
 // the same absence as firmware too old to report it, and correctly so: in
 // neither case is there anything to say.
-func endpointHealth(sp *spotify.Client, ap *airplay.Client) map[string]interface{} {
+func endpointHealth(sp *spotify.Client, ap *airplay.Client, np *airplay.Nqptp) map[string]interface{} {
 	out := map[string]interface{}{}
 	if h := sp.Health(); h.Enabled {
 		out["spotify"] = h
 	}
 	if h := ap.Health(); h.Enabled {
 		out["airplay"] = h
+	}
+	// The clock daemon reports beside the receiver rather than inside it,
+	// because they fail independently: shairport-sync serving classic AirPlay
+	// perfectly while nqptp cannot bind UDP 319 is a real state, and it is
+	// the one where AirPlay 2 is installed and will not synchronise. Enabled
+	// here means the firmware decided this device speaks AirPlay 2 and the
+	// daemon is on it — the same "somebody asked for this" the other two
+	// carry, except that the asking was done by the binary.
+	if h := np.Health(); h.Enabled {
+		out["nqptp"] = h
 	}
 	if len(out) == 0 {
 		return nil

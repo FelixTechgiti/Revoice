@@ -5699,7 +5699,13 @@ async def _post_device_endpoint_bin(request: web.Request) -> web.Response:
     live = _live(device_id)
     status = await _read_endpoint_status(live, k) if live is not None else None
     if status is not None and live is not None:
-        setattr(live, k.status_attr, status)
+        # MERGED, not assigned. nqptp's state lives inside the receiver's
+        # status object, so writing the stat of /data/local/bin/nqptp over
+        # `airplay_status` would report that file's size as shairport-sync's
+        # and lose the flavour the whole AirPlay 2 path is gated on.
+        setattr(live, k.status_attr,
+                em_endpoint_bins.merged_status(
+                    getattr(live, k.status_attr, None), k, status))
 
     log.info(f"[api] [{device_id}] {k.filename} installed, device reports "
              f"{status if status is not None else 'nothing readable'}")

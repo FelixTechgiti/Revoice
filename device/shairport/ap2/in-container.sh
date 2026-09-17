@@ -11,10 +11,12 @@
 # sha256 it is repeated verbatim here; where it cannot, the pin is a git tag,
 # which is what the classic recipe already does for mbedtls and libconfig.
 #
-# NOTHING HERE HAS EVER BEEN RUN. The classic recipe needed seven corrections
-# the first time it was executed, and there is no reason to expect better of a
-# larger one. What it encodes is the decisions and the traps that were read off
-# the sources rather than guessed — see ../README.md.
+# It BUILDS, in CI, since 2026-09-17 — four corrections rather than the classic
+# recipe's seven, all of them recorded in ../README.md under "What the first
+# runs found". What it has never done is RUN: no AirPlay 2 binary from here has
+# been started on a Dot. Read the corrections before moving any pin; three of
+# the four are autoconf asking a question a cross build cannot answer, and that
+# class of trap comes back with every version bump.
 
 set -euo pipefail
 
@@ -389,6 +391,49 @@ check_elf() {
 
 check_elf /build/shairport-sync/shairport-sync shairport-sync
 check_elf /build/nqptp/nqptp nqptp
+
+# The version token the firmware gates on. internal/airplay matches
+# `(^|-)AirPlay2(-|$)` in `shairport-sync -V` and starts the clock daemon only
+# on a hit; common.c:1807 appends that token only under CONFIG_AIRPLAY_2. An
+# armv7a binary cannot be RUN here, but the token is a string literal in
+# .rodata, so finding it is the same fact.
+#
+# Without this the failure is silent in the worst direction: configure would
+# have to fall back to a classic build for some reason nobody read in three
+# hundred lines of output, the script would report success, the receiver would
+# serve classic AirPlay perfectly, and nqptp would sit beside it never started.
+# That is the one feature this whole recipe exists for, disappearing without a
+# single error.
+if ! grep -aq -- "-AirPlay2" /build/shairport-sync/shairport-sync; then
+    echo "ERROR: the binary carries no -AirPlay2 token — this is a CLASSIC" >&2
+    echo "       build, and the device would never start the clock daemon." >&2
+    exit 1
+fi
+echo "shairport-sync reports AirPlay 2"
+
+# The shared-memory ABI, which is the coupling that is silent at BOTH ends.
+# shairport stamps its own NQPTP_SHM_STRUCTURES_VERSION into the version
+# string as `-smi<N>`; nqptp writes its own into every record. They are two
+# copies of one number in two separately pinned trees, and a disagreement is
+# not an error anywhere — the reader simply never accepts a record, so AirPlay
+# 2 plays out of sync with nothing logged. Both pins are moved by hand, so the
+# check belongs where they are read rather than where they were written.
+sps_smi="$(sed -n 's/^#define NQPTP_SHM_STRUCTURES_VERSION *\([0-9]*\).*/\1/p' \
+    /build/shairport-sync/nqptp-shm-structures.h)"
+nq_smi="$(sed -n 's/^#define NQPTP_SHM_STRUCTURES_VERSION *\([0-9]*\).*/\1/p' \
+    /build/nqptp/nqptp-shm-structures.h)"
+if [ -z "$sps_smi" ] || [ -z "$nq_smi" ]; then
+    echo "ERROR: could not read the shared-memory ABI version from both trees" >&2
+    echo "       (shairport='$sps_smi' nqptp='$nq_smi')" >&2
+    exit 1
+fi
+if [ "$sps_smi" != "$nq_smi" ]; then
+    echo "ERROR: shairport-sync $SPS_REF expects shm ABI $sps_smi and nqptp" >&2
+    echo "       $NQPTP_REF publishes $nq_smi. They would not interoperate," >&2
+    echo "       and neither of them would say so." >&2
+    exit 1
+fi
+echo "shared-memory ABI: both at version $sps_smi"
 
 "$NDK/bin/llvm-strip" /build/shairport-sync/shairport-sync
 "$NDK/bin/llvm-strip" /build/nqptp/nqptp
