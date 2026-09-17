@@ -350,8 +350,18 @@ PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig" \
 # CXXLD is the other half. configure runs AC_PROG_CXX so automake links with
 # clang++, which pulls in libc++_shared.so — a C++ runtime that is not on
 # FireOS 5 and never will be. It builds clean, strips clean, and dies at exec.
+# BOTH shims, and android_shm.h is the one that is easy to leave out here:
+# nothing in shairport-sync's configure probes for shared memory, so its
+# absence costs nothing until the LINK, where ptp-utilities.c:176 asks for
+# shm_open — the single call that reads the clock nqptp publishes, and the one
+# function on the whole AirPlay 2 path bionic does not have. Without the header
+# the call compiles (implicit declaration, a warning among thousands) and the
+# link fails on a name that looks like a missing library rather than a missing
+# shim. It goes at MAKE time for the same reason as below, and it could have
+# gone at configure time as it does for nqptp; there it had to, because
+# nqptp's own feature tests see the rename.
 make -j"$JOBS" \
-    CFLAGS="$BASE_CFLAGS -include /compat/android_compat.h" \
+    CFLAGS="$BASE_CFLAGS -include /compat/android_shm.h -include /compat/android_compat.h" \
     CXXLD="$CC"
 
 # ---------------------------------------------------------------------------
