@@ -128,6 +128,22 @@ int main(void) {
   }
   ok(stuck == 0, "generate: every free bit takes both values over 512 draws");
 
+  /* ---- uuid_generate, the symbol configure probes for ----------------- */
+  /* Not exercised by shairport-sync, which is exactly why it needs a check
+   * here: a symbol nothing calls is one that can rot into a stub or vanish
+   * from the archive without any run noticing, and its absence fails the
+   * AirPlay 2 build with a message about a missing library. */
+  {
+    uuid_t g;
+    memset(g, 0, sizeof g);
+    uuid_generate(g);
+    ok((g[6] & 0xF0) == 0x40, "uuid_generate: version 4 in octet 6");
+    ok((g[8] & 0xC0) == 0x80, "uuid_generate: variant 10x in octet 8");
+    uuid_t g2;
+    uuid_generate(g2);
+    ok(memcmp(g, g2, sizeof g) != 0, "uuid_generate: two draws differ");
+  }
+
   /* ---- the fallback --------------------------------------------------- */
   /* It is not a CSPRNG and is not claimed to be, but it must still give two
    * devices different identifiers — which is the only property it exists for. */

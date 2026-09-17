@@ -3117,15 +3117,28 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     const tone  = ep.status === 'installed' ? 'var(--ok)'
                                 : ep.status === 'missing'   ? 'var(--warn)'
                                 : 'var(--muted)';
-                    // Four states, four sentences. "We have not heard from
+                    // Five states, five sentences. "We have not heard from
                     // this device" is not "the binary is missing", and an
                     // offline Echo must not be told its file is gone.
+                    //
+                    // `not_needed` is the clock daemon's alone: the receiver
+                    // installed beside it is a classic build, so nqptp would
+                    // sit unused. Saying "not installed" there accuses a
+                    // device that is working exactly as it should — and the
+                    // install stays offered, because the AirPlay 2 binary is
+                    // very likely the next thing being pushed.
+                    //
+                    // And `unknown` may no longer say "offline": for a
+                    // connected device whose receiver has not re-registered
+                    // since it was replaced, offline is simply false.
                     const label = ep.status === 'installed' ? 'Installed'
                                 : ep.status === 'missing'
                                   ? `Not installed${ep.reason_text && ep.reason_text !== 'not installed'
                                       ? ` — ${ep.reason_text}` : ''}`
                                 : ep.status === 'unsupported' ? 'Firmware has no such endpoint'
-                                : 'Device offline — state unknown';
+                                : ep.status === 'not_needed'
+                                  ? 'Not needed — the installed AirPlay build is classic'
+                                  : 'State unknown — the device has not reported';
                     return (
                       <div key={ep.kind} style={{ borderTop:'1px solid var(--hairline)', paddingTop:12, marginTop:12 }}>
                         <div style={{ display:'flex', alignItems:'baseline', gap:12, flexWrap:'wrap', marginBottom:8 }}>

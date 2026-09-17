@@ -34,8 +34,9 @@
  * so `/dev/revoice-shm` is RAM, is root-owned, and is gone on reboot —
  * which is correct for a clock record that means nothing across a boot.
  *
- * It is checked rather than assumed: `statfs` reports TMPFS_MAGIC or it does
- * not, and a directory that is not tmpfs gets one loud line on stderr. It
+ * It is checked rather than assumed: `statfs` reports a RAM-backed filesystem
+ * — TMPFS_MAGIC under Android, RAMFS_MAGIC under emOS, whose kernel has no
+ * devtmpfs — or it does not, and anything else gets one loud line on stderr. It
  * does not refuse — an operator pointing REVOICE_SHM_DIR somewhere
  * deliberately is entitled to — but the hazard is stated where somebody
  * reading a log can find it, rather than left to be discovered as wear.
@@ -83,6 +84,22 @@
  * is a kernel ABI value and has not moved since tmpfs existed. */
 #ifndef EM_TMPFS_MAGIC
 #define EM_TMPFS_MAGIC 0x01021994
+#endif
+/* ramfs counts too, and on emOS it is what answers.
+ *
+ * The check below exists to catch FLASH, not to insist on one filesystem.
+ * Android's /dev is a tmpfs populated by ueventd; emOS runs no ueventd and
+ * this kernel has no devtmpfs at all (emos/init/init.c says so at its mount
+ * stage and records the failed rc), so /dev there is a directory on the
+ * initramfs rootfs — ramfs, which is RAM by construction and cannot wear
+ * anything out.
+ *
+ * Without this, every AirPlay 2 start on emOS prints a warning about writing
+ * to flash that is simply untrue. A wrong warning is worse than none: it
+ * agrees with whatever somebody is already worried about, and this repository
+ * has shipped one of those three releases deep before. */
+#ifndef EM_RAMFS_MAGIC
+#define EM_RAMFS_MAGIC 0x858458f6
 #endif
 
 const char *em_shm_dir(void) {
@@ -144,13 +161,17 @@ static int em_shm_ensure_dir(void) {
   if (!checked) {
     checked = 1;
     struct statfs sfs;
-    if (statfs(dir, &sfs) == 0 && (unsigned long)sfs.f_type != EM_TMPFS_MAGIC)
-      fprintf(stderr,
-              "revoice: shared memory directory \"%s\" is not a tmpfs. The "
-              "PTP clock record is rewritten continuously, so this will write "
-              "to flash for as long as the daemon runs. Point REVOICE_SHM_DIR "
-              "at a tmpfs (the default is %s).\n",
-              dir, EM_SHM_DEFAULT_DIR);
+    if (statfs(dir, &sfs) == 0) {
+      unsigned long fstype = (unsigned long)sfs.f_type;
+      if (fstype != EM_TMPFS_MAGIC && fstype != EM_RAMFS_MAGIC)
+        fprintf(stderr,
+                "revoice: shared memory directory \"%s\" is not RAM-backed "
+                "(fs type 0x%lx). The PTP clock record is rewritten "
+                "continuously, so this will write to flash for as long as the "
+                "daemon runs. Point REVOICE_SHM_DIR at a tmpfs (the default "
+                "is %s).\n",
+                dir, fstype, EM_SHM_DEFAULT_DIR);
+    }
   }
   return 0;
 }

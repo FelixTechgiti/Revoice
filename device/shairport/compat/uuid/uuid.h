@@ -30,6 +30,13 @@ typedef unsigned char uuid_t[16];
  * and answered with a weaker source rather than a predictable constant. */
 void uuid_generate_random(uuid_t out);
 
+/* Not called by shairport-sync, which uses uuid_generate_random directly.
+ * It is here because configure.ac:484 PROBES for it with AC_CHECK_LIB when
+ * pkg-config cannot find a uuid module — which in a cross build it cannot —
+ * and an archive without the symbol fails the build over a function nothing
+ * calls. */
+void uuid_generate(uuid_t out);
+
 /* 36 characters plus a NUL. The caller supplies the space, exactly as libuuid
  * requires; UUID_STR_LEN is the size to declare. */
 #define UUID_STR_LEN 37

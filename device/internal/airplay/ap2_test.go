@@ -204,3 +204,54 @@ func TestNqptpStopIsIdempotent(t *testing.T) {
 		t.Error("Running after Stop")
 	}
 }
+
+// The state this exists to make visible: enabled, not alive, restarts
+// climbing. On the receiver that was an orphan holding TCP 5000 for two hours
+// while every panel read healthy; here it is nqptp failing to bind UDP 319,
+// which is silent in a different way — classic AirPlay goes on working, so
+// nothing a user can hear says anything is wrong.
+func TestNqptpHealthSeparatesEnabledFromAlive(t *testing.T) {
+	n := &Nqptp{Path: filepath.Join(t.TempDir(), "nqptp")}
+
+	if h := n.Health(); h.Enabled || h.Alive {
+		t.Errorf("a daemon that was never started reads %+v", h)
+	}
+
+	n.mu.Lock()
+	n.running = true
+	n.restarts = 42
+	n.lastExit = "exit status 1"
+	n.mu.Unlock()
+
+	h := n.Health()
+	if !h.Enabled {
+		t.Error("Enabled must follow the supervisor, not the process")
+	}
+	if h.Alive {
+		t.Error("Alive must be false while no process exists")
+	}
+	if h.Restarts != 42 || h.LastExit != "exit status 1" {
+		t.Errorf("Health = %+v, want the restart count and the reason carried", h)
+	}
+	if h.UptimeS != 0 {
+		t.Errorf("UptimeS = %d, want none for a process that is not running", h.UptimeS)
+	}
+}
+
+// Nothing to restart must answer false rather than claiming an action, for
+// the reason the controller's own note depends on it: "restarted, the new
+// binary is live" about a process still executing the old inode is the exact
+// failure the message exists to end, with a reassuring sentence on top.
+func TestNqptpRestartClaimsNothingItDidNotDo(t *testing.T) {
+	n := &Nqptp{Path: filepath.Join(t.TempDir(), "nqptp")}
+	if n.Restart() {
+		t.Error("a daemon that is not enabled has nothing to restart")
+	}
+
+	n.mu.Lock()
+	n.running = true
+	n.mu.Unlock()
+	if n.Restart() {
+		t.Error("enabled but between attempts: the next exec opens the new inode by itself")
+	}
+}

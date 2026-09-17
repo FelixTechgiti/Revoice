@@ -466,3 +466,84 @@ def test_an_empty_store_installs_nothing(tmp_path):
     (tmp_path / ebins.STORE_SUBDIR).mkdir(parents=True, exist_ok=True)
     assert ebins.install_needed(K, CAPS, ON, {"ok": False, "reason": "not_installed"},
                                db_path=str(tmp_path / "revoice.db")) is None
+
+
+# ─── The clock daemon reports from inside the receiver's status ──────────────
+#
+# nqptp shares `airplay_status` because the device reports it there — the
+# nested block `describeFlavour` writes. Sharing the ATTRIBUTE outright was
+# wrong in both directions, and neither shows up until a device has one file
+# and not the other, which is every device the first time AirPlay 2 is
+# installed.
+
+def test_nqptp_is_not_reported_installed_because_shairport_is(store):
+    # The failure this exists to stop: a classic receiver on the device, the
+    # dashboard saying the clock daemon is installed, and the user never
+    # pushing the file that AirPlay 2 cannot synchronise without.
+    k = ebins.KINDS["nqptp"]
+    live = FakeDevice(["airplay"],
+                      airplay_status={"ok": True, "size": 516000,
+                                      "flavour": "classic"})
+    st = ebins.device_state(k, live)
+    assert st["status"] == "not_needed"
+
+
+def test_nqptp_reads_its_own_nested_block(store):
+    k = ebins.KINDS["nqptp"]
+    live = FakeDevice(["airplay"], airplay_status={
+        "ok": True, "size": 1400000, "flavour": "airplay2", "shm_version": 10,
+        "nqptp": {"ok": False, "reason": "not_installed",
+                  "binary": "/data/local/bin/nqptp"},
+    })
+    st = ebins.device_state(k, live)
+    assert st["status"] == "missing"
+    assert st["reason_text"] == "not installed"
+
+    live.airplay_status["nqptp"] = {"ok": True, "reason": "ok"}
+    assert ebins.device_state(k, live)["status"] == "installed"
+
+
+def test_nqptp_stays_installable_before_the_device_has_said(store):
+    # An install does not refresh the receiver's register-time flavour, so a
+    # device that has just been given the AirPlay 2 binary still reports the
+    # old one until it reconnects. Requiring "missing" would disable the
+    # button for the rest of the session, at exactly the moment somebody is
+    # about to push the second half of the pair.
+    k = ebins.KINDS["nqptp"]
+    _put(store, k, b"x" * 32)
+    for status in ({"ok": True, "size": 900, "flavour": "classic"},
+                   {"ok": False, "reason": "not_installed"}):
+        live = FakeDevice(["airplay"], airplay_status=status)
+        assert ebins.device_state(k, live)["installable"] is True
+
+    # Offline and unsupported are still refusals: there is no device to send
+    # to, and no endpoint to run it.
+    assert ebins.device_state(k, None)["installable"] is False
+    assert ebins.device_state(
+        k, FakeDevice(["mic"]))["installable"] is False
+
+
+def test_installing_nqptp_does_not_overwrite_the_receivers_status(store):
+    # The write half. `_read_endpoint_status` stats the kind's OWN dest, so
+    # assigning the result over `airplay_status` would report the size of
+    # /data/local/bin/nqptp as shairport-sync's and lose the flavour the
+    # whole AirPlay 2 path is gated on.
+    k = ebins.KINDS["nqptp"]
+    before = {"ok": True, "size": 1400000, "flavour": "airplay2",
+              "shm_version": 10, "version": "4.3.7-AirPlay2-smi10"}
+    after = ebins.merged_status(before, k, {"ok": True, "size": 42000})
+
+    assert after["size"] == 1400000, "the receiver's own size must survive"
+    assert after["flavour"] == "airplay2"
+    assert after["version"] == "4.3.7-AirPlay2-smi10"
+    assert after["nqptp"] == {"ok": True, "size": 42000}
+    assert before.get("nqptp") is None, "the caller's dict must not be mutated"
+
+
+def test_merged_status_replaces_outright_for_an_ordinary_kind(store):
+    k = ebins.KINDS["airplay"]
+    assert ebins.merged_status({"ok": False}, k, {"ok": True, "size": 9}) == \
+        {"ok": True, "size": 9}
+    # An unreadable stat leaves the previous answer alone — the rule
+    # `_read_endpoint_status` states and the reason it returns None.
+    assert ebins.merged_status({"ok": True}, k, None) == {"ok": True}

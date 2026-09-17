@@ -228,12 +228,13 @@ CI runs it.
 cc -O2 -Wall -Wextra -o /tmp/shmcheck compat/shmcheck.c && /tmp/shmcheck
 ```
 
-**Nothing builds against it yet.** `build.sh` is the classic 4.3.7 build,
-which does not use PTP at all, so the shim is not linked into anything that
-ships today. It is the first item done on #79's list, not the last — nqptp
-still has to be cross-compiled, and ffmpeg and five more libraries with it.
+**The classic build still does not link it**, and does not need to: `build.sh`
+is 4.3.7 without PTP. `build-ap2.sh` does, into both binaries — and the
+shairport half of that was left out of the first version of the recipe, where
+it cost nothing until the link, because nothing in shairport-sync's configure
+asks about shared memory. See "What the first runs found" below.
 
-## The AirPlay 2 build (`./build-ap2.sh`) — written, never run
+## The AirPlay 2 build (`./build-ap2.sh`) — it builds
 
 ```bash
 ./build-ap2.sh            # shairport-sync 4.3.7 + nqptp 1.2.8, armv7a/API 22
@@ -243,10 +244,71 @@ Produces **two** binaries, `out/shairport-sync-ap2` and `out/nqptp`. AirPlay 2
 needs both: nqptp is a separate daemon holding UDP 319 and 320 and publishing
 the PTP clock that shairport-sync times against.
 
-**Nothing in it has been executed.** The classic recipe needed seven
-corrections the first time it ran, and this one is larger. What it is worth is
-the decisions, each read off a source rather than guessed — those are below,
-and three of them contradict what this file or #79 said before.
+**In CI verifiziert, 2026-09-17**: both come out ARM32, bionic-only, in about
+3m20s on a GitHub runner — `endpoint-binaries.yml` with `shairport-sync-ap2`
+is how anybody without a Docker daemon gets them. **Still unproven: that they
+RUN**, which is the same sentence the classic build carries above and means
+the same thing. Nobody has started either one on a Dot.
+
+The decisions below were each read off a source rather than guessed, and three
+of them contradict what this file or #79 said before. They survived the build
+unchanged; what did not is in the next section.
+
+### What the first runs found
+
+Four corrections, against the classic recipe's seven, and the split is the
+same: **autoconf asking Linux questions of a platform that answers them
+differently**, and **bionic genuinely not having something**. Three were
+measured in CI; the fourth was read out of the sources before it could be.
+
+- **`ac_cv_func_malloc_0_nonnull=yes` for nqptp, and it fails at the LINK.**
+  `AC_FUNC_MALLOC` decides whether `malloc(0)` returns non-NULL by RUNNING a
+  program. A cross build cannot, so autoconf assumes broken and emits
+  `#define malloc rpl_malloc` — a replacement nobody provides, so the error is
+  `undefined reference to 'rpl_malloc'` with no mention of configure. bionic's
+  `malloc(0)` returns a unique non-NULL pointer like every other modern libc,
+  so answering the question the test could not ask is a statement of fact.
+  `realloc` carries the identical trap.
+- **The cancellation shim goes to nqptp's MAKE, not its configure.** With
+  `android_compat.h` in `CFLAGS`, configure reported `pthread library needed`:
+  `AC_CHECK_LIB` declares the function it is probing for itself, as `char
+  pthread_create ();`, which conflicts with the real prototype the shim drags
+  in — so the test program fails to COMPILE and configure reads that as a
+  missing library. `android_shm.h` may stay at configure time, and must,
+  because nqptp's own feature tests need to see the shm rename.
+- **`uuid_generate` had to be added to the uuid shim, for a symbol the program
+  never calls.** `configure.ac:481` asks pkg-config for a `uuid` module — which
+  a cross build never has — and falls back to `AC_CHECK_LIB([uuid],
+  [uuid_generate])`. shairport-sync itself calls `uuid_generate_random`
+  (`shairport.c:557`), which the shim had. So the build failed over a function
+  that would never have run, with an error naming a library rather than a
+  symbol: *"AirPlay 2 support requires the uuid library -- uuid-dev
+  suggested"*. That wording is why the first reading of it was "something is
+  missing from the image".
+- **shairport-sync's make needed `-include android_shm.h` too**, and this one
+  was read rather than measured. Nothing in its configure asks about shared
+  memory, so the omission costs nothing until the link, where
+  `ptp-utilities.c:176` wants `shm_open` — the single call that reads the clock
+  nqptp publishes, and the only function on the whole AirPlay 2 path bionic
+  does not have.
+
+**Two checks were added at the end of the recipe, and both guard couplings
+that are silent on hardware rather than loud in a build:**
+
+- **The `-AirPlay2` token.** The firmware decides whether to run the clock
+  daemon by asking the installed binary (`internal/airplay`'s `reAirPlay2`
+  against `shairport-sync -V`), and `common.c:1807` appends that token only
+  under `CONFIG_AIRPLAY_2`. An armv7a binary cannot be run here, but the token
+  is a string literal, so finding it in the file is the same fact. Without the
+  check, a configure that fell back to a classic build for any reason nobody
+  read in three hundred lines of output would produce a receiver that works
+  perfectly, an nqptp that is never started, and no error anywhere.
+- **The shared-memory ABI number.** shairport stamps its own
+  `NQPTP_SHM_STRUCTURES_VERSION` into the version string as `-smi<N>` and nqptp
+  writes its own into every record. Two copies of one number in two separately
+  pinned trees, both moved by hand — and a disagreement is not an error at
+  either end: the reader simply never accepts a record, so AirPlay 2 plays out
+  of sync with nothing logged. Both are 10 at 4.3.7 and 1.2.8.
 
 ### It is a separate script, not a mode inside `build.sh`
 

@@ -1,5 +1,5 @@
 /*
- * android_uuid.c — uuid_generate_random / uuid_unparse_lower for bionic.
+ * android_uuid.c — uuid_generate{,_random} / uuid_unparse_lower for bionic.
  *
  * # Why this is implemented rather than cross-built
  *
@@ -104,6 +104,24 @@ void uuid_generate_random(uuid_t out) {
   out[6] = (unsigned char)((out[6] & 0x0F) | 0x40);
   out[8] = (unsigned char)((out[8] & 0x3F) | 0x80);
 }
+
+/* libuuid's uuid_generate picks between the random and the time-based
+ * generator by asking whether a high-quality random source is available. On
+ * this platform that question has one answer: /dev/urandom is present on every
+ * Android kernel and seeded before userspace starts, which is why
+ * uuid_generate_random above reads it unconditionally. So this is not a
+ * shortcut for a second generator nobody wrote — it is the branch libuuid
+ * itself would take here.
+ *
+ * It exists because CONFIGURE probes for it and the PROGRAM does not use it:
+ * shairport-sync calls uuid_generate_random at its one site (shairport.c:557),
+ * while configure.ac:484 falls back to AC_CHECK_LIB([uuid], [uuid_generate])
+ * when pkg-config cannot find the module — which on a cross build it never
+ * can. A symbol missing from an archive fails the BUILD over a function that
+ * would never have been called, and the error names a library rather than a
+ * symbol ("AirPlay 2 support requires the uuid library"), which is why the
+ * first CI run of build-ap2.sh read as a packaging problem. */
+void uuid_generate(uuid_t out) { uuid_generate_random(out); }
 
 void uuid_unparse_lower(const uuid_t uu, char *out) {
   static const char hex[] = "0123456789abcdef";
