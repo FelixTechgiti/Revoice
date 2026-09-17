@@ -1,5 +1,55 @@
 # Changelog
 
+## 2.52.0-fx.1
+
+### AirPlay 2 kommt jetzt von selbst
+
+**Bisher hiess „AirPlay 2 ausprobieren": einen Workflow auf GitHub starten, ein
+Archiv herunterladen, entpacken, zwei Dateien im Dashboard hochladen, zweimal
+installieren.** Das war kein guter Weg, und es war auch nicht nötig — den
+automatischen Weg gibt es seit acht Endpunkt-Releases, er konnte AirPlay 2 nur
+nicht tragen.
+
+Jetzt trägt er ihn. Der Controller holt die AirPlay-2-Dateien selbst, genauso
+wie er librespot und shairport-sync holt, und installiert sie auf jedem Gerät,
+dessen Schalter an ist.
+
+**So schaltest du es ein:**
+
+1. Beim Echo unter **Konfiguration → Streaming** den Schalter **„AirPlay 2
+   benutzen"** anmachen. Er sitzt direkt unter dem AirPlay-Schalter.
+2. Fertig. Die beiden Dateien kommen beim nächsten Verbinden von selbst.
+
+Ist der Schalter ausgegraut, steht direkt darunter, warum — und die drei Gründe
+wollen Verschiedenes:
+
+- **Firmware zu alt**: braucht 2.49.0-fx.1 oder neuer auf diesem Echo.
+- **Datei noch nicht da**: sie kommt mit dem nächsten Endpunkt-Update von
+  selbst; einmal warten oder das Gerät neu verbinden.
+- **FireOS**: dort geht AirPlay 2 gar nicht. Jede Sitzung öffnet zwei Ports,
+  deren Nummern erst zur Laufzeit feststehen, und FireOS blockt alles, was ihm
+  nicht vorher genannt wurde — die Verbindung kommt zustande und es bleibt
+  still. Auf emOS gibt es diese Sperre nicht.
+
+**Zurückschalten kostet nichts.** Der klassische Empfänger bleibt auf dem Gerät
+liegen — es sind zwei getrennte Dateien an zwei Pfaden, und der Schalter
+entscheidet nur, welche läuft. Kein erneutes Übertragen, kein Kabel. Bei etwas,
+das noch nie auf echter Hardware gelaufen ist, war genau das der Punkt.
+
+**Was du davon hast, wenn es läuft:** etwa eine halbe Sekunde Verzögerung statt
+etwa zwei, den Echo in der Home-App, und Gleichlauf mit anderen
+AirPlay-2-Lautsprechern.
+
+**Der Schalter sagt, welche Datei läuft — nie, was sie kann.** Das Gerät fragt
+die Datei weiterhin selbst und startet den Uhren-Daemon nur, wenn sie
+tatsächlich AirPlay 2 spricht. So können Einstellung und Wirklichkeit nicht
+auseinanderlaufen. Und ist die Datei noch nicht da, läuft der klassische
+Empfänger weiter, statt dass gar kein AirPlay mehr geht.
+
+**Noch nicht am Gerät verifiziert.** Es ist bis heute kein AirPlay-2-Empfänger
+auf einem Echo gestartet worden. Wenn es klemmt: Die Statuszeile des Geräts
+sagt, ob der Uhren-Daemon läuft und wie oft er neu starten musste.
+
 ## 2.51.0-fx.1
 
 ### AirPlay 2 kann ausprobiert werden — der Weg dorthin steht
