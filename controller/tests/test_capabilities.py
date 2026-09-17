@@ -485,3 +485,56 @@ def test_endpoint_restart_is_announced_not_assumed():
         "the device never answers an endpoint_restart"
     assert "restarted" in block, \
         "the answer does not say whether anything was actually restarted"
+
+
+def test_airplay2_selects_a_binary_and_is_off_at_both_ends():
+    """
+    `airplay2Enabled` picks WHICH RECEIVER runs — a second binary at a second
+    path — and never claims what that binary is. The firmware still asks the
+    file (`DetectFlavour`) and starts the clock daemon off that answer, which
+    is what keeps a setting and a file from contradicting each other.
+
+    Off at both ends, and this default is not caution about the code: AirPlay
+    2 has never run on this hardware, and under FireOS it cannot, because
+    every session binds two TCP ports the kernel picks at runtime and FireOS
+    drops what it was not told about in advance (#107). A device defaulting
+    on would switch a fleet that is mostly FireOS onto a receiver that
+    negotiates a session and then plays nothing.
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+
+    db = (root / "em_db.py").read_text()
+    assert '"airplay2Enabled":  False' in db, \
+        "the controller default is missing or not False"
+
+    cfg = (root.parent / "device" / "internal" / "config" / "config.go").read_text()
+    assert 'envBool("AIRPLAY2_ENABLED", false)' in cfg, \
+        "the device default is missing or not false"
+    # A pointer for the DuckDb reason: false has to be distinguishable from
+    # absent or the setting could never be turned back off.
+    assert "Airplay2Enabled *bool" in cfg, \
+        "a plain bool makes turning this OFF unreachable through a config push"
+
+    # Two receivers, two paths. One path would make a switch a 1.5MB transfer
+    # each way, and a rollback would need the link to be working — on a
+    # receiver nobody has ever run on this hardware.
+    ap2 = (root.parent / "device" / "internal" / "airplay" / "ap2.go").read_text()
+    assert 'AP2BinaryPath = "/data/local/bin/shairport-sync-ap2"' in ap2
+    api = (root.parent / "device" / "internal" / "airplay" / "airplay.go").read_text()
+    assert 'BinaryPath = "/data/local/bin/shairport-sync"' in api
+    import em_endpoint_bins as ebins
+    assert ebins.KINDS["airplay2"].dest == "/data/local/bin/shairport-sync-ap2"
+    assert ebins.KINDS["airplay"].dest == "/data/local/bin/shairport-sync"
+
+    # Gated on its OWN capability. Firmware that runs the classic receiver
+    # ignores the key and has one path, so offering it the setting would be a
+    # control that saves, says "pushed" and changes nothing — while the
+    # controller installed a binary somewhere nothing would ever exec it.
+    ctrl = (root.parent / "device" / "internal" / "client" / "control.go").read_text()
+    assert '"airplay2",' in ctrl, "the firmware does not announce the capability"
+    assert ebins.KINDS["airplay2"].capability == "airplay2"
+
+    jsx = (root / "static" / "dashboard.jsx").read_text()
+    assert "airplay2Enabled" in jsx, "no control for it in the dashboard"
+    assert "airplay2Capable" in jsx, "the control is not gated on the capability"

@@ -611,6 +611,18 @@ const staticHealthyDuration = 30 * time.Second
 // c.connectedCallback fires counts as "connected" yet), computed for real
 // only at the read loop's exit, the one place a healthy connection can
 // still end up back here.
+
+// airplay2Wanted is the SETTING, read fresh, so airplay_status describes the
+// receiver this device would actually run rather than a fixed path.
+//
+// Read here rather than kept in internal/airplay, because that package has no
+// business importing the config: it is handed what to do, the same way the
+// name and the volume handler reach it.
+func airplay2Wanted() bool {
+	snap := config.Get().Snapshot()
+	return snap.Airplay2Enabled != nil && *snap.Airplay2Enabled
+}
+
 func (c *ControlClient) connect(ctx context.Context, server *discovery.ServerInfo, data *DataClient) (bool, error) {
 	var connectedAt time.Time
 
@@ -691,7 +703,7 @@ func (c *ControlClient) connect(ctx context.Context, server *discovery.ServerInf
 		// is a missing file, nobody can tell that from a broken feature
 		// without a shell session on the user's own hardware.
 		"spotify_status": spotify.Report(),
-		"airplay_status": airplay.Report(),
+		"airplay_status": airplay.Report(airplay2Wanted()),
 		// Which userspace this firmware booted on — see internal/platform.
 		//
 		// On REGISTRATION and not the stats tick, which is where it was first
@@ -1351,6 +1363,21 @@ func capabilities() []string {
 		// firmware-versus-binary split as "spotify" — airplay_status on the
 		// register message says whether shairport-sync is actually here.
 		"airplay",
+		// "airplay2": this firmware can run the AirPlay 2 receiver, which is
+		// a SECOND binary at a second path selected by `airplay2Enabled`.
+		//
+		// Separate from "airplay" for the `oww_shadow`/`oww_trigger` reason,
+		// and it is the same trap: the receiver shipped first, so there is
+		// firmware in the field that runs AirPlay, ignores this key, and has
+		// only one path to run from. Offering that firmware the setting is a
+		// control that saves, says "pushed", and changes nothing — while the
+		// controller goes on to install an AirPlay 2 binary at a path nothing
+		// will ever exec, and reports that install as a success.
+		//
+		// It says nothing about whether the AirPlay 2 BINARY is here; that is
+		// `airplay_status.ap2`, for the same "could it" vs "is it" reason
+		// spotify_status exists at all.
+		"airplay2",
 		// "audio_state": this firmware reports which source owns its music
 		// plane, so the controller can know that the Echo is audible when
 		// nothing of ours is playing. Spotify Connect, AirPlay and Sendspin

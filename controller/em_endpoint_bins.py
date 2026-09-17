@@ -81,6 +81,15 @@ class Kind:
     The device already reports the nested answer (`airplay_status.nqptp`,
     from `describeFlavour`), so nothing new crosses the wire.
 
+    `status_fallback` says that the TOP LEVEL is this kind's answer on
+    firmware too old to send the nested block. True for the classic
+    receiver, which was the only receiver: older firmware reports one file
+    and reports it at the top, so refusing the fallback would show every
+    fielded device as "state unknown". False everywhere else, and that
+    asymmetry is the whole point — a fallback for a file that was never the
+    top level is how the clock daemon came to be reported as installed
+    because the receiver was.
+
     `in_release` says whether an `endpoints-v*` release publishes this kind,
     and it is NOT the same question as whether a device can be given one.
     Conflating them is what a third kind found: `select()` refuses a release
@@ -93,10 +102,12 @@ class Kind:
     """
 
     __slots__ = ("key", "filename", "dest", "capability", "status_attr",
-                 "label", "source", "config_key", "in_release", "status_sub")
+                 "label", "source", "config_key", "in_release", "status_sub",
+                 "status_fallback")
 
     def __init__(self, key, filename, dest, capability, status_attr, label,
-                 source, config_key, in_release=True, status_sub=None):
+                 source, config_key, in_release=True, status_sub=None,
+                 status_fallback=False):
         self.key         = key
         self.filename    = filename
         self.dest        = dest
@@ -107,6 +118,7 @@ class Kind:
         self.config_key  = config_key
         self.in_release  = in_release
         self.status_sub  = status_sub
+        self.status_fallback = status_fallback
 
 
 KINDS: dict[str, Kind] = {
@@ -129,6 +141,38 @@ KINDS: dict[str, Kind] = {
         label="AirPlay (shairport-sync)",
         source="device/shairport/build.sh",
         config_key="airplayEnabled",
+        # The device reports each receiver FILE separately now that there are
+        # two; the top level answers about whichever one it selected, which
+        # is not a question about this file. Firmware below v2.49.0-fx.1
+        # sends no nested block and has one receiver, so there the top level
+        # IS the answer — hence the fallback.
+        status_sub="classic",
+        status_fallback=True,
+    ),
+    # The AirPlay 2 receiver: a SECOND binary at a second path, selected by
+    # `airplay2Enabled`, never a mode of the first.
+    #
+    # **A second path rather than a second file at one path**, which is what
+    # the rule against two kinds sharing a destination was protecting. One
+    # file per protocol means switching between them is a setting rather than
+    # a 1.5MB transfer each way — and switching BACK costs nothing, which for
+    # a receiver nobody has run on this hardware is the property that matters.
+    #
+    # Its own capability, because the firmware that runs the classic receiver
+    # ignores the key and has only one path: offering the setting there would
+    # be a control that saves, says "pushed", and changes nothing, while the
+    # controller installed a binary at a path nothing would ever exec and
+    # called it a success.
+    "airplay2": Kind(
+        key="airplay2",
+        filename="shairport-sync-ap2",
+        dest="/data/local/bin/shairport-sync-ap2",
+        capability="airplay2",
+        status_attr="airplay_status",
+        status_sub="ap2",
+        label="AirPlay 2 receiver (shairport-sync)",
+        source="device/shairport/build-ap2.sh",
+        config_key="airplay2Enabled",
     ),
     # AirPlay 2's clock daemon. A second PROCESS, which is what makes it a
     # kind of its own rather than something the airplay upload could carry:
@@ -156,20 +200,12 @@ KINDS: dict[str, Kind] = {
         key="nqptp",
         filename="nqptp",
         dest="/data/local/bin/nqptp",
-        capability="airplay",
+        capability="airplay2",
         status_attr="airplay_status",
         label="AirPlay 2 clock (nqptp)",
         source="device/shairport/build-ap2.sh",
-        config_key="airplayEnabled",
+        config_key="airplay2Enabled",
         status_sub="nqptp",
-        # No endpoints-v* release carries nqptp yet — the workflow that builds
-        # it landed with this kind. Until one does it arrives by upload, from
-        # the `endpoint-binaries` artifact. Flip this in the same change that
-        # first publishes the asset, not before: `select()` refuses a release
-        # missing any expected asset, so an early True makes every existing
-        # release unusable and stops the automatic fetch for librespot and
-        # shairport-sync as well.
-        in_release=False,
     ),
 }
 
@@ -312,6 +348,24 @@ STATUS_REASONS = {
 }
 
 
+def _reports_one_receiver(status) -> bool:
+    """
+    Whether this status came from firmware that knows only one receiver.
+
+    Decided on the SHAPE of what arrived rather than on a version string,
+    which is the negotiation rule: a firmware that reports its files
+    separately says so by sending the blocks. Absence of `classic` in a
+    status that has an answer at the top means nobody has split them yet.
+
+    A status with nothing in it at all is not evidence either way, and must
+    not be: that is an offline device or one that has not spoken, and the
+    caller turns it into "unknown" rather than into a claim about a file.
+    """
+    if not isinstance(status, dict):
+        return False
+    return "classic" not in status and status.get("ok") is not None
+
+
 def device_state(k: Kind, live, db_path: str | None = None) -> dict:
     """
     What a device has, what the store has, and whether an install is needed.
@@ -343,8 +397,15 @@ def device_state(k: Kind, live, db_path: str | None = None) -> dict:
     have   = stored(k, db_path)
     parent = (getattr(live, k.status_attr, None) if live is not None else None)
     # A sub-kind answers from its own nested block and never from the
-    # parent's `ok`, which belongs to a different file at a different path.
-    st = (parent or {}).get(k.status_sub) if k.status_sub else parent
+    # parent's `ok`, which belongs to a different file at a different path —
+    # unless this kind IS what the top level used to mean. Firmware with one
+    # receiver reports it at the top and sends no nested block, and reading
+    # that as "no answer" would show every fielded device as state unknown.
+    st = parent
+    if k.status_sub:
+        st = (parent or {}).get(k.status_sub)
+        if st is None and k.status_fallback and _reports_one_receiver(parent):
+            st = parent
 
     if live is None:
         status = "unknown"

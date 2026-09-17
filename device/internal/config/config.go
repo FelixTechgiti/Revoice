@@ -166,6 +166,23 @@ type Device struct {
 	// appearing in the AirPlay list. Default OFF, and like Spotify it needs
 	// a binary this firmware does not contain.
 	AirplayEnabled *bool
+	// Airplay2Enabled selects the AIRPLAY 2 RECEIVER, which is a second
+	// binary at a second path rather than a different mode of the first.
+	//
+	// **It says which FILE to run, never what that file is.** The firmware
+	// still asks the binary whether it speaks AirPlay 2 (`DetectFlavour`) and
+	// starts the clock daemon off that answer, so the setting and the file
+	// cannot contradict each other — which is exactly what a key meaning
+	// "this device speaks AirPlay 2" could do, and why there is still no such
+	// key.
+	//
+	// Default OFF. AirPlay 2 has never been run on this hardware, and on
+	// FireOS it cannot work at all: every session binds two extra TCP ports
+	// the kernel picks at runtime, which no firewall rule can name.
+	//
+	// A pointer for AirplayVolumeControl's reason: false has to be
+	// distinguishable from absent, or the setting could never be turned off.
+	Airplay2Enabled *bool
 	// AirplayName is what the receiver is called in the AirPlay list, pushed
 	// by the controller for SpotifyName's reason.
 	AirplayName string
@@ -269,6 +286,8 @@ func (d *Device) loadDefaults() {
 	d.SpotifyName = envStr("SPOTIFY_NAME", "")
 	airplayEnabled := envBool("AIRPLAY_ENABLED", false)
 	d.AirplayEnabled = &airplayEnabled
+	airplay2Enabled := envBool("AIRPLAY2_ENABLED", false)
+	d.Airplay2Enabled = &airplay2Enabled
 	d.AirplayName = envStr("AIRPLAY_NAME", "")
 	airplayVolumeControl := envBool("AIRPLAY_VOLUME_CONTROL", false)
 	d.AirplayVolumeControl = &airplayVolumeControl
@@ -387,6 +406,9 @@ func (d *Device) Apply(msg ConfigMessage) {
 	if msg.SpotifyName != "" {
 		d.SpotifyName = msg.SpotifyName
 	}
+	if msg.Airplay2Enabled != nil {
+		d.Airplay2Enabled = msg.Airplay2Enabled
+	}
 	if msg.AirplayEnabled != nil {
 		d.AirplayEnabled = msg.AirplayEnabled
 	}
@@ -478,6 +500,10 @@ func (d *Device) Snapshot() ConfigMessage {
 	if d.SpotifyEnabled != nil {
 		spotifyEnabled = *d.SpotifyEnabled
 	}
+	airplay2Enabled := false
+	if d.Airplay2Enabled != nil {
+		airplay2Enabled = *d.Airplay2Enabled
+	}
 	airplayEnabled := false
 	if d.AirplayEnabled != nil {
 		airplayEnabled = *d.AirplayEnabled
@@ -522,6 +548,7 @@ func (d *Device) Snapshot() ConfigMessage {
 		SpotifyEnabled:     &spotifyEnabled,
 		SpotifyName:        d.SpotifyName,
 		AirplayEnabled:     &airplayEnabled,
+		Airplay2Enabled:    &airplay2Enabled,
 		AirplayName:        d.AirplayName,
 		// Absent here for the whole life of the feature, which is why it
 		// never worked on any device: Apply stored it, Snapshot dropped it,
@@ -598,6 +625,7 @@ type ConfigMessage struct {
 	SpotifyEnabled     *bool     `json:"spotifyEnabled,omitempty"`
 	SpotifyName        string    `json:"spotifyName,omitempty"`
 	AirplayEnabled     *bool     `json:"airplayEnabled,omitempty"`
+	Airplay2Enabled    *bool     `json:"airplay2Enabled,omitempty"`
 	AirplayName        string    `json:"airplayName,omitempty"`
 	// Pointer, no omitempty: false is a meaningful value here and a plain
 	// bool would make "turn it off" indistinguishable from "not mentioned".

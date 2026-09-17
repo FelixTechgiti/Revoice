@@ -7708,6 +7708,7 @@ def _merge_device(row) -> dict:
         "spotifyCapable": getattr(live, "spotify_capable", False) if live else False,
         "spotifyStatus":  getattr(live, "spotify_status", None) if live else None,
         "airplayCapable": getattr(live, "airplay_capable", False) if live else False,
+        "airplay2Capable": getattr(live, "airplay2_capable", False) if live else False,
         "airplayStatus":  getattr(live, "airplay_status", None) if live else None,
         # Whether the device found its ambient light sensor. Reported so the
         # dashboard can tell "no sensor" apart from "sensor present, no reading

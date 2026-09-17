@@ -186,10 +186,11 @@ type Nqptp struct {
 // ErrNoNqptp means the clock daemon is not installed.
 var ErrNoNqptp = errors.New("airplay: nqptp is not installed on this device")
 
-// NqptpAvailable reports whether the daemon is present and executable, with
-// the same three-way answer Report() gives for shairport-sync: a missing file
-// and a broken feature must not look alike.
-func NqptpAvailable(path string) (bool, string) {
+// FileRunnable reports whether a path is a file this device could exec, with
+// a three-way answer rather than a bool: a missing file and a broken one want
+// different things said, and the whole point of the endpoint status reporting
+// is that "not installed" and "installed and unusable" must not look alike.
+func FileRunnable(path string) (bool, string) {
 	info, err := os.Stat(path)
 	switch {
 	case err != nil:
@@ -201,6 +202,75 @@ func NqptpAvailable(path string) (bool, string) {
 	default:
 		return true, "ok"
 	}
+}
+
+// NqptpAvailable reports whether the daemon is present and executable, with
+// the same three-way answer Report() gives for shairport-sync: a missing file
+// and a broken feature must not look alike.
+func NqptpAvailable(path string) (bool, string) { return FileRunnable(path) }
+
+// AP2BinaryPath is where the controller installs the AirPlay 2 receiver.
+//
+// **A SECOND path, not a replacement for the first, and that is the whole
+// design.** One file per protocol means the device can be switched between
+// them by a setting rather than by re-pushing 1.5MB over a link measured at
+// 5-7% packet loss — and switched BACK the same way, which for an
+// implementation nobody has ever run on this hardware is the property that
+// matters most. It also keeps the store's rule intact: one kind per
+// destination, so nothing has to guess which of two files at one path is the
+// one somebody meant.
+//
+// The cost is ~1.5MB of /data holding a receiver that is not running. Against
+// a rollback that needs no transfer at all, on a device whose only management
+// path is the network, that is not a close call.
+const AP2BinaryPath = "/data/local/bin/shairport-sync-ap2"
+
+// SelectedName says which receiver a setting asks for, for a log line. It
+// describes the REQUEST, not what is installed — ResolveBinary answers that,
+// and the two differ exactly while an install is outstanding.
+func SelectedName(preferAP2 bool) string {
+	if preferAP2 {
+		return "AirPlay 2 (" + AP2BinaryPath + ")"
+	}
+	return "classic (" + BinaryPath + ")"
+}
+
+// BinaryChoice is which receiver this device will run, and why.
+//
+// The reason travels because every branch here is a state somebody has to
+// diagnose from a dashboard: "asked for AirPlay 2 and the file is not there"
+// and "did not ask for AirPlay 2" are the same running binary and completely
+// different situations, and only one of them is somebody waiting for an
+// install that never happened.
+type BinaryChoice struct {
+	Path     string
+	AirPlay2 bool
+	Reason   string
+}
+
+// ResolveBinary picks the receiver to run.
+//
+// **The setting selects WHICH FILE; the file still answers WHAT IT IS.** That
+// division is what keeps this from being the toggle this package has always
+// refused: nothing here claims a binary speaks AirPlay 2 — `DetectFlavour`
+// asks the binary that, on whichever path this returns, and the clock daemon
+// is started off that answer. So the two cannot disagree. A setting that said
+// "this device speaks AirPlay 2" could.
+//
+// Falling back to classic when the AirPlay 2 file is absent is the
+// compatibility rule rather than politeness: the alternative is a device that
+// asked for AirPlay 2, has not been given it yet, and serves no AirPlay at
+// all in the meantime — degrading to no behaviour instead of to the old one.
+func ResolveBinary(classic, ap2 string, preferAP2 bool) BinaryChoice {
+	if !preferAP2 {
+		return BinaryChoice{Path: classic, Reason: "classic (AirPlay 2 not enabled)"}
+	}
+	ok, why := FileRunnable(ap2)
+	if ok {
+		return BinaryChoice{Path: ap2, AirPlay2: true, Reason: "airplay2"}
+	}
+	return BinaryChoice{Path: classic,
+		Reason: "classic — AirPlay 2 is enabled but " + ap2 + " is " + why}
 }
 
 // Start brings the daemon up. Idempotent.

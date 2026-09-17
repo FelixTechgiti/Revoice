@@ -97,7 +97,7 @@ func TestAMissingBinaryIsReportedNotIgnored(t *testing.T) {
 }
 
 func TestReportDistinguishesTheFaults(t *testing.T) {
-	rep := Report()
+	rep := Report(false)
 	if rep["binary"] != BinaryPath {
 		t.Fatalf("report does not name the path: %v", rep)
 	}
@@ -106,6 +106,66 @@ func TestReportDistinguishesTheFaults(t *testing.T) {
 	}
 	if rep["reason"] != "not_installed" {
 		t.Fatalf("reason = %v, want not_installed", rep["reason"])
+	}
+}
+
+// Each FILE has to answer for itself, because the controller has a kind per
+// file and the top level answers only about whichever one was selected.
+// Reading one file's state off a report about the other is how a device with
+// a classic receiver was told its AirPlay 2 clock was already installed.
+func TestReportAnswersForBothReceiversSeparately(t *testing.T) {
+	rep := Report(false)
+	for _, key := range []string{"classic", "ap2"} {
+		sub, ok := rep[key].(map[string]any)
+		if !ok {
+			t.Fatalf("%s is missing from the report: %v", key, rep)
+		}
+		if sub["binary"] == rep["binary"] && key == "ap2" {
+			t.Errorf("ap2 names the classic path: %v", sub)
+		}
+		if sub["ok"] == nil {
+			t.Errorf("%s says nothing about whether the file is there: %v", key, sub)
+		}
+	}
+	if rep["selected"] == nil {
+		t.Error("the report does not say WHICH receiver was selected, or why")
+	}
+}
+
+// A device asked for AirPlay 2 that has not been given the binary keeps
+// serving classic AirPlay. Degrading to the old behaviour rather than to
+// none is the compatibility rule; refusing would trade a degraded feature
+// for no feature, on a setting whose file arrives separately.
+func TestAskingForAirPlay2WithoutTheBinaryFallsBackToClassic(t *testing.T) {
+	dir := t.TempDir()
+	classic := filepath.Join(dir, "shairport-sync")
+	if err := os.WriteFile(classic, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "shairport-sync-ap2")
+
+	got := ResolveBinary(classic, missing, true)
+	if got.Path != classic {
+		t.Errorf("Path = %q, want the classic receiver", got.Path)
+	}
+	if got.AirPlay2 {
+		t.Error("AirPlay2 is true for a file that is not there")
+	}
+	if !strings.Contains(got.Reason, "not_installed") {
+		t.Errorf("Reason = %q, want it to say the file is missing", got.Reason)
+	}
+
+	// And once it arrives, without anything else changing.
+	if err := os.WriteFile(missing, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveBinary(classic, missing, true); !got.AirPlay2 || got.Path != missing {
+		t.Errorf("after the install: %+v, want the AirPlay 2 receiver", got)
+	}
+
+	// The setting is what selects it: the same two files, off, is classic.
+	if got := ResolveBinary(classic, missing, false); got.AirPlay2 {
+		t.Errorf("AirPlay 2 ran without being asked for: %+v", got)
 	}
 }
 

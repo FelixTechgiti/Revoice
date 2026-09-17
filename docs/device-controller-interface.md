@@ -63,8 +63,10 @@ Direkt nach dem Öffnen des `/control`-Sockets sendet das Gerät eine einzelne
 }
 ```
 
-`capabilities` ist das Aushandlungssignal. Der Dot kündigt sechzehn
-bedingungslos an, dazu eine bedingte (`capabilities()` in `control.go`):
+`capabilities` ist das Aushandlungssignal. Der Dot kündigt die folgenden
+bedingungslos an, dazu eine bedingte (`capabilities()` in `control.go`) — die
+Liste hier zählt sie bewusst nicht, weil eine Zahl in Prosa veraltet, ohne dass
+etwas rot wird:
 
 | Fähigkeit | Bedingung | Bedeutung |
 |------------|-----------|---------|
@@ -83,6 +85,7 @@ bedingungslos an, dazu eine bedingte (`capabilities()` in `control.go`):
 | `sendspin` | immer | Kann einer Music-Assistant-Gruppe direkt beitreten, ohne Umweg über den Controller |
 | `spotify` | immer | Kann einen Spotify-Connect-Endpunkt betreiben. Ob das librespot-Binary installiert ist, sagt `spotify_status`, siehe unten |
 | `airplay` | immer | Kann einen AirPlay-Empfänger betreiben. Ob shairport-sync installiert ist, sagt `airplay_status`, siehe unten |
+| `airplay2` | immer | Kann den **AirPlay-2-Empfänger** betreiben — ein zweites Binary an einem zweiten Pfad, ausgewählt durch `airplay2Enabled`. Getrennt von `airplay`, weil der klassische Empfänger zuerst ausgeliefert wurde: Firmware im Feld betreibt AirPlay, ignoriert den Schlüssel und hat nur einen Pfad. Ob die Datei da ist, sagt `airplay_status.ap2` |
 | `audio_state` | immer | Meldet, welche Quelle seine Musikebene besitzt (`audio_source`, siehe unten) |
 | `ambient_light` | nur wenn der Sensor tatsächlich lesbar ist (`als.Present()`) | Meldet Lichtwerte |
 

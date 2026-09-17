@@ -20,6 +20,7 @@ import re
 
 import pytest
 
+import em_endpoint_bins as bins
 import em_endpoint_release
 
 CONTROLLER = pathlib.Path(__file__).resolve().parents[1]
@@ -81,7 +82,8 @@ def test_the_endpoints_release_is_found_behind_ten_firmware_releases():
     # The exact shape of the live failure: position 12 of the list.
     releases = [_release(f"v2.{n}.0-fx.1") for n in range(27, 16, -1)]
     releases.append(_release("endpoints-v1.1.0",
-                             ("librespot", "shairport-sync")))
+                             tuple(k.filename for k in bins.KINDS.values()
+                                   if k.in_release)))
     picked = em_endpoint_release.select(releases)
     assert picked is not None, (
         "the selector reads the whole list; it was the PAGE that was short")
@@ -93,5 +95,6 @@ def test_a_ten_item_page_is_exactly_what_hid_it():
     # which is what the controller saw.
     releases = [_release(f"v2.{n}.0-fx.1") for n in range(27, 16, -1)]
     releases.append(_release("endpoints-v1.1.0",
-                             ("librespot", "shairport-sync")))
+                             tuple(k.filename for k in bins.KINDS.values()
+                                   if k.in_release)))
     assert em_endpoint_release.select(releases[:10]) is None

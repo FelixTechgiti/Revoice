@@ -57,32 +57,72 @@ def test_nqptp_dest_matches_the_device_constant():
     assert ebins.KINDS["nqptp"].dest == m.group(1)
 
 
-def test_nqptp_is_installable_but_not_expected_in_a_release():
-    """Installable and published are different facts.
+def test_every_kind_is_published_so_none_is_hand_installed():
+    """The whole point of the release: nothing needs downloading by hand.
 
     `select()` refuses a release that carries some expected assets and not
-    others — deliberately, so half a publish is never half adopted. So a kind
-    no release has ever carried must not be listed as one a release should
-    have, or every existing release becomes unusable and the automatic fetch
-    stops for librespot and shairport-sync too. That is not a hypothetical:
-    it is what adding this kind did before the flag existed.
+    others — deliberately, so half a publish is never half adopted. That cuts
+    both ways: a kind flagged for release before any release carries it makes
+    every existing release unusable, and a kind NOT flagged can only ever
+    reach a device through somebody uploading a file. The flag and the
+    workflow have to move together, which is why the workflow is pinned
+    against this list below.
     """
-    assert ebins.KINDS["nqptp"].in_release is False
-    assert ebins.KINDS["spotify"].in_release is True
-    assert ebins.KINDS["airplay"].in_release is True
+    for key, k in ebins.KINDS.items():
+        assert k.in_release is True, f"{key} could only be installed by hand"
 
 
-def test_nqptp_rides_on_the_airplay_toggle():
+def test_the_release_workflow_publishes_every_kind():
+    """A flag saying a release carries this asset, and a workflow that does.
+
+    These are two files that have to agree and nothing makes them: flipping
+    `in_release` without teaching the workflow to publish the file is a
+    controller that refuses every release from then on, and the symptom is
+    the automatic fetch going quiet for the endpoints that were working.
+    """
+    wf = (REPO / ".github/workflows/endpoint-release.yml").read_text()
+    for key, k in ebins.KINDS.items():
+        if not k.in_release:
+            continue
+        assert f"/out/{k.filename}" in wf, \
+            f"endpoint-release.yml does not publish {k.filename}"
+
+
+def test_nqptp_rides_on_the_airplay_2_toggle():
     """It is AirPlay 2's second process, not an endpoint of its own.
 
-    Sharing the toggle is what makes a device that turns AirPlay on end up
-    with both halves. A device running a CLASSIC shairport-sync gets an
-    unused copy, which `PlanNqptp` never starts — inert, and tens of
-    kilobytes against librespot's twenty megabytes.
+    It rode `airplayEnabled` while AirPlay 2 was something you installed by
+    hand — every device with AirPlay on got an inert copy. With a receiver
+    of its own there is a toggle that means exactly "this device runs AirPlay
+    2", and both halves belong to it: pushing a clock daemon to a device that
+    will never start one is spending a lossy link on nothing.
     """
-    ap, nq = ebins.KINDS["airplay"], ebins.KINDS["nqptp"]
+    ap2, nq = ebins.KINDS["airplay2"], ebins.KINDS["nqptp"]
     assert (nq.config_key, nq.capability, nq.status_attr) == (
-        ap.config_key, ap.capability, ap.status_attr)
+        ap2.config_key, ap2.capability, ap2.status_attr)
+    assert nq.config_key == "airplay2Enabled"
+
+
+def test_the_two_receivers_are_separate_files_at_separate_paths():
+    """One file per protocol, so switching is a setting and not a transfer.
+
+    The rule the dest check below protects is that a destination has exactly
+    one kind — what it forbids is two files fighting over one path, not two
+    receivers. Sharing a path would mean a switch costs 1.5MB each way, and
+    a rollback from a receiver that has never run on this hardware would
+    need the link to be working.
+    """
+    ap, ap2 = ebins.KINDS["airplay"], ebins.KINDS["airplay2"]
+    assert ap.dest != ap2.dest
+    assert ap.capability != ap2.capability
+    assert ap.config_key != ap2.config_key
+    # Both read their own file out of the one status object the device sends.
+    assert ap.status_sub == "classic" and ap2.status_sub == "ap2"
+    # And only the classic one may fall back to the top level: it is what the
+    # top level meant on firmware that had a single receiver.
+    assert ap.status_fallback is True
+    assert ap2.status_fallback is False
+    assert ebins.KINDS["nqptp"].status_fallback is False
 
 
 def test_no_two_kinds_install_to_the_same_place():
@@ -481,7 +521,7 @@ def test_nqptp_is_not_reported_installed_because_shairport_is(store):
     # dashboard saying the clock daemon is installed, and the user never
     # pushing the file that AirPlay 2 cannot synchronise without.
     k = ebins.KINDS["nqptp"]
-    live = FakeDevice(["airplay"],
+    live = FakeDevice(["airplay", "airplay2"],
                       airplay_status={"ok": True, "size": 516000,
                                       "flavour": "classic"})
     st = ebins.device_state(k, live)
@@ -490,7 +530,7 @@ def test_nqptp_is_not_reported_installed_because_shairport_is(store):
 
 def test_nqptp_reads_its_own_nested_block(store):
     k = ebins.KINDS["nqptp"]
-    live = FakeDevice(["airplay"], airplay_status={
+    live = FakeDevice(["airplay", "airplay2"], airplay_status={
         "ok": True, "size": 1400000, "flavour": "airplay2", "shm_version": 10,
         "nqptp": {"ok": False, "reason": "not_installed",
                   "binary": "/data/local/bin/nqptp"},
@@ -503,6 +543,57 @@ def test_nqptp_reads_its_own_nested_block(store):
     assert ebins.device_state(k, live)["status"] == "installed"
 
 
+def test_old_firmware_still_reports_its_one_receiver(store):
+    """The fallback, and the reason it is only the classic receiver's.
+
+    Firmware below the split reports one file, at the top, with no nested
+    blocks. Reading that as "this kind has not answered" would show every
+    device in the fleet as state unknown for the receiver they are actually
+    running — a regression delivered by a controller update, to devices that
+    did not change at all.
+    """
+    live = FakeDevice(["airplay"],
+                      airplay_status={"ok": True, "size": 516000,
+                                      "flavour": "classic",
+                                      "binary": "/data/local/bin/shairport-sync"})
+    assert ebins.device_state(ebins.KINDS["airplay"], live)["status"] == "installed"
+
+    # And the same absence must NOT answer for a file that was never the top
+    # level — which is the bug the fallback would reintroduce if it applied
+    # to every kind.
+    live2 = FakeDevice(["airplay", "airplay2"],
+                       airplay_status={"ok": True, "size": 516000,
+                                       "flavour": "classic"})
+    for key in ("airplay2", "nqptp"):
+        assert ebins.device_state(ebins.KINDS[key], live2)["status"] != "installed"
+
+
+def test_new_firmware_answers_per_receiver(store):
+    """Two files, two answers, and the top level is neither of them.
+
+    The device selected one and the top level describes it; each kind reads
+    its own block. A device running AirPlay 2 still has a classic binary on
+    disk and the dashboard should say so, because that is what a rollback
+    lands on.
+    """
+    live = FakeDevice(["airplay", "airplay2"], airplay_status={
+        "binary": "/data/local/bin/shairport-sync-ap2",
+        "selected": "airplay2", "ok": True, "size": 1400000,
+        "flavour": "airplay2", "shm_version": 10,
+        "classic": {"ok": True, "size": 516000},
+        "ap2": {"ok": True, "size": 1400000},
+        "nqptp": {"ok": True, "reason": "ok"},
+    })
+    for key in ("airplay", "airplay2", "nqptp"):
+        assert ebins.device_state(ebins.KINDS[key], live)["status"] == "installed"
+
+    # The classic file removed, AirPlay 2 running: one installed, one missing,
+    # and the top level says nothing about which is which.
+    live.airplay_status["classic"] = {"ok": False, "reason": "not_installed"}
+    assert ebins.device_state(ebins.KINDS["airplay"], live)["status"] == "missing"
+    assert ebins.device_state(ebins.KINDS["airplay2"], live)["status"] == "installed"
+
+
 def test_nqptp_stays_installable_before_the_device_has_said(store):
     # An install does not refresh the receiver's register-time flavour, so a
     # device that has just been given the AirPlay 2 binary still reports the
@@ -513,7 +604,7 @@ def test_nqptp_stays_installable_before_the_device_has_said(store):
     _put(store, k, b"x" * 32)
     for status in ({"ok": True, "size": 900, "flavour": "classic"},
                    {"ok": False, "reason": "not_installed"}):
-        live = FakeDevice(["airplay"], airplay_status=status)
+        live = FakeDevice(["airplay", "airplay2"], airplay_status=status)
         assert ebins.device_state(k, live)["installable"] is True
 
     # Offline and unsupported are still refusals: there is no device to send
@@ -541,7 +632,7 @@ def test_installing_nqptp_does_not_overwrite_the_receivers_status(store):
 
 
 def test_merged_status_replaces_outright_for_an_ordinary_kind(store):
-    k = ebins.KINDS["airplay"]
+    k = ebins.KINDS["spotify"]
     assert ebins.merged_status({"ok": False}, k, {"ok": True, "size": 9}) == \
         {"ok": True, "size": 9}
     # An unreadable stat leaves the previous answer alone — the rule

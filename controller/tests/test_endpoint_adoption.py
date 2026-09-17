@@ -17,6 +17,7 @@ reason this exists: a hand-built librespot beside a shairport-sync that is
 byte-identical to endpoints-v1.0.0's.
 """
 
+import em_endpoint_bins as bins
 import em_endpoint_release as r
 
 V100, V110 = "endpoints-v1.0.0", "endpoints-v1.1.0"
@@ -27,6 +28,16 @@ SHA_SHAIRPORT_100 = "11111111111111111111111111111111111111111111111111111111111
 SHA_LIBRESPOT_110 = "2ef2536a99b3374ed21dab83f3312e8901b81691d9d1021703c8fca71e0d51f5"
 
 
+# Every other published kind, with a digest that does not move between
+# releases. A release has to be COMPLETE or `select()` refuses it outright,
+# and these tests are about adoption rather than about that rule — so the
+# extras are present, identical in both releases, and therefore never the
+# thing that needs fetching.
+OTHER_KINDS = {k.key: k.filename for k in bins.KINDS.values()
+               if k.in_release and k.key not in ("spotify", "airplay")}
+SHA_OTHER = {key: f"{i:064x}" for i, key in enumerate(sorted(OTHER_KINDS), 1)}
+
+
 def _release(tag, shairport_sha, librespot_sha, **kw):
     def asset(name, sha):
         a = {"name": name, "browser_download_url": f"https://x/{tag}/{name}",
@@ -34,9 +45,15 @@ def _release(tag, shairport_sha, librespot_sha, **kw):
         if sha:
             a["digest"] = f"sha256:{sha}"
         return a
+    # The extras lose their digests along with the other two, so "an asset
+    # with no digest can adopt nothing" stays a statement about the whole
+    # release rather than about half of it.
+    blank = librespot_sha is None and shairport_sha is None
+    extra = [asset(fn, None if blank else SHA_OTHER[key])
+             for key, fn in OTHER_KINDS.items()]
     return {"tag_name": tag, "draft": False, "prerelease": False,
             "assets": [asset("librespot", librespot_sha),
-                       asset("shairport-sync", shairport_sha)], **kw}
+                       asset("shairport-sync", shairport_sha)] + extra, **kw}
 
 
 RELEASES = [                              # newest first, as GitHub returns
@@ -50,7 +67,23 @@ LIVE_STORE = {
                 "sha256": "ffff" * 16},          # matches no release
     "airplay": {"md5": "127028c5b6b904e041c39ab04f43a976",
                 "sha256": SHA_SHAIRPORT_100},    # endpoints-v1.0.0 exactly
+    # Current and ours, so they are never what a fetch is about here.
+    **{key: {"md5": f"md5-{key}", "sha256": sha}
+       for key, sha in SHA_OTHER.items()},
 }
+
+
+def _with_others(store):
+    """`store` plus the other published kinds, current and ours.
+
+    These tests isolate one question each; the extra kinds are here so a
+    release stays complete and are never the answer. Written as a helper so
+    a fifth kind does not read as five new failures.
+    """
+    out = {key: {"md5": f"md5-{key}", "sha256": sha}
+           for key, sha in SHA_OTHER.items()}
+    out.update(store)
+    return out
 
 
 def test_the_index_maps_every_release_not_only_the_newest():
@@ -100,8 +133,8 @@ def test_only_the_recognised_kind_is_fetched():
 
 
 def test_nothing_is_fetched_when_the_newest_is_already_stored():
-    store = {"spotify": {"md5": "x", "sha256": SHA_LIBRESPOT_110},
-             "airplay": {"md5": "y", "sha256": SHA_SHAIRPORT_110}}
+    store = _with_others({"spotify": {"md5": "x", "sha256": SHA_LIBRESPOT_110},
+                          "airplay": {"md5": "y", "sha256": SHA_SHAIRPORT_110}})
     assert r.needs_fetch(V110, {}, store, r.digest_index(RELEASES)) == []
 
 
@@ -116,8 +149,8 @@ def test_a_store_with_no_sha256_adopts_nothing():
     # A scan written by a controller before sha256 was recorded. Both kinds
     # are present so this isolates the missing hash — an ABSENT kind is a
     # different case and is correctly fetched.
-    store = {"spotify": {"md5": "81d4f316600572df2d52f42d9e33ad60"},
-             "airplay": {"md5": "127028c5b6b904e041c39ab04f43a976"}}
+    store = _with_others({"spotify": {"md5": "81d4f316600572df2d52f42d9e33ad60"},
+                          "airplay": {"md5": "127028c5b6b904e041c39ab04f43a976"}})
     idx = r.digest_index(RELEASES)
     assert r.adopted_tag(idx, store, "airplay") is None
     assert r.needs_fetch(V110, {}, store, idx) == []
@@ -126,7 +159,7 @@ def test_a_store_with_no_sha256_adopts_nothing():
 def test_a_kind_missing_from_the_store_is_still_fetched():
     # Unrelated to adoption, and the one case where "nothing to lose" makes
     # the fetch unconditional.
-    store = {"airplay": {"md5": "y", "sha256": SHA_SHAIRPORT_110}}
+    store = _with_others({"airplay": {"md5": "y", "sha256": SHA_SHAIRPORT_110}})
     assert r.needs_fetch(V110, {}, store, r.digest_index(RELEASES)) == ["spotify"]
 
 

@@ -204,13 +204,20 @@ type Client struct {
 	// metaStop closes the metadata reader. Non-nil exactly while one runs,
 	// which is what syncMetadataReader reconciles against.
 	metaStop chan struct{}
+
+	// preferAP2 is the user's setting, not a claim about any file. The path
+	// it selects is resolved per SESSION rather than held, so turning the
+	// setting on and restarting is the whole of a switch — see binary().
+	preferAP2 bool
 }
 
 // New wires a client. It starts nothing.
 func New(opts Options, sink MusicSink, plane PlaneOwner) *Client {
-	if opts.Binary == "" {
-		opts.Binary = BinaryPath
-	}
+	// opts.Binary is deliberately NOT defaulted here any more. It is the test
+	// override, and resolving the real path at construction would freeze the
+	// choice for the life of the process — so turning AirPlay 2 on would save,
+	// report success and go on running the classic receiver until a reboot,
+	// which is the failure this codebase names most often.
 	if opts.SourceRate == 0 {
 		opts.SourceRate = SourceRate
 	}
@@ -220,15 +227,50 @@ func New(opts Options, sink MusicSink, plane PlaneOwner) *Client {
 	return &Client{opts: opts, sink: sink, plane: plane}
 }
 
-// Available reports whether shairport-sync is installed, and why not when it
-// is not.
+// binary is the receiver this client would exec right now.
+//
+// Resolved on every call rather than stored, because the two inputs both
+// change under a running firmware: the setting arrives on a config push, and
+// the file arrives from an install. A value captured at either moment is one
+// that can be wrong by the time it is used.
+func (c *Client) binary() string {
+	if c.opts.Binary != "" {
+		return c.opts.Binary
+	}
+	c.mu.Lock()
+	prefer := c.preferAP2
+	c.mu.Unlock()
+	return ResolveBinary(BinaryPath, AP2BinaryPath, prefer).Path
+}
+
+// SetPreferAirPlay2 records the setting and reports whether it CHANGED.
+//
+// The caller restarts the receiver on a change and must not restart on
+// anything else: the config push repeats every setting on every reconnect,
+// and a receiver that restarted each time would drop whatever was playing
+// once per reconnect on a fleet that reconnects often.
+func (c *Client) SetPreferAirPlay2(prefer bool) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.preferAP2 == prefer {
+		return false
+	}
+	c.preferAP2 = prefer
+	return true
+}
+
+// Available reports whether a receiver is installed, and why not when it is
+// not. Asked of the binary this client would actually run — a device set to
+// AirPlay 2 with only the classic file present is available, on the classic
+// file, which is what ResolveBinary falls back to.
 func (c *Client) Available() (bool, error) {
-	info, err := os.Stat(c.opts.Binary)
+	path := c.binary()
+	info, err := os.Stat(path)
 	if err != nil {
-		return false, fmt.Errorf("%w (%s)", ErrNoBinary, c.opts.Binary)
+		return false, fmt.Errorf("%w (%s)", ErrNoBinary, path)
 	}
 	if info.IsDir() || info.Mode()&0o111 == 0 {
-		return false, fmt.Errorf("%s exists but is not executable", c.opts.Binary)
+		return false, fmt.Errorf("%s exists but is not executable", path)
 	}
 	return true, nil
 }
@@ -238,9 +280,33 @@ func (c *Client) Available() (bool, error) {
 // reason: a capability says what the FIRMWARE can do, and when the answer to
 // "why is this off" is a missing file, nobody can tell that from a broken
 // feature without a shell session on the user's own hardware.
-func Report() map[string]any {
-	rep := map[string]any{"binary": BinaryPath}
-	info, err := os.Stat(BinaryPath)
+func Report(preferAP2 bool) map[string]any {
+	choice := ResolveBinary(BinaryPath, AP2BinaryPath, preferAP2)
+
+	rep := map[string]any{"binary": choice.Path, "selected": choice.Reason}
+	fileReport(rep, choice.Path)
+	if rep["ok"] == true {
+		describeFlavour(rep, choice.Path)
+	}
+
+	// Each FILE reports separately, because the top level now answers about
+	// whichever one was selected and the controller has a kind per file.
+	// Reading "the receiver is installed" off a report about the other file is
+	// the mistake that told users nqptp was already there, and two receivers
+	// at two paths make it available twice over.
+	//
+	// `classic` duplicates the top level on a device set to classic, and that
+	// is the point: a consumer that wants a specific file must never have to
+	// work out whether the top level happens to be about it today.
+	rep["classic"] = fileReport(map[string]any{"binary": BinaryPath}, BinaryPath)
+	rep["ap2"] = fileReport(map[string]any{"binary": AP2BinaryPath}, AP2BinaryPath)
+	return rep
+}
+
+// fileReport fills ok/reason/size for one path and returns the same map, so
+// it reads the same whether it is filling the top level or a nested block.
+func fileReport(rep map[string]any, path string) map[string]any {
+	info, err := os.Stat(path)
 	switch {
 	case err != nil:
 		rep["ok"] = false
@@ -254,7 +320,6 @@ func Report() map[string]any {
 	default:
 		rep["ok"] = true
 		rep["size"] = info.Size()
-		describeFlavour(rep)
 	}
 	return rep
 }
@@ -273,8 +338,8 @@ func Report() map[string]any {
 // job is to make "AirPlay 2 is installed but the clock daemon is not"
 // distinguishable from "AirPlay is broken", which from the front of a
 // dashboard it otherwise is not.
-func describeFlavour(rep map[string]any) {
-	f, err := DetectFlavour(BinaryPath, nil)
+func describeFlavour(rep map[string]any, binary string) {
+	f, err := DetectFlavour(binary, nil)
 	if err != nil {
 		rep["flavour"] = "unknown"
 		rep["flavour_error"] = err.Error()
@@ -332,8 +397,25 @@ func (c *Client) Start() error {
 	// cannot run after `kill -9`, after a panic, or on the supervisor's own
 	// restart path, and does nothing for a device already looping — which on a
 	// fielded fleet is every device that has ever been updated.
-	if n := orphan.Takeover(c.opts.Binary); n > 0 {
-		log.Printf("[airplay] stopped %d orphaned instance(s) left by a previous run", n)
+	//
+	// BOTH receivers, not only the one about to run, and that is the half a
+	// second path adds. Switching this device from classic to AirPlay 2
+	// changes which file we exec and nothing about the port the OTHER one is
+	// still holding after a kill -9 — so taking over only the incoming path
+	// leaves the outgoing receiver on TCP 5000 and the new one exiting once a
+	// minute for ever, which is this exact failure reached through the new
+	// door. Two /proc scans at enable time, against the two hours it cost the
+	// first time.
+	seen := map[string]bool{}
+	for _, path := range []string{c.binary(), BinaryPath, AP2BinaryPath} {
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		if n := orphan.Takeover(path); n > 0 {
+			log.Printf("[airplay] stopped %d orphaned instance(s) of %s left by a previous run",
+				n, path)
+		}
 	}
 
 	// Before supervise, deliberately: see syncMetadataReader.
@@ -735,7 +817,7 @@ func (c *Client) session(ctx context.Context) error {
 	// Rewritten per session rather than once at Start: the delay it describes
 	// is a property of this device's pipeline, and a session is the only
 	// moment that is certain to be before shairport reads it.
-	cmd := exec.CommandContext(ctx, c.opts.Binary, c.args(c.writeConfig())...)
+	cmd := exec.CommandContext(ctx, c.binary(), c.args(c.writeConfig())...)
 	// Told where the PTP clock record is, rather than left to the shim's own
 	// default. An AirPlay 2 build reads it through shm_open (ptp-utilities.c),
 	// and a classic one never opens it at all — so this is inert on the
