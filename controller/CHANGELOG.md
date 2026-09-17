@@ -1,5 +1,65 @@
 # Changelog
 
+## 2.51.0-fx.1
+
+### AirPlay 2 kann ausprobiert werden — der Weg dorthin steht
+
+**AirPlay 2 hat rund eine halbe Sekunde Verzögerung statt zwei.** Das ist der
+Grund, das überhaupt zu bauen: Die zwei Sekunden von klassischem AirPlay
+stecken im Protokoll, da war an unserer Seite nichts mehr zu holen. Dazu kommen
+die Home-App und die Synchronisation mit anderen AirPlay-2-Lautsprechern.
+
+Seit heute gibt es die Binaries, und dieser Controller kann sie auf ein Gerät
+bringen.
+
+**So probierst du es aus** (ein Gerät, nicht die ganze Flotte):
+
+1. Auf GitHub unter Actions den Workflow **„Build a streaming endpoint binary"**
+   starten, als Auswahl `shairport-sync-ap2`. Nach etwa vier Minuten liegt
+   unten am Lauf ein Archiv mit `shairport-sync-ap2` und `nqptp`.
+2. Im Dashboard unter **Updates → Streaming endpoints** beide Dateien
+   hochladen: `shairport-sync-ap2` als AirPlay, `nqptp` als AirPlay-2-Uhr.
+3. Bei deinem Echo beide installieren. Reihenfolge egal.
+4. AirPlay einschalten, falls es aus ist. Das Gerät fragt die Datei selbst, ob
+   sie AirPlay 2 kann, und startet den Uhren-Daemon nur dann — es gibt dafür
+   keinen Schalter und soll auch keinen geben.
+
+**Auf emOS ist das der bessere Versuch.** Unter FireOS fehlt noch etwas:
+Jede AirPlay-2-Sitzung öffnet zwei zusätzliche Ports, deren Nummern erst zur
+Laufzeit feststehen, und FireOS blockt alles, was es nicht vorher kennt. Die
+Sitzung kommt dann zustande und es bleibt still. emOS hat diese Sperre nicht.
+
+**Zurück geht es jederzeit**: das klassische shairport-sync wieder hochladen und
+installieren. Es gibt keine Einstellung, die dabei falsch stehen bleiben kann,
+weil es keine gibt — es zählt nur, welche Datei auf dem Gerät liegt.
+
+### Eine Anzeige hat behauptet, die Uhr sei installiert
+
+Die AirPlay-2-Uhr teilt sich ihre Zustandsmeldung mit dem AirPlay-Empfänger,
+weil das Gerät sie dort mitliefert. Der Controller hat dabei die Antwort des
+Empfängers gelesen: Ein Echo mit klassischem shairport-sync und ohne `nqptp`
+wurde als **„installiert"** angezeigt. Wer das glaubt, schiebt die fehlende
+Datei nie hin und wundert sich über Ton, der nicht synchron läuft.
+
+In die andere Richtung war es genauso falsch: Eine Installation von `nqptp`
+hätte die Zustandsmeldung des Empfängers überschrieben — mit der Grösse der
+falschen Datei und ohne die Information, welche AirPlay-Fassung überhaupt
+installiert ist.
+
+Beides ist behoben, und es gibt einen neuen Zustand: **„nicht nötig"**, wenn
+der installierte Empfänger ein klassischer Build ist. Das ist kein Fehler und
+keine fehlende Datei, und „nicht installiert" dazu zu sagen beschuldigt ein
+Gerät, das genau richtig arbeitet.
+
+**Aufgefallen ist es nie**, weil beide Richtungen erst auseinandergehen, wenn
+ein Gerät die eine Datei hat und die andere nicht — also bei genau der ersten
+AirPlay-2-Installation, die es bisher nirgends gab.
+
+**Noch nicht am Gerät verifiziert.** Es ist bis heute kein AirPlay-2-Binary auf
+einem Echo gestartet worden. Wenn du es ausprobierst und es klemmt: Die
+Statuszeile des Geräts sagt jetzt, ob der Uhren-Daemon läuft und wie oft er neu
+starten musste — das ist die Angabe, die hier gebraucht wird.
+
 ## 2.50.0-fx.1
 
 ### Der Netz-Reflash konnte die Boot-Partition nicht lesen

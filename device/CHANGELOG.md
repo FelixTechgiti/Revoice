@@ -12,6 +12,49 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.48.0-fx.1
+
+### AirPlay 2 lässt sich zum ersten Mal ausprobieren
+
+**Es gibt jetzt AirPlay-2-Binaries.** Das Baurezept dafür lag seit Tagen im
+Baum und war noch nie gelaufen; seit heute läuft es durch und liefert zwei
+Dateien: einen shairport-sync mit AirPlay 2 und nqptp, den Uhren-Daemon, ohne
+den AirPlay 2 nicht synchron spielt.
+
+**Was das bringt:** AirPlay 2 hat rund eine halbe Sekunde Verzögerung, wo
+klassisches AirPlay etwa zwei Sekunden hat. Das ist genau die Verzögerung, über
+die du dich beschwert hast, und sie steckt im Protokoll — an unserer Seite war
+da nichts mehr zu holen. Dazu kommen die Aufnahme in die Home-App und die
+Synchronisation mit anderen AirPlay-2-Geräten.
+
+**Was diese Firmware dafür beiträgt:** Sie sieht dem installierten Binary an,
+ob es AirPlay 2 kann, und startet den Uhren-Daemon nur dann. Neu ist, dass sie
+auch **meldet, wie es ihm geht** — läuft er, wie oft musste er neu starten,
+woran ist er zuletzt gescheitert.
+
+Das ist nicht Kosmetik. nqptp braucht zwei Netzwerk-Ports für sich allein und
+beendet sich sofort, wenn er sie nicht bekommt. Von aussen sieht ein Gerät in
+diesem Zustand völlig gesund aus: Das Binary ist da, klassisches AirPlay
+funktioniert weiter, und nur der AirPlay-2-Ton läuft auseinander. Ohne diese
+Meldung gäbe es nirgends einen Hinweis darauf — und bei einer Sache, die noch
+nie auf echter Hardware gelaufen ist, ist das der Unterschied zwischen „geht
+nicht" und „ich weiss, woran es liegt".
+
+Dazu: Wird der Uhren-Daemon ausgetauscht, startet die Firmware ihn jetzt neu.
+Vorher wäre die neue Datei installiert worden und der alte Prozess
+weitergelaufen — hörbar wäre daran nichts gewesen, der Ton wäre einfach weiter
+unsynchron geblieben.
+
+**Zu tun ist erst einmal nichts.** Wer AirPlay 2 ausprobieren will, findet die
+Anleitung im Controller-Changelog zu 2.51.0-fx.1. Wer klassisches AirPlay
+benutzt, merkt von diesem Update nichts — die neue Ausgabe erscheint nur bei
+einem AirPlay-2-Binary.
+
+**Nicht am Gerät verifiziert.** Es ist bis heute kein AirPlay-2-Binary
+irgendwo gestartet worden, auf keinem Echo. Was geprüft ist: dass gebaut wird,
+dass die Dateien für die richtige Architektur sind und nur Bibliotheken
+brauchen, die das Gerät hat, und dass die Firmware-Logik hier stimmt.
+
 ## 2.47.0-fx.1
 
 ### Die Verzögerung beim Quellenwechsel ist weg — sie war meine
