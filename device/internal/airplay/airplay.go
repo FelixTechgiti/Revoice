@@ -736,6 +736,12 @@ func (c *Client) session(ctx context.Context) error {
 	// is a property of this device's pipeline, and a session is the only
 	// moment that is certain to be before shairport reads it.
 	cmd := exec.CommandContext(ctx, c.opts.Binary, c.args(c.writeConfig())...)
+	// Told where the PTP clock record is, rather than left to the shim's own
+	// default. An AirPlay 2 build reads it through shm_open (ptp-utilities.c),
+	// and a classic one never opens it at all — so this is inert on the
+	// binary most devices run and load-bearing on the one that matters. See
+	// ShmDir: the point is that one resolver answers for both children.
+	cmd.Env = append(os.Environ(), ShmDirEnv+"="+ShmDir())
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

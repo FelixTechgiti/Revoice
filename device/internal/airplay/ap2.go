@@ -30,13 +30,27 @@ const NqptpPath = "/data/local/bin/nqptp"
 // ShmDirEnv and its default have to agree between the two processes, or each
 // maps a different file and shairport reads a record that never changes —
 // which presents as AirPlay 2 audio that will not synchronise rather than as
-// anything to do with memory. The firmware passes the value explicitly to BOTH
-// rather than letting them both fall back to the same default, so a change to
-// one cannot silently desync them.
+// anything to do with memory.
+//
+// So the firmware resolves it ONCE, in ShmDir below, and passes the answer
+// explicitly to both children rather than letting each fall back to its own
+// compiled-in default. Two defaults that happen to match today is not the same
+// as one value: the shim's lives in C and the firmware's in Go, and nothing
+// would report the day they stopped agreeing.
 const (
 	ShmDirEnv     = "REVOICE_SHM_DIR"
 	DefaultShmDir = "/dev/revoice-shm"
 )
+
+// ShmDir is where the PTP clock record lives, for whichever child is being
+// started. One resolver, so the receiver and the daemon cannot be told
+// different things.
+func ShmDir() string {
+	if v := os.Getenv(ShmDirEnv); v != "" {
+		return v
+	}
+	return DefaultShmDir
+}
 
 // Flavour is what an installed shairport-sync binary actually IS.
 //
@@ -241,14 +255,13 @@ func (n *Nqptp) Stop() {
 	}
 }
 
+// shmDir is the resolver plus a test seam. Production leaves ShmDir empty and
+// gets the same answer the receiver is given; a test sets it to a temp dir.
 func (n *Nqptp) shmDir() string {
 	if n.ShmDir != "" {
 		return n.ShmDir
 	}
-	if v := os.Getenv(ShmDirEnv); v != "" {
-		return v
-	}
-	return DefaultShmDir
+	return ShmDir()
 }
 
 // Running says the supervisor is up — not that a process exists right now.
