@@ -12,6 +12,38 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.49.0-fx.1
+
+### Das Gerät kann zwischen den beiden AirPlay-Empfängern wählen
+
+**Diese Firmware ist die Voraussetzung dafür, AirPlay 2 überhaupt anschalten zu
+können.** Ohne sie bleibt der Schalter im Dashboard ausgegraut, mit dem Hinweis,
+dass diese Firmware nur den klassischen Empfänger fahren kann.
+
+Das Gerät hat ab jetzt Platz für zwei Empfänger nebeneinander: den klassischen
+und den mit AirPlay 2. Welcher läuft, sagt die Einstellung; was der laufende
+kann, fragt die Firmware weiterhin die Datei selbst. Deshalb kann nicht
+passieren, dass die Einstellung etwas behauptet, was die Datei nicht hält — und
+fehlt die AirPlay-2-Datei noch, läuft der klassische Empfänger weiter, statt
+dass gar kein AirPlay mehr geht.
+
+**Umschalten kostet keine Übertragung.** Beide Dateien bleiben liegen, der
+Schalter entscheidet nur, welche gestartet wird. Zurück geht es genauso, auch
+wenn das Netz gerade schlecht ist — bei etwas, das noch nie auf echter Hardware
+lief, war das der Grund, es so zu bauen.
+
+Dazu eine Kleinigkeit, die erst mit zwei Empfängern auftreten kann: Wird
+umgeschaltet, während eine abgestürzte alte Instanz noch den AirPlay-Port
+festhält, räumt die Firmware jetzt beide Empfänger ab, nicht nur den, den sie
+gerade startet. Sonst wäre das ein Echo, das im AirPlay-Menü erscheint und nie
+spielt — derselbe Fehler wie früher, nur durch die neue Tür.
+
+**Zu tun ist nichts.** Wer AirPlay 2 nicht anschaltet, merkt von diesem Update
+nichts; der klassische Empfänger läuft unverändert weiter.
+
+**Nicht am Gerät verifiziert**, was AirPlay 2 angeht: Es ist bis heute kein
+AirPlay-2-Empfänger auf einem Echo gestartet worden.
+
 ## 2.48.0-fx.1
 
 ### AirPlay 2 lässt sich zum ersten Mal ausprobieren
