@@ -458,15 +458,38 @@ echo "shared-memory ABI: both at version $sps_smi"
 # a symbol it defines. The symbol being present therefore says the rename
 # reached a call site, which is the thing that can be missing. It has to run
 # before llvm-strip below, which takes the symbol table with it.
-for binary in /build/shairport-sync/shairport-sync /build/nqptp/nqptp; do
-    if ! "$NDK/bin/llvm-nm" "$binary" | grep -q " T em_getaddrinfo$"; then
-        echo "ERROR: $binary was linked without the loopback shim." >&2
-        echo "       It resolves \`localhost\` to reach nqptp's control port," >&2
-        echo "       which no resolver on the device answers — so it would" >&2
-        echo "       build, install, and exit once a minute for ever." >&2
-        exit 1
+#
+# Matched on the BARE NAME, never on nm's columns. The first version of this
+# check asked for " T em_getaddrinfo$" and failed the release on a binary that
+# was linked correctly — a column format is a property of whichever llvm-nm the
+# pinned image happens to ship, and pinning that is pinning the wrong thing. The
+# bare name cannot give a false PASS either: an executable that links carries no
+# undefined symbols, so the name appears only if it was resolved.
+#
+# On failure it prints what it actually saw. A check that says only "missing" in
+# a container nobody can attach to costs a whole release cycle per guess.
+shim_check() {
+    local binary="$1" obj="$2"
+    if "$NDK/bin/llvm-nm" "$binary" 2>&1 | grep -q em_getaddrinfo; then
+        return 0
     fi
-done
+    echo "ERROR: $binary was linked without the loopback shim." >&2
+    echo "       It resolves \`localhost\` to reach nqptp's control port," >&2
+    echo "       which no resolver on the device answers — so it would" >&2
+    echo "       build, install, and exit once a minute for ever." >&2
+    echo "--- llvm-nm $binary | head -5" >&2
+    "$NDK/bin/llvm-nm" "$binary" 2>&1 | head -5 >&2
+    echo "--- llvm-nm $binary | grep em_ (the other shims, for comparison)" >&2
+    "$NDK/bin/llvm-nm" "$binary" 2>&1 | grep em_ >&2 || echo "(none)" >&2
+    # A glob, because automake renames an object when a target carries its own
+    # flags and the name is not worth guessing from here.
+    echo "--- llvm-nm $obj | grep addrinfo (did the rename reach the call site?)" >&2
+    # shellcheck disable=SC2086
+    "$NDK/bin/llvm-nm" $obj 2>&1 | grep -i addrinfo >&2 || echo "(none)" >&2
+    exit 1
+}
+shim_check /build/shairport-sync/shairport-sync "/build/shairport-sync/*ptp-utilities.o"
+shim_check /build/nqptp/nqptp "/build/nqptp/*utilities.o"
 echo "both binaries carry the loopback shim"
 
 "$NDK/bin/llvm-strip" /build/shairport-sync/shairport-sync
