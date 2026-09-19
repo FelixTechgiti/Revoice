@@ -369,11 +369,36 @@ is silent on hardware rather than loud in a build:**
   of sync with nothing logged. Both are 10 at 4.3.7 and 1.2.8.
 - **`em_getaddrinfo` in both binaries.** The loopback shim below is carried by
   one word in one `make` line per program, and the program built without it
-  exits a second after every start. `llvm-nm` is proof rather than a hint here
+  exits a second after every start. Presence is proof rather than a hint here
   because the link is static: `libemcompat.a` is an archive, so the object is
   pulled in only if something REFERENCES it, and the symbol being present says
   the rename reached a call site. It runs before `llvm-strip`, which takes the
   symbol table with it.
+
+  **Read with `llvm-readelf --symbols`, never `llvm-nm`, and that cost two
+  release runs.** `llvm-nm` in the pinned image reads these binaries as five
+  debug entries with empty names —
+
+  ```
+  00000000 N
+  00000000 N
+  ```
+
+  — no error and exit 0, so a name-based test on its output can only ever fail.
+  `llvm-readelf` is the reader the two checks above already use on the same
+  files, which is the reason to prefer it: evidence rather than expectation. The
+  general form is worth keeping: **a check is only as trustworthy as the tool
+  under it, and a tool that answers confidently with nothing is worse than one
+  that errors.**
+
+  The failure also has to be able to say which of the two it is, so the whole
+  symbol table is captured ONCE and the report prints the other `em_` symbols
+  beside it: `em_shm_open` is in every one of these binaries by construction, so
+  its presence separates "the reader is not reading" from "the shim is really
+  missing". Capturing rather than piping is not tidiness either — the first
+  diagnostic version piped into `head -5`, which SIGPIPEs the producer under
+  `pipefail` and killed the script mid-report, so the run that was meant to
+  explain itself printed five lines and exited 74.
 
 ### It is a separate script, not a mode inside `build.sh`
 
