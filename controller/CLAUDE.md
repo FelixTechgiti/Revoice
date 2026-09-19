@@ -1566,10 +1566,29 @@ Datei die ich händisch updaten muss"*. So the store fetches from the published
   the downloaded bytes too. A workflow can be edited, and a host build that
   reached a release would otherwise install itself on the whole fleet, which is
   strictly worse than one somebody had to click.
-- **Size is the only agreement the two ends can reach** — the firmware stats
-  the file rather than hashing it — so `install_needed` treats a size match as
-  "leave it", suggestive and never proof. The alternative is re-pushing every
-  binary on every connect for ever. It is pure and in `em_endpoint_bins` for
+- **md5 decides, and size is the fallback — the reverse of what this said
+  until 2026-09-19.** It said size was the only agreement the two ends can
+  reach, because the firmware stats the file rather than hashing it. True of
+  `airplayStatus` on the register message, and never true of the INSTALL,
+  which runs over the shell plane — where an md5 tool has been available all
+  along and the OTA transfer has used one to verify every push since it began
+  verifying them. `stat_command` asks for both now.
+  **The cost of the old rule is measured, not feared.** endpoints-v1.11.0 was
+  cut to repair nqptp and shairport-sync-ap2, which could not resolve
+  `localhost` and exited once a minute on a real device (#218) — and both came
+  out at **exactly** the size their predecessors had, 38080 and 3067440, with
+  different md5s: a ~100-byte function landed inside padding the linker was
+  emitting anyway. Under the size rule the release that existed to repair a
+  device would have been declined on every connect, silently, with the panel
+  reporting the endpoint up to date. Two builds of one program differing by a
+  small function come out the same size far more often than intuition suggests.
+  Where the device produces no digest, the size comparison is what is left,
+  unchanged and for its original reason: the alternative is re-pushing every
+  binary on every connect for ever. The digest is checked for SHAPE rather than
+  merely for being non-empty — a shell answering the md5 attempt with an error
+  message would otherwise have that message stored as a hash, and two devices
+  failing the same way would then compare EQUAL, which is a mismatch reported
+  as a match. It is pure and in `em_endpoint_bins` for
   `refuse_install`'s reason: the suite cannot import `em_api`, and this decides
   whether 9MB crosses that link on every connect.
 - **A shell that said nothing is not a missing binary.** `parse_stat` returns
