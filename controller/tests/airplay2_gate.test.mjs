@@ -141,4 +141,66 @@ for (const key of REASONS) {
     `${key} should be defined once per language in strings.js, found ${n}`);
 }
 
+// ── What the Status tab says about AirPlay 2 ─────────────────────────────
+//
+// Reported by the device since v2.49.0-fx.1 and displayed by nothing, which
+// is how "is AirPlay 2 actually on?" came to have no answer on screen.
+
+const airplay2Line = new Function(
+  `${liftFunction("airplay2Line")}; return airplay2Line;`)();
+
+const HEALTH_OK   = { enabled: true, alive: true,  restarts: 0 };
+const HEALTH_DOWN = { enabled: true, alive: false, restarts: 7 };
+const AP2 = { flavour: "airplay2", nqptp: { ok: true } };
+
+{
+  // Firmware too old to name the flavour says nothing rather than guessing.
+  assert.strictEqual(airplay2Line(null, null, true), null);
+  assert.strictEqual(airplay2Line({ ok: true, size: 9 }, null, true), null);
+}
+
+{
+  const g = airplay2Line({ flavour: "classic" }, null, true);
+  assert.deepStrictEqual(g, { flavour: "classic", clock: null, restarts: 0 });
+}
+
+{
+  const g = airplay2Line(AP2, HEALTH_OK, true);
+  assert.strictEqual(g.clock, "ok");
+}
+
+{
+  // The state the whole thing exists for: the receiver runs, the clock does
+  // not, classic AirPlay is unaffected and AirPlay 2 plays out of sync — a
+  // fault with nothing audible about it.
+  const g = airplay2Line(AP2, HEALTH_DOWN, true);
+  assert.strictEqual(g.clock, "down");
+  assert.strictEqual(g.restarts, 7, "the restart count is the evidence");
+}
+
+{
+  // The daemon's FILE is missing: settled from the register message, without
+  // waiting for a stats tick that would only ever say "not enabled".
+  const g = airplay2Line({ flavour: "airplay2", nqptp: { ok: false } },
+                         null, true);
+  assert.strictEqual(g.clock, "absent");
+}
+
+{
+  // Installed, but this firmware cannot report liveness, or has not ticked
+  // yet. Unknown is its own answer and must not read as the failure above.
+  assert.strictEqual(airplay2Line(AP2, null, false).clock, "unknown");
+  assert.strictEqual(airplay2Line(AP2, null, true).clock, "unknown");
+  assert.strictEqual(airplay2Line(AP2, { enabled: false }, true).clock, "absent");
+}
+
+for (const key of ["devAirplayFlavour", "devAirplayClassic",
+                   "devAirplayUnknownFlavour", "devAirplay2Ok",
+                   "devAirplay2ClockDown", "devAirplay2NoClock",
+                   "devAirplay2ClockUnknown"]) {
+  const n = (strings.match(new RegExp(`^\\s*${key}:`, "gm")) || []).length;
+  assert.strictEqual(n, 2,
+    `${key} should be defined once per language in strings.js, found ${n}`);
+}
+
 console.log("airplay2_gate: all checks passed");
