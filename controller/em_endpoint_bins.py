@@ -534,6 +534,31 @@ def install_needed(k: Kind, capabilities, effective: dict, status,
         return None
     if not status.get("ok"):
         return f"device reports {status.get('reason') or 'no usable binary'}"
+    # md5 when BOTH ends have one, size only when they do not.
+    #
+    # **Size alone is not enough, and that is measured rather than feared.**
+    # endpoints-v1.11.0 fixed a startup failure in nqptp and
+    # shairport-sync-ap2 (#218) and both binaries came out at EXACTLY the
+    # size their predecessors had — 38080 and 3067440 — with different md5s.
+    # A ~100-byte function landed inside the padding the linker was already
+    # emitting. So the release that existed to repair a device would have
+    # been declined on every connect, silently, with the panel reporting the
+    # endpoint up to date against a binary still exiting once a minute.
+    #
+    # The md5 comes over the SHELL plane, which is not the same thing as the
+    # register message: the firmware stats the file and cannot hash it, but
+    # the shell this install runs over has an md5 tool — the OTA path has
+    # relied on exactly that since it began verifying transfers. So the
+    # limitation was real about `airplayStatus` and never about the install.
+    #
+    # Where the device could not produce one, the size comparison is what is
+    # left, unchanged and with its old reasoning intact: the alternative is
+    # re-pushing every binary on every connect for ever.
+    dev_md5 = status.get("md5")
+    if dev_md5 and have.get("md5"):
+        if dev_md5 == have["md5"]:
+            return None
+        return f"device has md5 {dev_md5}, the store has {have['md5']}"
     size = status.get("size")
     if isinstance(size, int) and size == have["size"]:
         return None
@@ -568,6 +593,22 @@ def stat_command(k: Kind) -> str:
     The size is still allowed to fail: both spellings are tried, neither is
     required, and `parse_stat` keeps `ok` when the field comes back empty. A
     device with no working `wc` must not read as a failed install.
+
+    **The md5 rides beside it, and it is what makes `install_needed` able to
+    see a changed binary at all.** Two builds of the same program differing
+    by one small function come out the same SIZE far more often than
+    intuition suggests — endpoints-v1.11.0's nqptp and shairport-sync-ap2
+    both did, to the byte — so a size comparison declines exactly the
+    releases cut to repair something.
+
+    The first field of `md5sum`'s output, taken with `${...%% *}` rather than
+    `cut`: `md5sum` prints `<hash>  <path>`, and the branch where busybox is
+    missing is the same branch where `busybox cut` is missing. Parameter
+    expansion needs no tool at all.
+
+    Allowed to fail for the same reason the size is: a device with no md5
+    tool falls back to the size comparison rather than reading as a failed
+    install.
     """
     p = k.dest
     size = f'$(busybox wc -c < "{p}" 2>/dev/null || wc -c < "{p}" 2>/dev/null)'
@@ -575,7 +616,8 @@ def stat_command(k: Kind) -> str:
         f'if [ ! -e "{p}" ]; then echo {STAT_MARKER}missing; '
         f'elif [ -d "{p}" ]; then echo {STAT_MARKER}dir; '
         f'elif [ ! -x "{p}" ]; then echo {STAT_MARKER}noexec; '
-        f'else echo {STAT_MARKER}ok:{size}; fi'
+        f'else _em_m=$(busybox md5sum "{p}" 2>/dev/null || md5sum "{p}" 2>/dev/null); '
+        f'echo {STAT_MARKER}ok:{size}:${{_em_m%% *}}; fi'
     )
 
 
@@ -610,11 +652,30 @@ def parse_stat(output: str) -> dict | None:
     if line == "noexec":
         return {"ok": False, "reason": "not_executable"}
     if line.startswith("ok:"):
+        # `ok:<size>:<md5>`, and either field may be empty where the device
+        # had no tool for it. The two-field `ok:<size>` is accepted as well,
+        # because an install can be answered by a shell whose command came
+        # from an older controller — and because losing the size over a
+        # format change would be a silent downgrade of the fallback.
+        rest = line[3:].strip()
+        parts = rest.split(":")
+        out: dict = {"ok": True}
         try:
-            return {"ok": True, "size": int(line[3:].strip())}
+            out["size"] = int(parts[0].strip())
         except ValueError:
             # It ran, the file is there and executable, and only the size is
             # unreadable. Reporting ok without one beats reporting nothing:
             # the size is presentation, the executable bit is the gate.
-            return {"ok": True}
+            pass
+        if len(parts) > 1:
+            md5 = parts[1].strip().lower()
+            # Checked for SHAPE, not merely for being non-empty. A shell that
+            # answers an md5 attempt with an error message would otherwise
+            # store that message as a digest, and two devices failing the
+            # same way would then compare EQUAL to each other — a mismatch
+            # reported as a match, which is the one direction that must not
+            # happen here.
+            if len(md5) == 32 and all(c in "0123456789abcdef" for c in md5):
+                out["md5"] = md5
+        return out
     return None

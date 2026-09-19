@@ -638,3 +638,96 @@ def test_merged_status_replaces_outright_for_an_ordinary_kind(store):
     # An unreadable stat leaves the previous answer alone — the rule
     # `_read_endpoint_status` states and the reason it returns None.
     assert ebins.merged_status({"ok": True}, k, None) == {"ok": True}
+
+
+# ─── The same size, different bytes ──────────────────────────────────────────
+#
+# Not a hypothetical. endpoints-v1.11.0 was cut to repair nqptp and
+# shairport-sync-ap2, which could not resolve `localhost` and exited once a
+# minute on a real device (#218) — and both binaries came out at EXACTLY the
+# size their predecessors had, 38080 and 3067440, with different md5s. A
+# ~100-byte function had landed inside the padding the linker was emitting
+# anyway. Under a size comparison the release that existed to fix a device
+# would have been declined on every connect, silently, with the panel
+# reporting the endpoint up to date.
+
+
+def test_the_same_size_with_a_different_md5_is_reinstalled(tmp_path):
+    st = _Store(tmp_path, 100)
+    have = ebins.stored(K, st.db)
+    why = ebins.install_needed(
+        K, CAPS, ON,
+        {"ok": True, "size": 100, "md5": "0" * 32},
+        db_path=st.db)
+    assert why, "a binary that differs only in its bytes must still be pushed"
+    assert have["md5"] in why and "0" * 32 in why, \
+        f"the reason has to name both digests: {why}"
+
+
+def test_a_matching_md5_is_left_alone(tmp_path):
+    st = _Store(tmp_path, 100)
+    have = ebins.stored(K, st.db)
+    assert ebins.install_needed(
+        K, CAPS, ON,
+        {"ok": True, "size": 100, "md5": have["md5"]},
+        db_path=st.db) is None
+
+
+def test_the_md5_wins_over_a_size_that_disagrees(tmp_path):
+    # The device cannot be both — but if it ever says so, the hash is the
+    # stronger statement and re-pushing on a stale size would be a 9MB
+    # transfer per connect for ever.
+    st = _Store(tmp_path, 100)
+    have = ebins.stored(K, st.db)
+    assert ebins.install_needed(
+        K, CAPS, ON,
+        {"ok": True, "size": 99, "md5": have["md5"]},
+        db_path=st.db) is None
+
+
+def test_a_device_with_no_md5_tool_still_falls_back_to_the_size(tmp_path):
+    # The whole point of letting the field fail: a shell with no md5 must
+    # behave exactly as every device did before this existed.
+    st = _Store(tmp_path, 100)
+    assert ebins.install_needed(K, CAPS, ON, {"ok": True, "size": 100},
+                                db_path=st.db) is None
+    why = ebins.install_needed(K, CAPS, ON, {"ok": True, "size": 99},
+                               db_path=st.db)
+    assert why and "99" in why
+
+
+def test_the_shell_reports_size_and_md5_together():
+    k = ebins.KINDS["airplay2"]
+    cmd = ebins.stat_command(k)
+    assert "md5sum" in cmd, "no md5 is asked for at all"
+    assert "busybox md5sum" in cmd and cmd.index("busybox md5sum") < cmd.index("|| md5sum"), \
+        "busybox first, the order every other shell payload here uses"
+    # No `cut`: the branch where busybox is missing is the branch where
+    # `busybox cut` is missing, so the first field is taken with parameter
+    # expansion instead.
+    assert "cut" not in cmd
+    assert "%% *}" in cmd
+
+
+def test_parse_stat_reads_the_md5_and_survives_its_absence():
+    good = "f" * 32
+    assert ebins.parse_stat(f"EMBIN:ok:3067440:{good}") == \
+        {"ok": True, "size": 3067440, "md5": good}
+    # A device with wc and no md5 tool, and the two-field form an older
+    # controller's command would produce: both still carry the size.
+    assert ebins.parse_stat("EMBIN:ok:3067440:") == {"ok": True, "size": 3067440}
+    assert ebins.parse_stat("EMBIN:ok:3067440") == {"ok": True, "size": 3067440}
+    # Neither tool answered. Still ok: the executable bit is the gate.
+    assert ebins.parse_stat("EMBIN:ok::") == {"ok": True}
+
+
+def test_a_non_digest_is_not_stored_as_one():
+    # A shell answering the md5 attempt with an error message would
+    # otherwise have that message recorded as a digest — and two devices
+    # failing the same way would then compare EQUAL, reporting a mismatch as
+    # a match. That is the one direction this must never get wrong.
+    assert "md5" not in ebins.parse_stat("EMBIN:ok:12:no such tool")
+    assert "md5" not in ebins.parse_stat("EMBIN:ok:12:abc")
+    assert "md5" not in ebins.parse_stat("EMBIN:ok:12:" + "g" * 32)
+    # Upper case is a digest, just spelled differently.
+    assert ebins.parse_stat("EMBIN:ok:12:" + "A" * 32)["md5"] == "a" * 32
