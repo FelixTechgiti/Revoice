@@ -215,18 +215,21 @@ git clone --depth 1 --branch n7.1.5 https://github.com/FFmpeg/FFmpeg ffmpeg
 
 # ---------------------------------------------------------------------------
 say "the compat shims"
-# Four now, where the classic build has two. android_shm.c is the nqptp<->
+# Five now, where the classic build has two. android_shm.c is the nqptp<->
 # shairport clock interface (bionic has no POSIX shared memory); android_uuid.c
 # is the three libuuid functions shairport calls once, which util-linux would
-# otherwise have to be cross-built for.
-"$CC" -c -O2 -fPIC -I/compat /compat/android_compat.c  -o /build/android_compat.o
-"$CC" -c -O2 -fPIC -I/compat /compat/android_ifaddrs.c -o /build/android_ifaddrs.o
-"$CC" -c -O2 -fPIC -I/compat /compat/android_shm.c     -o /build/android_shm.o
-"$CC" -c -O2 -fPIC -I/compat /compat/android_uuid.c    -o /build/android_uuid.o
-"$CC" -c -O2 -fPIC -I/compat /compat/mdns_ap2.c        -o /build/mdns_ap2.o
+# otherwise have to be cross-built for; android_localhost.c is the one call both
+# AirPlay 2 binaries make before they can do anything at all, and the one that
+# had them exiting once a minute on a real device (#218).
+"$CC" -c -O2 -fPIC -I/compat /compat/android_compat.c   -o /build/android_compat.o
+"$CC" -c -O2 -fPIC -I/compat /compat/android_ifaddrs.c  -o /build/android_ifaddrs.o
+"$CC" -c -O2 -fPIC -I/compat /compat/android_shm.c      -o /build/android_shm.o
+"$CC" -c -O2 -fPIC -I/compat /compat/android_uuid.c     -o /build/android_uuid.o
+"$CC" -c -O2 -fPIC -I/compat /compat/android_localhost.c -o /build/android_localhost.o
+"$CC" -c -O2 -fPIC -I/compat /compat/mdns_ap2.c         -o /build/mdns_ap2.o
 llvm-ar rcs "$PREFIX/lib/libemcompat.a" \
     /build/android_compat.o /build/android_ifaddrs.o /build/android_shm.o \
-    /build/android_uuid.o /build/mdns_ap2.o
+    /build/android_uuid.o /build/android_localhost.o /build/mdns_ap2.o
 
 # `-luuid` has to resolve, because configure probes for it by name. The symbols
 # are in libemcompat.a; this archive is what makes the -l work, the same trick
@@ -297,8 +300,13 @@ git clone --depth 1 --branch "$NQPTP_REF" https://github.com/mikebrady/nqptp
     #
     # AM_CFLAGS survives this — `-fno-common -Wall -Wextra -pthread
     # --include=config.h` come from the Makefile, not from here.
+    #
+    # android_localhost.h is the third, and it is the one without which nqptp
+    # builds perfectly and exits one second after every start: nqptp.c:281 binds
+    # its control port by the NAME `localhost`, and on this device nothing
+    # answers for it (#218, #219). It goes at make time with the others.
     make -j"$JOBS" CXXLD="$CC" \
-        CFLAGS="-O2 -I$PREFIX/include -include /compat/android_shm.h -include /compat/android_compat.h"
+        CFLAGS="-O2 -I$PREFIX/include -include /compat/android_shm.h -include /compat/android_compat.h -include /compat/android_localhost.h"
 )
 
 # ---------------------------------------------------------------------------
@@ -362,8 +370,14 @@ PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig" \
 # shim. It goes at MAKE time for the same reason as below, and it could have
 # gone at configure time as it does for nqptp; there it had to, because
 # nqptp's own feature tests see the rename.
+#
+# android_localhost.h is the third and is needed for the same reason at the
+# other end of the same socket: ptp-utilities.c:239 resolves `localhost` to SEND
+# nqptp a control message, and dies if it cannot (#218). Note both binaries need
+# it — the one without it is the one that fails, and the failures look like two
+# unrelated faults in a log.
 make -j"$JOBS" \
-    CFLAGS="$BASE_CFLAGS -include /compat/android_shm.h -include /compat/android_compat.h" \
+    CFLAGS="$BASE_CFLAGS -include /compat/android_shm.h -include /compat/android_compat.h -include /compat/android_localhost.h" \
     CXXLD="$CC"
 
 # ---------------------------------------------------------------------------
@@ -434,6 +448,26 @@ if [ "$sps_smi" != "$nq_smi" ]; then
     exit 1
 fi
 echo "shared-memory ABI: both at version $sps_smi"
+
+# The loopback shim, in BOTH binaries, and this is checked rather than assumed
+# because the -include that carries it is one word in one make line per program
+# and its absence is invisible until a device is in front of you (#218).
+#
+# nm is proof here rather than a hint, and the static link is why: libemcompat.a
+# is an archive, so ld pulls android_localhost.o in only if something REFERENCES
+# a symbol it defines. The symbol being present therefore says the rename
+# reached a call site, which is the thing that can be missing. It has to run
+# before llvm-strip below, which takes the symbol table with it.
+for binary in /build/shairport-sync/shairport-sync /build/nqptp/nqptp; do
+    if ! "$NDK/bin/llvm-nm" "$binary" | grep -q " T em_getaddrinfo$"; then
+        echo "ERROR: $binary was linked without the loopback shim." >&2
+        echo "       It resolves \`localhost\` to reach nqptp's control port," >&2
+        echo "       which no resolver on the device answers — so it would" >&2
+        echo "       build, install, and exit once a minute for ever." >&2
+        exit 1
+    fi
+done
+echo "both binaries carry the loopback shim"
 
 "$NDK/bin/llvm-strip" /build/shairport-sync/shairport-sync
 "$NDK/bin/llvm-strip" /build/nqptp/nqptp

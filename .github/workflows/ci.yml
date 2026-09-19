@@ -711,7 +711,7 @@ jobs:
         run: go vet ./internal/... ./pkg/...
 
   shairport-compat-checks:
-    name: shairport compat shim checks (shared memory)
+    name: shairport compat shim checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -759,3 +759,17 @@ jobs:
           cc -O2 -Wall -Wextra -I device/shairport/compat \
             -o /tmp/uuidcheck device/shairport/compat/uuidcheck.c
           /tmp/uuidcheck
+
+      # The getaddrinfo shim. Both AirPlay 2 binaries find nqptp's control port
+      # by the name `localhost`, and on this device nothing answers for it — so
+      # both exited one second after every start and AirPlay 2 had never run
+      # (#218). The host HAS a resolver, so this cannot reproduce that; what it
+      # pins is the two properties that decide whether the rewrite is right, and
+      # both are silent on hardware: which names are rewritten, and that a
+      # single IPv4 result comes back, since shairport uses only the FIRST one
+      # while nqptp binds them all.
+      - name: The loopback shim rewrites the name and answers with one IPv4
+        run: |
+          cc -O2 -Wall -Wextra -I device/shairport/compat \
+            -o /tmp/localhostcheck device/shairport/compat/localhostcheck.c
+          /tmp/localhostcheck

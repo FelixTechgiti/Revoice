@@ -1807,6 +1807,33 @@ scripts and does not run, while the binary comes from `/system` and does. The
 same mistake is available for every Android tool this firmware reaches for.
 Ask which of the two an absence would come from before writing it down.
 
+### A peer found by NAME is a peer this device cannot find
+
+**`getaddrinfo("localhost")` fails on emOS**, and the general form is worth
+holding onto because it is not about AirPlay: a program that locates a LOCAL
+peer by a name rather than by an address is relying on a resolver, and the
+resolver here is our own. bionic goes to `/dev/socket/dnsproxyd`, emOS's proxy
+(`emos/init/init.c`) sends every non-literal name to the upstream nameserver,
+and a router answering NXDOMAIN for `localhost` comes back as `EAI_NODATA`.
+netd has a hosts-file path, so nothing of this is visible under FireOS.
+
+Measured 2026-09-19: nqptp binds its control port as `localhost` and
+shairport-sync resolves the same name to reach it, both `die()`, both exited
+once a minute for hours, and **AirPlay 2 had therefore never started on a
+device** — with the failure reported at each end in the language of a different
+function (#218; `nqptp-utilities.c:67` labels a `getaddrinfo` failure
+`getifaddrs`). The receiver is fixed in the build, with
+`compat/android_localhost.c` rewriting the name to the literal; the proxy is
+#219 and is the repair that covers the next program.
+
+Worth noticing what did NOT report it. Both binaries were installed,
+executable, the right size and reporting `ok: true`; `endpoint_health` had them
+as enabled-and-not-alive with a climbing restart count, which is exactly the
+signal that section was built for — and the thing that named the cause was
+`internal/logrelay` carrying a line of somebody else's stderr off the device.
+Neither existed a fortnight ago, and without the second this is a binary that
+does not work for a reason nobody can see.
+
 ## Advertised is not reachable: FireOS drops every inbound port (`internal/netfilter`)
 
 **This is what #77 was, after weeks of looking at mDNS.** FireOS ships
