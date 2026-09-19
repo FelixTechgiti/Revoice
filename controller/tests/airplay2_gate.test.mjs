@@ -161,7 +161,8 @@ const AP2 = { flavour: "airplay2", nqptp: { ok: true } };
 
 {
   const g = airplay2Line({ flavour: "classic" }, null, true);
-  assert.deepStrictEqual(g, { flavour: "classic", clock: null, restarts: 0 });
+  assert.deepStrictEqual(g, { flavour: "classic", clock: null, restarts: 0,
+                              receiverRunning: null });
 }
 
 {
@@ -194,10 +195,78 @@ const AP2 = { flavour: "airplay2", nqptp: { ok: true } };
   assert.strictEqual(airplay2Line(AP2, { enabled: false }, true).clock, "absent");
 }
 
+// ── The RECEIVER, which every clock verdict silently presumes is running ──
+//
+// Each clock string is a claim about the sound: "audio will not
+// synchronise" only means anything if there is audio. On a real panel
+// (2026-09-19) both endpoint lines were red for ONE cause — neither binary
+// could resolve `localhost` — and the flavour line described the clock as a
+// separate fault that would spoil playback nobody was getting.
+//
+// So the receiver's own liveness rides the result, and the renderer chooses
+// its wording from it. Three values, because "cannot tell" must not suppress
+// a real clock finding.
+
+{
+  const g = airplay2Line(AP2, HEALTH_DOWN, true, HEALTH_DOWN);
+  assert.strictEqual(g.receiverRunning, false,
+    "a receiver reported enabled-and-not-alive is positively down");
+  assert.strictEqual(g.clock, "down",
+    "the clock verdict is still computed — the renderer decides what to say");
+}
+
+{
+  const g = airplay2Line(AP2, HEALTH_DOWN, true, HEALTH_OK);
+  assert.strictEqual(g.receiverRunning, true,
+    "a running receiver is what makes the clock verdict worth printing");
+}
+
+{
+  // The three ways of not knowing, and all of them leave the verdict alone.
+  assert.strictEqual(airplay2Line(AP2, HEALTH_DOWN, true).receiverRunning, null,
+    "no receiver health at all is not evidence the receiver is down");
+  assert.strictEqual(
+    airplay2Line(AP2, HEALTH_DOWN, false, HEALTH_DOWN).receiverRunning, null,
+    "firmware that cannot report liveness says nothing about the receiver");
+  assert.strictEqual(
+    airplay2Line(AP2, HEALTH_DOWN, true, { enabled: false }).receiverRunning, null,
+    "an endpoint nobody switched on is not a receiver that failed");
+}
+
+{
+  // It rides every branch, including the early ones — a classic receiver
+  // that is down is the same sentence about a different binary.
+  assert.strictEqual(
+    airplay2Line({ flavour: "classic" }, null, true, HEALTH_DOWN).receiverRunning,
+    false);
+  assert.strictEqual(
+    airplay2Line({ flavour: "airplay2", nqptp: { ok: false } }, null, true,
+                 HEALTH_DOWN).receiverRunning,
+    false);
+}
+
+{
+  // The renderer's own rule, read out of the source: a positively-down
+  // receiver must be answered with the receiver strings and never with one
+  // of the clock ones. Checked as a SOURCE guard because the ternary chain
+  // is in JSX this file cannot lift, and the order of its arms is the whole
+  // fix — a later edit that moves the clock arms in front restores the bug
+  // with every assertion above still passing.
+  const jsx = readFileSync(join(HERE, "..", "static", "dashboard.jsx"), "utf8");
+  const chain = jsx.slice(jsx.indexOf("const ap2Text ="),
+                          jsx.indexOf("const ap2Tone ="));
+  assert.ok(chain.indexOf("receiverRunning === false") > 0,
+    "the flavour line no longer consults the receiver at all");
+  assert.ok(chain.indexOf("receiverRunning === false")
+            < chain.indexOf("devAirplay2Ok"),
+    "a down receiver must be answered before any clock verdict is printed");
+}
+
 for (const key of ["devAirplayFlavour", "devAirplayClassic",
                    "devAirplayUnknownFlavour", "devAirplay2Ok",
                    "devAirplay2ClockDown", "devAirplay2NoClock",
-                   "devAirplay2ClockUnknown"]) {
+                   "devAirplay2ClockUnknown", "devAirplay2RxDown",
+                   "devAirplay2RxDownNoClock"]) {
   const n = (strings.match(new RegExp(`^\\s*${key}:`, "gm")) || []).length;
   assert.strictEqual(n, 2,
     `${key} should be defined once per language in strings.js, found ${n}`);

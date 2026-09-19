@@ -2717,19 +2717,26 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     working Echo, or describing something nobody switched on,
                     is how a panel becomes the one everybody learns to skip. */}
                 {(() => {
-                  const sp = endpointHealthLine(
-                    device.endpointHealth && device.endpointHealth.spotify,
-                    device.endpointHealthCapable);
-                  const ap = endpointHealthLine(
-                    device.endpointHealth && device.endpointHealth.airplay,
-                    device.endpointHealthCapable);
-                  const ap2 = airplay2Line(device.airplayStatus,
-                    device.endpointHealth && device.endpointHealth.nqptp,
-                    device.endpointHealthCapable);
+                  const eh = device.endpointHealth || {};
+                  const sp = endpointHealthLine(eh.spotify, device.endpointHealthCapable);
+                  const ap = endpointHealthLine(eh.airplay, device.endpointHealthCapable);
+                  const ap2 = airplay2Line(device.airplayStatus, eh.nqptp,
+                    device.endpointHealthCapable, eh.airplay);
                   if (!sp && !ap && !ap2) return null;
+                  // A clock verdict is a claim about the SOUND, and every one
+                  // of them below presumes there is sound. With the receiver
+                  // itself down there is none, so "audio will not synchronise"
+                  // promises something that is not happening — seen on a real
+                  // panel 2026-09-19, where both lines were red for one cause
+                  // and the second one described a consequence of the first as
+                  // if it were a separate fault. The flavour is still worth
+                  // saying: it names WHICH binary is the one failing.
                   const ap2Text = !ap2 ? null
                     : ap2.flavour === 'classic' ? t('devAirplayClassic')
                     : ap2.flavour !== 'airplay2' ? t('devAirplayUnknownFlavour')
+                    : ap2.receiverRunning === false
+                        ? (ap2.clock === 'absent' ? t('devAirplay2RxDownNoClock')
+                                                  : t('devAirplay2RxDown'))
                     : ap2.clock === 'ok'      ? t('devAirplay2Ok')
                     : ap2.clock === 'down'    ? `${t('devAirplay2ClockDown')} (${ap2.restarts})`
                     : ap2.clock === 'absent'  ? t('devAirplay2NoClock')
@@ -4439,26 +4446,43 @@ function airplay2Gate({ airplayCapable, airplay2Capable, airplayOn,
 // Returns null where it cannot say. Firmware too old to report the flavour
 // gets silence rather than a guess, for endpointHealthLine's reason: a panel
 // that accuses a working Echo is the panel everybody learns to skip.
-function airplay2Line(airplayStatus, health, capable) {
+function airplay2Line(airplayStatus, health, capable, receiverHealth) {
   const st = airplayStatus || null;
   if (!st || !st.flavour) return null;
+
+  // Is the RECEIVER running? Three answers, not two, and the third is why
+  // this is a separate field rather than a branch: false only where the
+  // firmware can report, the endpoint is switched on, and it is positively
+  // not alive. Anything else is `null` — cannot tell — and must leave the
+  // clock verdict exactly as it was, because suppressing a real finding on
+  // the strength of not knowing is the worse direction.
+  const receiverRunning =
+    (!capable || !receiverHealth || !receiverHealth.enabled)
+      ? null
+      : !!receiverHealth.alive;
+
   if (st.flavour !== 'airplay2') {
-    return { flavour: st.flavour, clock: null, restarts: 0 };
+    return { flavour: st.flavour, clock: null, restarts: 0, receiverRunning };
   }
 
   // Installed is not running, and here the two answers come from different
   // places: the file from the register message, the process from the stats
   // tick. A file that is absent settles it without waiting for a tick.
   const installed = !!(st.nqptp && st.nqptp.ok);
-  if (!installed) return { flavour: 'airplay2', clock: 'absent', restarts: 0 };
-  if (!capable || !health) {
-    return { flavour: 'airplay2', clock: 'unknown', restarts: 0 };
+  if (!installed) {
+    return { flavour: 'airplay2', clock: 'absent', restarts: 0, receiverRunning };
   }
-  if (!health.enabled) return { flavour: 'airplay2', clock: 'absent', restarts: 0 };
+  if (!capable || !health) {
+    return { flavour: 'airplay2', clock: 'unknown', restarts: 0, receiverRunning };
+  }
+  if (!health.enabled) {
+    return { flavour: 'airplay2', clock: 'absent', restarts: 0, receiverRunning };
+  }
   return {
     flavour: 'airplay2',
     clock: health.alive ? 'ok' : 'down',
     restarts: health.restarts || 0,
+    receiverRunning,
   };
 }
 
