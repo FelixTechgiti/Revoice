@@ -1,5 +1,50 @@
 # Changelog
 
+## 2.54.0-fx.1
+
+### Jetzt steht auf dem Status, welcher AirPlay-Empfänger läuft
+
+**Wenn du dich gefragt hast, woran man sieht, dass AirPlay 2 an ist: Man sah es
+nicht.** In den Notizen zu 2.51.0-fx.1 steht, die Statuszeile des Geräts sage,
+ob der Uhren-Daemon läuft — das war falsch. Das Gerät meldet es seit
+v2.49.0-fx.1, angezeigt hat es nichts.
+
+Unter **Audio-Endpunkte** steht jetzt eine Zeile **AirPlay-Fassung**, und sie
+sagt eines von vier Dingen:
+
+- **AirPlay 2 — Uhr läuft.** Alles in Ordnung.
+- **AirPlay 2 — UHR LÄUFT NICHT, der Ton wird nicht synchron**, mit der Zahl
+  der Startversuche. Das ist der Zustand, für den die Zeile vor allem da ist:
+  Der Empfänger läuft, klassisches AirPlay ist davon unberührt, und AirPlay 2
+  driftet einfach — daran ist nichts hörbar falsch, man merkt es nur, wenn ein
+  zweiter Lautsprecher danebensteht.
+- **AirPlay 2 — kein Uhren-Daemon.** Die Datei fehlt noch.
+- **klassisches AirPlay.** Der Schalter ist aus oder die AirPlay-2-Datei ist
+  noch nicht angekommen.
+
+**Zur Erinnerung, weil es zusammen gefragt wurde:** Spotify und AirPlay sind
+pro Gerät aus, bis du sie anschaltest — unter Konfiguration → Streaming, nicht
+bei Status. Und AirPlay 2 lässt sich erst umlegen, wenn AirPlay selbst an ist;
+es wählt nur aus, welchen Empfänger AirPlay fährt.
+
+### In die Home-App aufnehmen geht, aber nicht über „+ hinzufügen"
+
+Nachgelesen statt behauptet: Ein Echo mit laufendem AirPlay 2 lässt sich in
+Apples Home-App aufnehmen. Der Weg ist ungewöhnlich:
+
+1. Home-App → Einstellungen → **Zugriff auf Lautsprecher & TV** → *Jeder im
+   selben Netzwerk*, und „Passwort erforderlich" aus.
+2. **+ → Gerät hinzufügen → Weitere Optionen…** — dort taucht der Echo auf,
+   nicht in der normalen Liste.
+
+Zwei Grenzen: Es braucht **laufendes AirPlay 2** (mit klassischem AirPlay
+erscheint er dort nicht), und **Fernbedienung ist nicht implementiert** — er
+ist dort ein Lautsprecher, kein steuerbares Gerät.
+
+**Nicht am Gerät verifiziert.** Es ist bis heute kein AirPlay-2-Empfänger auf
+einem Echo gestartet worden; die Home-App-Angaben stammen aus shairport-syncs
+eigener Dokumentation.
+
 ## 2.53.0-fx.1
 
 ### Der AirPlay-2-Schalter liess sich nie einschalten
