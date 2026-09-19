@@ -234,6 +234,64 @@ shairport half of that was left out of the first version of the recipe, where
 it cost nothing until the link, because nothing in shairport-sync's configure
 asks about shared memory. See "What the first runs found" below.
 
+## The loopback shim: both binaries find each other by NAME
+
+`compat/android_localhost.c` rewrites `getaddrinfo("localhost", ...)` to the
+loopback literal and delegates. Without it AirPlay 2 does not start at all, and
+that is measured rather than reasoned: on a live device, 2026-09-19, both
+binaries exited once a minute for hours (#218).
+
+```
+20:10:20 [shairport] fatal error: getifaddrs: No address associated with hostname
+20:10:20 [airplay]   nqptp exited: exit status 1
+20:10:27 [shairport] fatal error: getaddrinfo: No address associated with hostname
+20:10:27 [airplay]   shairport-sync exited: exit status 1
+```
+
+**Those are two programs making one call.** AirPlay 2 is nqptp and
+shairport-sync talking over a UDP control port, and both of them find that port
+by name: `nqptp.c:281` binds it with `open_sockets_at_port("localhost",
+NQPTP_CONTROL_PORT, ...)`, and `ptp-utilities.c:239` resolves the same name to
+send to it. Neither is configurable, and both `die()`. The first message reads
+as a different fault only because upstream's label is wrong —
+`nqptp-utilities.c:67` says `getifaddrs` over a `getaddrinfo` call.
+
+**Nothing on the device answers the name.** bionic resolves through
+`/dev/socket/dnsproxyd`, and under emOS the thing on the other end is our own
+proxy in `emos/init/init.c`, which sends every non-literal name to the upstream
+nameserver — so a router answering NXDOMAIN for `localhost` is an `EAI_NODATA`
+at the caller. netd consults a hosts file and does not do this, which is why
+this does not happen under FireOS. Fixing the proxy is #219 and is the general
+repair; this shim is the half that can reach a fielded device, because it rides
+the endpoint binaries and the proxy rides a boot image somebody has to flash.
+
+Two properties are load-bearing, and both are silent when wrong:
+
+- **The node is REWRITTEN, never fabricated.** Both callers free the result with
+  the real `freeaddrinfo`, so an `addrinfo` of our own would put our allocation
+  in front of it. Passing the literal keeps every struct upstream's — and a
+  numeric node never reaches a resolver, under either base.
+- **IPv4 only.** `ptp_send_control_message_string` uses the FIRST result and
+  nothing else — one `socket`, one `sendto` — while nqptp binds every result it
+  is given. A `::1` in front of a `127.0.0.1` is therefore a control message
+  sent to an address nqptp may never have bound, with nothing failing at either
+  end and a clock that simply never ticks.
+
+`compat/localhostcheck.c` drives the real function on the host and CI runs it.
+It cannot reproduce the device's failure — the host has a resolver that answers
+`localhost` — and does not try; what it pins is which names are rewritten and
+that a single IPv4 result comes back.
+
+```bash
+cc -O2 -Wall -Wextra -I compat -o /tmp/localhostcheck compat/localhostcheck.c \
+  && /tmp/localhostcheck
+```
+
+**`ip6-localhost` and `localhost6` are deliberately NOT rewritten.** They mean
+the IPv6 loopback, and answering them with an IPv4 address would be a wrong
+answer where the fault being fixed is a missing one. Nothing in either program
+asks for them.
+
 ## The AirPlay 2 build (`./build-ap2.sh`) — it builds
 
 ```bash
@@ -292,8 +350,8 @@ measured in CI; the fourth was read out of the sources before it could be.
   nqptp publishes, and the only function on the whole AirPlay 2 path bionic
   does not have.
 
-**Two checks were added at the end of the recipe, and both guard couplings
-that are silent on hardware rather than loud in a build:**
+**Checks were added at the end of the recipe, and each guards a coupling that
+is silent on hardware rather than loud in a build:**
 
 - **The `-AirPlay2` token.** The firmware decides whether to run the clock
   daemon by asking the installed binary (`internal/airplay`'s `reAirPlay2`
@@ -309,6 +367,13 @@ that are silent on hardware rather than loud in a build:**
   pinned trees, both moved by hand — and a disagreement is not an error at
   either end: the reader simply never accepts a record, so AirPlay 2 plays out
   of sync with nothing logged. Both are 10 at 4.3.7 and 1.2.8.
+- **`em_getaddrinfo` in both binaries.** The loopback shim below is carried by
+  one word in one `make` line per program, and the program built without it
+  exits a second after every start. `llvm-nm` is proof rather than a hint here
+  because the link is static: `libemcompat.a` is an archive, so the object is
+  pulled in only if something REFERENCES it, and the symbol being present says
+  the rename reached a call site. It runs before `llvm-strip`, which takes the
+  symbol table with it.
 
 ### It is a separate script, not a mode inside `build.sh`
 
