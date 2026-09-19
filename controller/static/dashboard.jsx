@@ -4366,6 +4366,49 @@ function publishedStoreState(kind, releaseTag) {
   }
 }
 
+// Whether the AirPlay 2 switch can be used, and what to say under it.
+//
+// **It must not require the AirPlay 2 BINARY to be present, and requiring it
+// made the feature unreachable.** The controller installs that binary only
+// for a device whose `airplay2Enabled` is on (`install_needed` gates every
+// kind on its own toggle, so a lossy link is never spent on a program nobody
+// asked for). Gating the toggle on the file therefore closed a loop: no file
+// until the switch is on, no switch until the file is there, and the sub-label
+// cheerfully said it would "arrive with the next endpoint update" — which it
+// never could. Shipped in controller 2.52.0-fx.1 and caught by somebody
+// looking for the switch and not finding a usable one.
+//
+// The file arriving is the CONSEQUENCE of turning this on, not a precondition,
+// and the firmware is built for the gap: `ResolveBinary` runs the classic
+// receiver while the AirPlay 2 one is missing, so the interim is the old
+// behaviour rather than silence.
+//
+// The three real refusals stay, because each is something a user cannot fix
+// by waiting: firmware that has only one receiver path, FireOS (where every
+// session binds ports chosen at runtime that nothing can open), and AirPlay
+// itself being off — choosing a flavour of something that is not running.
+function airplay2Gate({ airplayCapable, airplay2Capable, airplayOn,
+                        ap2Installed, baseOs, stored }) {
+  if (!airplay2Capable) {
+    return { disabled: true, reason: 'cfgNoAirplay2', value: false };
+  }
+  if (baseOs === 'fireos') {
+    return { disabled: true, reason: 'cfgAirplay2FireOS', value: false };
+  }
+  if (!airplayCapable || !airplayOn) {
+    return { disabled: true, reason: 'cfgAirplay2NeedsAirplay', value: !!stored };
+  }
+  // Enabled from here. The switch shows what is STORED either way: masking it
+  // with the install state would make the control disagree with the setting
+  // the moment somebody turns it on, which is the same class of lie as a
+  // control that silently does nothing.
+  return {
+    disabled: false,
+    reason: ap2Installed ? 'cfgAirplay2Sub' : 'cfgAirplay2Coming',
+    value: !!stored,
+  };
+}
+
 function endpointHealthLine(health, capable) {
   if (!capable) return null;          // firmware cannot say — say nothing
   if (!health) return null;           // capable, no tick yet — still nothing
@@ -8536,22 +8579,21 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
   const airplayReady = airplayStatus === null || airplayStatus === undefined
     ? true : !!airplayStatus.ok;
   const airplayWhy = (airplayStatus && airplayStatus.reason) || t('cfgNotInstalled');
-  // The AirPlay 2 RECEIVER is a second file, and it reports in its own block.
-  // Absent means the firmware does not split them — which is firmware without
-  // the capability, so the toggle is disabled for that reason first and this
-  // never has to stand in for an answer it does not have.
-  const ap2Status = (airplayStatus && airplayStatus.ap2) || null;
-  const ap2Ready  = ap2Status === null ? false : !!ap2Status.ok;
-  // FireOS cannot serve AirPlay 2 at all: every session binds two extra TCP
-  // ports the kernel picks at runtime, and FireOS drops everything it was not
-  // told about in advance (#107). The session negotiates and then plays
-  // nothing, which reads as a broken speaker rather than as a firewall — so
-  // it is said here, in front of the switch, rather than discovered.
+  // The AirPlay 2 RECEIVER is a second file and reports in its own block.
+  // Absent means the firmware does not split them, which is firmware without
+  // the capability — refused before this is consulted.
   //
-  // Absence is NOT FireOS: firmware too old to report base_os is exactly the
-  // firmware without the airplay2 capability, so it is already disabled, and
-  // a warning about a platform nobody confirmed would be a guess on screen.
-  const ap2OnFireOS = deviceBaseOs === 'fireos';
+  // Computed here rather than in the JSX, with the other derived values: a
+  // multi-line expression inside the markup reads to i18n_untranslated as a
+  // text node, and more to the point this gate decided a setting could never
+  // be turned on and nothing could drive it. See airplay2Gate.
+  const ap2Status = (airplayStatus && airplayStatus.ap2) || null;
+  const ap2Gate = airplay2Gate({
+    airplayCapable, airplay2Capable, baseOs: deviceBaseOs,
+    airplayOn: config.airplayEnabled ?? false,
+    ap2Installed: ap2Status === null ? false : !!ap2Status.ok,
+    stored: config.airplay2Enabled ?? false,
+  });
   // Installed is not running, and only the first was ever shown. Null from
   // either of these keeps the existing sentence unchanged — see
   // endpointHealthLine for why both absences must stay silent.
@@ -9208,29 +9250,12 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 : `${t('cfgShairportMissing')} (${airplayWhy})`)}
             value={airplayCapable && airplayReady && (config.airplayEnabled ?? false)}
             onChange={v => set('airplayEnabled', v)}/>
-          {/* Which RECEIVER, not whether AirPlay runs — so it is under the
-              AirPlay switch and disabled with AirPlay off, because choosing a
-              flavour of something that is not running is a setting with
-              nothing to do.
-
-              Three separate reasons it can be unavailable, and each says its
-              own: the firmware cannot select a second receiver, the binary is
-              not on the device yet, or this is FireOS, where AirPlay 2
-              negotiates a session and then plays nothing. A single "not
-              available" would send somebody looking in the wrong place for
-              all three. */}
-          <Toggle label={t('cfgAirplay2')}
-            disabled={!airplayCapable || !airplay2Capable || !ap2Ready
-                      || ap2OnFireOS || !(config.airplayEnabled ?? false)}
-            sub={!airplay2Capable
-              ? t('cfgNoAirplay2')
-              : (ap2OnFireOS
-                ? t('cfgAirplay2FireOS')
-                : (!ap2Ready
-                  ? t('cfgAirplay2Missing')
-                  : t('cfgAirplay2Sub')))}
-            value={airplay2Capable && ap2Ready && !ap2OnFireOS
-                   && (config.airplay2Enabled ?? false)}
+          {/* Which RECEIVER, not whether AirPlay runs. The gate is a function
+              so it can be driven by a test: it decided a setting could never
+              be turned on at all, and nothing in a JSX expression would have
+              said so. See airplay2Gate. */}
+          <Toggle label={t('cfgAirplay2')} disabled={ap2Gate.disabled}
+            sub={t(ap2Gate.reason)} value={ap2Gate.value}
             onChange={v => set('airplay2Enabled', v)}/>
           {/* The consequence is IN THE LABEL, which is the whole reason this
               is a setting at all. An Echo has one volume and shares it with

@@ -538,3 +538,35 @@ def test_airplay2_selects_a_binary_and_is_off_at_both_ends():
     jsx = (root / "static" / "dashboard.jsx").read_text()
     assert "airplay2Enabled" in jsx, "no control for it in the dashboard"
     assert "airplay2Capable" in jsx, "the control is not gated on the capability"
+
+
+def test_installing_either_receiver_restarts_the_one_process():
+    """Two files, one supervisor — so both kinds have to reach Restart().
+
+    The controller asks for a restart by KIND, because that is what it just
+    installed. The device runs ONE shairport-sync and picks which file to
+    exec, so an `airplay2` install that did not reach the receiver's Restart
+    would report success and leave the old inode running — a rename replaces
+    a directory entry, never the inode a process is executing. That is the
+    failure `endpoint_restart` exists to end, arriving through the door the
+    second receiver opened.
+
+    Read off the source rather than run, because the dispatch lives in
+    `cmd/`, which only compiles inside the pinned compiler image.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2]
+           / "device" / "cmd" / "server.go").read_text()
+    import em_endpoint_bins as ebins
+    import re
+
+    body = src[src.index("OnEndpointRestart"):]
+    body = body[:body.index("log.Printf(\"[cmd] endpoint_restart for unknown")]
+    handled = set(re.findall(r'case ((?:"[a-z0-9]+"(?:, )?)+):', body))
+    names = {n.strip('"') for group in handled for n in group.split(", ")}
+
+    for key in ebins.KINDS:
+        assert key in names, (
+            f"endpoint_restart has no case for the {key} kind, so installing "
+            f"it would report success over a process still running the old "
+            f"file")

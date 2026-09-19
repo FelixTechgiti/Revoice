@@ -431,7 +431,14 @@ func main() {
 		switch kind {
 		case "spotify":
 			return spotifyClient.Restart()
-		case "airplay":
+		case "airplay", "airplay2":
+			// ONE process, two files it can be. The controller asks by KIND
+			// because that is what it just installed, and installing the
+			// AirPlay 2 receiver has to re-exec the same supervisor the
+			// classic one runs under — a rename replaces a directory entry,
+			// not the inode a process is executing, so without this the
+			// device would report a successful install and go on running
+			// the file it started with until something else restarted it.
 			return airplayClient.Restart()
 		case "nqptp":
 			// A third kind, because nqptp is a second PROCESS at a second
