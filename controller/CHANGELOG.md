@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.53.0-fx.1
+
+### Der AirPlay-2-Schalter liess sich nie einschalten
+
+**Wenn du den Schalter in 2.52.0-fx.1 gesucht und nicht gefunden hast: Es gab
+ihn, er war nur dauerhaft ausgegraut.** Darunter stand, der Empfänger komme
+„mit dem nächsten Endpunkt-Update" — und das konnte nie passieren.
+
+Der Grund war eine Schleife, die ich selbst zugezogen habe: Der Controller holt
+die AirPlay-2-Dateien nur für ein Gerät, dessen Schalter an ist. Der Schalter
+war aber gesperrt, solange die Dateien fehlten. Keine Datei ohne Schalter, kein
+Schalter ohne Datei.
+
+**Jetzt lässt er sich einschalten, und das Einschalten ist genau das, was die
+Dateien holt.** Bis sie da sind, läuft klassisches AirPlay unverändert weiter —
+das Gerät fällt von sich aus darauf zurück, solange der AirPlay-2-Empfänger
+fehlt. Du schaltest also ein und wartest die nächste Verbindung ab; nichts
+dazwischen ist kaputt.
+
+Ausgegraut bleibt der Schalter nur noch aus Gründen, die sich nicht durch Warten
+erledigen, und jeder sagt sich selbst: Firmware zu alt, AirPlay überhaupt aus,
+oder FireOS — dort kann AirPlay 2 nicht funktionieren.
+
+**Dazu ein zweiter Fehler aus derselben Änderung**, den du nur an der Wirkung
+gemerkt hättest: Nach der Installation des AirPlay-2-Empfängers wurde der
+laufende Empfänger nicht neu gestartet. Die Installation hätte Erfolg gemeldet,
+und das Gerät hätte weiter die alte Datei gefahren — bis irgendwann etwas
+anderes es neu gestartet hätte. Braucht Firmware v2.50.0-fx.1.
+
+**Zu tun:** Controller updaten, Firmware auf v2.50.0-fx.1, dann den Schalter
+umlegen. Wer AirPlay 2 nicht benutzt, merkt von diesem Update nichts.
+
 ## 2.52.0-fx.1
 
 ### AirPlay 2 kommt jetzt von selbst

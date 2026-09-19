@@ -12,6 +12,27 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.50.0-fx.1
+
+### Ein neu installierter AirPlay-2-Empfänger wurde nicht gestartet
+
+**Nur wichtig, wenn du AirPlay 2 benutzen willst; sonst ändert dieses Update
+nichts.**
+
+Das Gerät fährt einen einzigen AirPlay-Empfänger und wählt nur aus, welche
+Datei das ist. Nach der Installation des AirPlay-2-Empfängers hat es diesen
+Wechsel nicht vollzogen: Der Controller meldete die Installation als
+erfolgreich, und das Gerät lief weiter mit der Datei, mit der es gestartet war
+— eine neue Datei ersetzt keinen laufenden Prozess. Aufgefallen wäre das als
+„installiert, aber es ist immer noch klassisches AirPlay", bis irgendwann etwas
+anderes den Empfänger neu gestartet hätte.
+
+Der zugehörige Schalter im Dashboard braucht Controller 2.53.0-fx.1; vorher
+liess er sich nicht einschalten.
+
+**Nicht am Gerät verifiziert**, was AirPlay 2 angeht: Es ist bis heute kein
+AirPlay-2-Empfänger auf einem Echo gestartet worden.
+
 ## 2.49.0-fx.1
 
 ### Das Gerät kann zwischen den beiden AirPlay-Empfängern wählen
