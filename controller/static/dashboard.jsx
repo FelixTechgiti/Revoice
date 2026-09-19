@@ -2723,7 +2723,19 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   const ap = endpointHealthLine(
                     device.endpointHealth && device.endpointHealth.airplay,
                     device.endpointHealthCapable);
-                  if (!sp && !ap) return null;
+                  const ap2 = airplay2Line(device.airplayStatus,
+                    device.endpointHealth && device.endpointHealth.nqptp,
+                    device.endpointHealthCapable);
+                  if (!sp && !ap && !ap2) return null;
+                  const ap2Text = !ap2 ? null
+                    : ap2.flavour === 'classic' ? t('devAirplayClassic')
+                    : ap2.flavour !== 'airplay2' ? t('devAirplayUnknownFlavour')
+                    : ap2.clock === 'ok'      ? t('devAirplay2Ok')
+                    : ap2.clock === 'down'    ? `${t('devAirplay2ClockDown')} (${ap2.restarts})`
+                    : ap2.clock === 'absent'  ? t('devAirplay2NoClock')
+                    :                           t('devAirplay2ClockUnknown');
+                  const ap2Tone = !ap2 || ap2.flavour !== 'airplay2' ? 'var(--muted)'
+                    : ap2.clock === 'ok' ? 'var(--ok)' : 'var(--warn)';
                   return (
                     <Panel label={t('devPanelAudioEndpoints')}>
                       <div className="em-grid2" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 24px' }}>
@@ -2734,6 +2746,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                         <div>
                           {ap && row(t('devAirplay'), ap,
                                      ap.startsWith('running') ? 'var(--ok)' : 'var(--warn)')}
+                          {ap2Text && row(t('devAirplayFlavour'), ap2Text, ap2Tone)}
                         </div>
                       </div>
                     </Panel>
@@ -4406,6 +4419,46 @@ function airplay2Gate({ airplayCapable, airplay2Capable, airplayOn,
     disabled: false,
     reason: ap2Installed ? 'cfgAirplay2Sub' : 'cfgAirplay2Coming',
     value: !!stored,
+  };
+}
+
+// Which AirPlay receiver is actually running, and whether its clock is up.
+//
+// **The device has reported all of this since v2.49.0-fx.1 and nothing showed
+// any of it.** `airplay_status.flavour` says which binary was selected,
+// `.nqptp` whether the clock daemon's file is there, and the stats tick
+// carries its liveness — and the only panel that could have said so listed
+// the two endpoints and stopped. So "is AirPlay 2 on?" had no answer anywhere
+// on screen, which was reported as exactly that question.
+//
+// The state worth the whole function is `down`: the receiver runs, the clock
+// does not, classic AirPlay is unaffected and AirPlay 2 plays out of sync.
+// Nothing about that is audible as a fault — it is the failure `Nqptp.Health`
+// was added for, and without a line here that reading went nowhere.
+//
+// Returns null where it cannot say. Firmware too old to report the flavour
+// gets silence rather than a guess, for endpointHealthLine's reason: a panel
+// that accuses a working Echo is the panel everybody learns to skip.
+function airplay2Line(airplayStatus, health, capable) {
+  const st = airplayStatus || null;
+  if (!st || !st.flavour) return null;
+  if (st.flavour !== 'airplay2') {
+    return { flavour: st.flavour, clock: null, restarts: 0 };
+  }
+
+  // Installed is not running, and here the two answers come from different
+  // places: the file from the register message, the process from the stats
+  // tick. A file that is absent settles it without waiting for a tick.
+  const installed = !!(st.nqptp && st.nqptp.ok);
+  if (!installed) return { flavour: 'airplay2', clock: 'absent', restarts: 0 };
+  if (!capable || !health) {
+    return { flavour: 'airplay2', clock: 'unknown', restarts: 0 };
+  }
+  if (!health.enabled) return { flavour: 'airplay2', clock: 'absent', restarts: 0 };
+  return {
+    flavour: 'airplay2',
+    clock: health.alive ? 'ok' : 'down',
+    restarts: health.restarts || 0,
   };
 }
 

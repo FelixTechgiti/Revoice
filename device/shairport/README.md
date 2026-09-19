@@ -374,6 +374,15 @@ Audio is "AAC stereo at 44,100 frames per second" and Realtime streams are
 ALAC. So `--disable-everything` plus the AAC and ALAC decoders, rather than a
 general-purpose media framework on a device sharing 512MB with Android.
 
+**The decoder has to hand back FLOATING PLANAR (`fltp`) samples**, which
+`AIRPLAY2.md` lists among AirPlay 2's requirements and which is the reason to
+enable `aac` and not `aac_fixed`: the fixed-point decoder produces `s16p` and
+shairport-sync rejects it. What that failure looks like is worth knowing,
+because it is not "AirPlay 2 is broken" — Realtime streams are ALAC and keep
+working, so only Buffered Audio dies, and the symptom is AirPlay 2 that plays
+from one app and not another. This build enables the native decoder, so it is
+a thing to check if that ever shows up rather than a change to make.
+
 Pinned at `n7.1.5` rather than the newest (9.0.1 at the time of writing): 7.1
 is the series every Android NDK recipe in the wild is written against, and this
 build cannot be iterated on cheaply.
