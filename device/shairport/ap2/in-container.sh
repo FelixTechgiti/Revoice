@@ -453,39 +453,48 @@ echo "shared-memory ABI: both at version $sps_smi"
 # because the -include that carries it is one word in one make line per program
 # and its absence is invisible until a device is in front of you (#218).
 #
-# nm is proof here rather than a hint, and the static link is why: libemcompat.a
+# Presence is proof rather than a hint, and the static link is why: libemcompat.a
 # is an archive, so ld pulls android_localhost.o in only if something REFERENCES
-# a symbol it defines. The symbol being present therefore says the rename
-# reached a call site, which is the thing that can be missing. It has to run
-# before llvm-strip below, which takes the symbol table with it.
+# a symbol it defines. The symbol being there therefore says the rename reached a
+# call site, which is the thing that can be missing. It has to run before
+# llvm-strip below, which takes the symbol table with it.
 #
-# Matched on the BARE NAME, never on nm's columns. The first version of this
-# check asked for " T em_getaddrinfo$" and failed the release on a binary that
-# was linked correctly — a column format is a property of whichever llvm-nm the
-# pinned image happens to ship, and pinning that is pinning the wrong thing. The
-# bare name cannot give a false PASS either: an executable that links carries no
-# undefined symbols, so the name appears only if it was resolved.
+# **llvm-readelf, never llvm-nm.** This cost two release runs. `llvm-nm` in the
+# pinned image reads these binaries as five debug entries with EMPTY names:
 #
-# On failure it prints what it actually saw. A check that says only "missing" in
-# a container nobody can attach to costs a whole release cycle per guess.
+#     00000000 N
+#     00000000 N
+#
+# — no error, exit 0, and a name-based test on that output can only ever fail.
+# llvm-readelf is the tool the checks above already use on the same two files,
+# so it is the one with evidence behind it rather than the one that reads
+# right. The general form: a check is only as trustworthy as the tool under it,
+# and a tool that answers confidently with nothing is worse than one that errors.
+#
+# The whole output is captured ONCE into a variable and matched with a case
+# glob. The first diagnostic version piped into `head -5`, which SIGPIPEs the
+# producer under pipefail and killed the script mid-report — so the run that was
+# supposed to explain itself printed its first five lines and exited 74, with the
+# comparison that mattered never reached.
 shim_check() {
-    local binary="$1" obj="$2"
-    if "$NDK/bin/llvm-nm" "$binary" 2>&1 | grep -q em_getaddrinfo; then
-        return 0
-    fi
+    local binary="$1" obj="$2" syms objsyms
+    syms="$("$NDK/bin/llvm-readelf" --symbols "$binary" 2>&1 || true)"
+    case "$syms" in
+        *em_getaddrinfo*) return 0 ;;
+    esac
     echo "ERROR: $binary was linked without the loopback shim." >&2
     echo "       It resolves \`localhost\` to reach nqptp's control port," >&2
     echo "       which no resolver on the device answers — so it would" >&2
     echo "       build, install, and exit once a minute for ever." >&2
-    echo "--- llvm-nm $binary | head -5" >&2
-    "$NDK/bin/llvm-nm" "$binary" 2>&1 | head -5 >&2
-    echo "--- llvm-nm $binary | grep em_ (the other shims, for comparison)" >&2
-    "$NDK/bin/llvm-nm" "$binary" 2>&1 | grep em_ >&2 || echo "(none)" >&2
-    # A glob, because automake renames an object when a target carries its own
-    # flags and the name is not worth guessing from here.
-    echo "--- llvm-nm $obj | grep addrinfo (did the rename reach the call site?)" >&2
+    # em_shm_open is in every one of these binaries by construction — without it
+    # there would be no binary to check. So this line separates "the reader is
+    # not reading" from "the shim is really missing".
+    echo "--- the other shims, which are known to be linked:" >&2
+    printf '%s\n' "$syms" | grep " em_" >&2 || echo "    (no em_ symbol at all — suspect the reader)" >&2
     # shellcheck disable=SC2086
-    "$NDK/bin/llvm-nm" $obj 2>&1 | grep -i addrinfo >&2 || echo "(none)" >&2
+    objsyms="$("$NDK/bin/llvm-readelf" --symbols $obj 2>&1 || true)"
+    echo "--- addrinfo in the object holding the call site:" >&2
+    printf '%s\n' "$objsyms" | grep -i addrinfo >&2 || echo "    (none — the -include did not reach it)" >&2
     exit 1
 }
 shim_check /build/shairport-sync/shairport-sync "/build/shairport-sync/*ptp-utilities.o"
