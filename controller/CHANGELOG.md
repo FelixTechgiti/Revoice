@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.55.0-fx.1
+
+### AirPlay 2 lief auf keinem Gerät, und jetzt kommt die Reparatur auch an
+
+**Zwei Fehler, und der zweite hätte den ersten unsichtbar repariert
+zurückgelassen.**
+
+**Der erste:** AirPlay 2 hat auf keinem Echo je gestartet. nqptp und
+shairport-sync suchen ihren gemeinsamen Kontrollport über den Namen
+`localhost`, und auf dem Gerät antwortet darauf niemand — beide Programme haben
+sich jede Minute beendet, stundenlang, seit AirPlay 2 ausgeliefert wurde.
+Behoben in den Binaries, ausgeliefert als `endpoints-v1.11.0`. Klassisches
+AirPlay war nie betroffen.
+
+**Der zweite:** Diese Reparatur wäre nicht auf dein Gerät gekommen. Beide neuen
+Binaries haben **exakt** die Größe ihrer Vorgänger — 38080 und 3067440 Bytes —,
+weil die neue Funktion in die Füllbytes gefallen ist, die der Linker ohnehin
+schreibt. Die automatische Installation hat Größen verglichen, hätte also bei
+jedem Verbinden abgelehnt: still, mit einem Panel, das den Endpunkt als aktuell
+meldet, während das kaputte Programm weiterläuft. Verglichen wird jetzt die
+Prüfsumme.
+
+**Wenn du schon auf 2.54.0-fx.1 warst und die beiden Dateien von Hand neu
+installiert hast, hat sich für dich damit nichts geändert** — dieses Update
+sorgt dafür, dass die nächste Reparatur ohne diesen Handgriff ankommt.
+
+### Die Uhr-Zeile versprach Ton, den es nicht gab
+
+Stand der Empfänger selbst still, sagte die neue Statuszeile trotzdem
+*„UHR LÄUFT NICHT, der Ton wird nicht synchron"*. Der Satz setzt voraus, dass
+es Ton gibt; gab es nicht. Beide Zeilen waren rot aus **einer** Ursache, und
+die zweite beschrieb die Folge der ersten als eigenen Fehler.
+
+Läuft der Empfänger nachweislich nicht, steht dort jetzt *„AirPlay 2
+ausgewählt — der Empfänger selbst läuft nicht"*. Welche Fassung gewählt ist,
+wird weiter genannt: das sagt, **welches** Programm gerade scheitert. Kann der
+Controller es nicht wissen, ändert sich nichts — eine echte Uhr-Meldung wird
+nicht auf Verdacht unterdrückt.
+
 ## 2.54.0-fx.1
 
 ### Jetzt steht auf dem Status, welcher AirPlay-Empfänger läuft
