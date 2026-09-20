@@ -35,6 +35,7 @@ import (
 	"github.com/wilbowes/EchoMuse/internal/config"
 	"github.com/wilbowes/EchoMuse/internal/hostname"
 	"github.com/wilbowes/EchoMuse/internal/logrelay"
+	"github.com/wilbowes/EchoMuse/internal/loopback"
 	"github.com/wilbowes/EchoMuse/internal/mcast"
 	"github.com/wilbowes/EchoMuse/internal/musicplane"
 	"github.com/wilbowes/EchoMuse/internal/netfilter"
@@ -100,6 +101,19 @@ func main() {
 	// every start — see applyCoreFloor for why the mic pipeline's 160ms
 	// deadline makes it worth doing.
 	applyCoreFloor()
+
+	// Bring the loopback up, because on emOS nothing else does (#226). Here
+	// rather than beside the endpoints that need it: `lo` is a property of
+	// the machine, not of a feature, and a device whose loopback is down is
+	// one where anything reaching for 127.0.0.1 fails with an error naming an
+	// address rather than an interface. Silent when it was already right,
+	// which is every FireOS device and every start after the first.
+	if st, err := loopback.Ensure(); err != nil {
+		log.Printf("[net] could not bring up %s: %v — anything using 127.0.0.1 will fail",
+			loopback.Name, err)
+	} else if st.Configured {
+		log.Printf("[net] %s was down; brought it up with %s", loopback.Name, loopback.Addr)
+	}
 
 	buttonController, err := internalbuttons.NewButtonController()
 	if err != nil {
