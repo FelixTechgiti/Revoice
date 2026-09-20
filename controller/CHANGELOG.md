@@ -1,5 +1,52 @@
 # Changelog
 
+## 2.57.0-fx.1
+
+### Das emOS-Update übers Netz lief nicht — jetzt schon
+
+**Dein Gerät war dabei nie in Gefahr.** Der Ablauf hat beide Male
+abgebrochen, bevor irgendetwas geschrieben wurde, und hat das auch gesagt:
+„Nothing has been written."
+
+Gescheitert ist nicht die Übertragung, sondern ihre Prüfung. Der Controller
+liest die Boot-Partition in Stücken von einem Megabyte und lässt das Gerät
+jedes Stück nachrechnen — über einen Umweg, der bei dieser Grösse an eine
+Grenze des Systems stösst. Die Bytes kamen jedes Mal vollständig an; nur die
+Prüfsumme rechnete über nichts, und der Controller nannte das „beschädigt".
+
+Aufgefallen ist es erst jetzt, weil dies die einzige Stelle ist, an der der
+Controller etwas vom Gerät **liest** — alles andere schiebt hin. Und die
+kurze Leseprobe davor ging immer durch, weil sie zu klein für diese Grenze
+ist.
+
+Der nächste Versuch ist die Probe: Updates-Tab, emOS-Abschnitt, Knopf.
+
+### Der emOS-Abschnitt sagt jetzt etwas, während er nachsieht
+
+**Nachbesserung an 2.56.0-fx.1, gemeldet nach einer halben Stunde Praxis.**
+
+Der emOS-Abschnitt auf dem Updates-Tab war nach dem Öffnen **eine halbe
+Minute lang gar nicht da** — nicht „lädt", sondern unsichtbar. Er fragt das
+Gerät selbst, und diese Runde dauert gemessen rund 26 Sekunden. Wer vorher
+hinsah, hielt den Abschnitt für nicht vorhanden. Und ging die Abfrage schief,
+verschwand er stillschweigend für immer.
+
+Das ist genau die Form des Fehlers, gegen den dieser Abschnitt gebaut wurde:
+Schweigen liest sich wie „nichts zu tun". Er zeigt jetzt immer etwas — „Frage
+das Gerät…", den Grund, wenn es nicht klappt, oder die Antwort.
+
+### Die Versionsnummern waren im Dark Mode kaum lesbar
+
+Schwarz auf Grau, weil den beiden Werten schlicht keine Farbe zugewiesen war.
+Behoben.
+
+### Und die Platzprüfung misst jetzt überall
+
+Die Prüfung auf freien Speicher hat auf emOS-Geräten nie gemessen — deren
+`df` gibt die Werte in einem Format aus, das der Leser nicht kannte. Sie hat
+korrekt nichts blockiert, aber eben auch nichts geprüft. Das betraf zwei
+Stellen; beide lesen jetzt denselben Parser.
+
 ## 2.56.0-fx.1
 
 ### Der Updates-Tab zeigt jetzt auch emOS
