@@ -40,6 +40,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import em_netflash
 import em_oww_models
 
 # Where the device expects everything. Must match shadow.DefaultDir in
@@ -381,23 +382,33 @@ def missing_assets(desired: list[Asset],
 
 def parse_free_mb(df_line: str) -> int | None:
     """
-    Free megabytes from a `busybox df -m` data line.
+    Free megabytes from a `df -m` data line. One parser, two layouts.
 
-    Parsed here rather than with awk because the column INDEX is not stable:
+    Parsed rather than read with awk because the column INDEX is not stable:
     busybox wraps a long filesystem name onto its own line, so the data row is
     sometimes "1010 648 346 65% /data" and sometimes
     "/dev/block/x 1010 648 346 65% /data". An awk $4 gets one of those right
     and silently returns "65%" for the other — which parsed as no reading at
     all, and would have disabled the free-space check without saying so.
 
-    The use-percentage column is the anchor: available is always the field
-    immediately before it.
+    That rule was not wide enough. It anchors on the use-percentage column,
+    and **emOS prints no such column**, so this answered None for every emOS
+    device: the guard in front of the OTA and in front of this module's own
+    asset push retired itself in the safe direction with nobody told. The
+    measurement and both layouts live in `em_netflash.free_from_df`, written
+    for the network reflash, which met the same row first.
+
+    So this DELEGATES rather than carrying a second copy. Two readers of one
+    device's one `df` row is how the blind spot outlived being found: the
+    reflash was repaired and these two call sites were not, because nothing
+    connects them except that they ask the same question of the same output.
+
+    **The import goes this way round and not the other.** `em_netflash` is
+    deliberately pure — it reaches only `em_platform`, which imports nothing —
+    and every rule in it is a refusal guarding a partition write. Importing
+    this module there would hang `em_oww_models` off that, for a parser.
     """
-    fields = (df_line or "").split()
-    for i, f in enumerate(fields):
-        if f.endswith("%") and i > 0 and fields[i - 1].isdigit():
-            return int(fields[i - 1])
-    return None
+    return em_netflash.free_from_df(df_line)
 
 
 def parse_device_listing(text: str) -> dict[str, tuple[str, int]]:
