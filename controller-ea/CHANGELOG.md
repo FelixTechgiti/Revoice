@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.58.0-fx.1
+
+### Das emOS-Update schreibt jetzt wirklich
+
+**Der zweite Anlauf kam bis zum Schreiben und hat trotzdem nichts
+geschrieben.** Gemeldet hat der Controller, die Boot-Partition enthalte
+nicht das Gesendete — das stimmte, nur lag es nicht an der Partition: Der
+Schreibbefehl war nach **13 Millisekunden** fertig, und 6,9MB dauern das
+nicht.
+
+Der Grund ist derselbe wie beim Lesen gestern Abend, eine Zeile weiter:
+Das Gerät hat zwei Sätze von Standardwerkzeugen an Bord, und das
+angesprochene war Amazons. Dessen `dd` kennt die Option nicht, mit der wir
+erzwingen, dass die Daten wirklich auf dem Speicher landen — es bricht
+sofort ab. Alle drei Partitionsbefehle laufen jetzt über busybox.
+
+Zwei Dinge sind dabei mitgewachsen, und beide sind wichtiger als der
+Auslöser:
+
+- **Das Gerät sagt jetzt, was es getan hat.** Die Meldung von `dd` wurde
+  bisher weggeworfen; sie steht jetzt im Protokoll, mitsamt der Zahl der
+  geschriebenen Bytes. Ein Fehlschlag nennt ab jetzt seinen Grund.
+- **Eine Prüfung, die nicht aufgeht, legt das alte Abbild zurück.** Das ist
+  die eine Reparatur, die emOS nicht selbst leisten kann: Seine
+  Rücksetzautomatik steckt im init *innerhalb* des gerade überschriebenen
+  Abbilds. Eine halb beschriebene Partition erreicht diesen Code nie. Genau
+  in dem Moment läuft dein Gerät aber noch und hat das gute Abbild — das
+  Fenster schliesst sich beim nächsten Stromausfall, also wird es jetzt
+  genutzt.
+
+Das Gerät, an dem das gemessen wurde, ist unberührt: 13 Millisekunden sind
+keine halbe Schreibung.
+
 ## 2.57.0-fx.1
 
 ### Das emOS-Update übers Netz lief nicht — jetzt schon
