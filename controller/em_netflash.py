@@ -34,6 +34,8 @@ Pure and dependency-free, for the reason `em_platform.android_userspace` and
 silent and whose cost is a device somebody has to open a case to recover.
 """
 
+import re
+
 import em_platform
 
 # What the device must have free on /data before we stage an image there.
@@ -197,22 +199,48 @@ def preflight(base_os, good_image_present: bool, free_mb,
     return None
 
 
-def written_correctly(read_back_md5: str, sent_md5: str) -> bool:
-    """Whether the partition now holds what we sent it.
+# A digest is 32 hex characters and nothing else. Anything else on that line
+# is the device talking — "md5sum: not found", a dd error, a shell complaint —
+# and the difference decides what to do next, so it is matched rather than
+# compared.
+_MD5_RE = re.compile(r"^[0-9a-f]{32}$")
 
-    The caller compares over exactly the image's length read back from the
-    partition, never over the partition. That distinction is not pedantry: it
-    is the bug that made every emOS flash in the wizard fail on a write `dd`
-    reported as complete, because 425,984 bytes of the PREVIOUS image were
-    being compared against zero padding nobody had written.
 
-    An empty `read_back_md5` is a read that did not happen and is false here,
-    not "unchanged" — the sentinel discipline the shell plane uses everywhere
-    else, applied to the one comparison that gates a reboot.
+def read_back_verdict(out: str, sent_md5: str):
+    """What the read-back actually said: ("ok"|"different"|"unreadable", got).
+
+    Three answers where the caller used to get two, for the reason a digest of
+    no bytes was split from corruption in `_pull_range_from_device` on the same
+    day: **after a write, "the partition holds something else" and "we could
+    not measure the partition" want opposite next moves.** The first is a bad
+    write and the image has to be put back; the second says nothing about the
+    partition at all, and treating it as a bad write would mean writing again
+    on the strength of a missing tool.
+
+    `got` is what the device put on its last line, and it rides the message.
+    It is the only thing that can name a cause, and throwing it away is what
+    made the first two failures of this feature unattributable.
+
+    The digest is the LAST line: dd writes its block counts to stderr, which
+    the command redirects, but a shell that says anything else first would
+    otherwise be compared instead of the md5.
+
+    What is compared is the image's own LENGTH read back off the partition,
+    never the partition — `read_back_cmd` trims to it. That distinction is
+    not pedantry: it is the bug that made every emOS flash in the wizard fail
+    on a write dd reported as complete, because 425,984 bytes of the PREVIOUS
+    image were being weighed against zero padding nobody had written.
     """
-    if not read_back_md5 or not sent_md5:
-        return False
-    return read_back_md5.strip().lower() == sent_md5.strip().lower()
+    got = ""
+    for line in (out or "").strip().splitlines():
+        line = line.strip()
+        if line:
+            got = line
+    if not _MD5_RE.match(got.lower()):
+        return "unreadable", got
+    if not sent_md5:
+        return "unreadable", got
+    return ("ok" if got.lower() == sent_md5.strip().lower() else "different"), got
 
 
 def read_back_cmd(length: int) -> str:
@@ -223,8 +251,53 @@ def read_back_cmd(length: int) -> str:
     busybox has and which costs one pipe.
     """
     blocks = (length + 65535) // 65536
-    return (f"dd if={BOOT_DEV} bs=65536 count={blocks} 2>/dev/null "
-            f"| head -c {length} | md5sum | cut -d' ' -f1")
+    return (f"busybox dd if={BOOT_DEV} bs=65536 count={blocks} 2>/dev/null "
+            f"| head -c {length} | busybox md5sum | cut -d' ' -f1")
+
+
+# Its own sentinel rather than PROBE_MARK's: this probe runs at the worst
+# moment the feature has — the partition has been written and did not verify —
+# and an empty answer there must read as "could not ask", never as a good
+# image that is absent or empty.
+GOOD_MARK = "_GOODCHK"
+
+
+def good_image_cmd() -> str:
+    """Size and digest of the rollback image, for verifying a restore.
+
+    Asked only on the failure path, so a healthy flash pays nothing for it.
+    Both values come from the device rather than from anything remembered
+    here: the controller has never held a copy of this image and must not
+    start — it is the user's own boot partition, and the one rule this whole
+    feature is built around is that we do not keep one.
+    """
+    return (f"echo \"SIZE:$(busybox stat -c %s {GOOD_IMG} 2>/dev/null)\"; "
+            f"echo \"MD5:$(busybox md5sum {GOOD_IMG} 2>/dev/null "
+            f"| cut -d' ' -f1)\"; "
+            f"echo {GOOD_MARK}")
+
+
+def good_image(out: str):
+    """Parse `good_image_cmd`. None when the probe did not run or is unusable.
+
+    A restore that cannot be verified is not a restore — it is a second
+    unverified write on top of the first — so anything missing here collapses
+    to None and the caller says so instead of writing again.
+    """
+    text = out or ""
+    if GOOD_MARK not in text:
+        return None
+    size, digest = None, ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("SIZE:"):
+            raw = line[5:].strip()
+            size = int(raw) if raw.isdigit() else None
+        elif line.startswith("MD5:"):
+            digest = line[4:].strip().lower()
+    if not size or not _MD5_RE.match(digest):
+        return None
+    return {"size": size, "md5": digest}
 
 
 def stage_size_cmd() -> str:
@@ -261,8 +334,53 @@ def flash_cmd() -> str:
     `conv=fsync` rather than a trailing `sync`: the write must be on the flash
     before anything reads it back, and a separate sync is a second command
     that can be the one that does not run.
+
+    **BUSYBOX's dd, and that is the whole of why the first network flash did
+    not write anything.** A bare `dd` on either base is Amazon's toolbox
+    binary out of `/system` — emOS mounts that filesystem, so the tool is
+    present and answers, which is what makes this class of fault silent. Its
+    dd is the NetBSD one and `conv=fsync` is a GNU/busybox extension it
+    rejects outright: measured 2026-09-20, the write returned in **13
+    milliseconds** for a 6.9MB image and the read-back then honestly reported
+    a partition that had not changed. Same shape as `base64 -w0` and as
+    `reboot` two steps below — a flag or a tool is not supported because the
+    name resolves.
     """
-    return f"dd if={STAGE_IMG} of={BOOT_DEV} bs=65536 conv=fsync 2>&1"
+    return f"busybox dd if={STAGE_IMG} of={BOOT_DEV} bs=65536 conv=fsync 2>&1"
+
+
+def restore_cmd() -> str:
+    """Put the known-good image back, byte for byte the same way.
+
+    Reached when the partition does not read back as what was sent. The
+    alternative — leaving it — is the one outcome emOS's own rollback cannot
+    repair: that rollback lives in the init INSIDE the image being replaced,
+    so a partition holding half of something never runs the code that would
+    restore it. The device is still up and still reachable at that moment,
+    which is the only window in which this is cheap.
+    """
+    return f"busybox dd if={GOOD_IMG} of={BOOT_DEV} bs=65536 conv=fsync 2>&1"
+
+
+# `dd` reports its own work on the last line — busybox prints
+# `6928384 bytes (6.6MB) copied, 0.352 seconds, 18.7MB/s`. That number is the
+# only account of the write anybody gets.
+_COPIED_RE = re.compile(r"(\d+)\s+bytes[^\n]*copied", re.IGNORECASE)
+
+
+def wrote_bytes(out: str):
+    """How many bytes `dd` says it wrote, or None when it did not say.
+
+    None is NOT zero and the distinction decides whether the partition is
+    presumed touched: a dd whose report we cannot read may have written
+    everything, so the caller must go on and verify. Zero, or a short count,
+    is dd telling us the write did not complete — and a short count is the
+    state that needs the image put back.
+    """
+    m = None
+    for m2 in _COPIED_RE.finditer(out or ""):
+        m = m2
+    return int(m.group(1)) if m else None
 
 
 # ── Is this device's emOS behind the newest release? ──────────────────────────
