@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.59.0-fx.1
+
+### Der emOS-Abschnitt sagt jetzt, warum Spotify oder AirPlay nicht geht
+
+**Dein Echo läuft auf emOS 0.6.0 und Spotify Connect startet trotzdem jede
+Minute neu — und von hier aus war nicht zu erkennen, warum.** Genau dafür ist
+0.6.0 da: Es bringt die Namensauflösung mit, die auf emOS fehlte. Dass der
+Fehler unverändert bleibt, kann zweierlei heissen, und beides braucht einen
+anderen nächsten Schritt: Entweder läuft das neue System doch nicht, oder es
+läuft und etwas anderes ist kaputt.
+
+Der emOS-Abschnitt auf dem Updates-Tab fragt das Gerät jetzt direkt, in
+derselben Runde, in der er ohnehin die Version holt. Er zeigt:
+
+- **Namensauflösung** — funktioniert, oder es fehlt der Dienst dafür, oder er
+  läuft und die Abfrage scheitert trotzdem. Das sind drei verschiedene
+  Aussagen, und bisher sahen alle gleich aus.
+- **Worauf das Gerät horcht** — ob die Empfänger für AirPlay und Spotify
+  überhaupt eine Verbindung annehmen können.
+- **Welches AirPlay installiert ist** und ob sein Uhren-Dienst läuft. Ohne
+  den gibt es kein AirPlay 2, sondern klassisches AirPlay.
+- **Die letzten Zeilen, die emOS selbst beim Start geschrieben hat.** Dort
+  steht, wenn etwas beim Hochfahren nicht ging — und diese Datei hat bisher
+  nie jemand gelesen.
+
+**Was ausgeschaltet ist, wird nicht angemahnt.** Ein Gerät, das klassisches
+AirPlay bedient, weil niemand AirPlay 2 eingeschaltet hat, ist in Ordnung, und
+eine Meldung darüber wäre eine, die man sich abgewöhnt zu lesen.
+
+Damit ist die Frage beim nächsten Blick auf den Tab beantwortet, statt eine
+Shell-Sitzung zu brauchen.
+
 ## 2.58.0-fx.1
 
 ### Das emOS-Update schreibt jetzt wirklich
