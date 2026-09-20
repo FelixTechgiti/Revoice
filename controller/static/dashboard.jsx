@@ -3213,6 +3213,43 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                       {emos.freeMb != null && ` · ${emos.freeMb} MB ${t('emosFreePrefix')}`}
                     </div>
                   )}
+
+                  {/* What the device says about the two things that stop
+                      working first, and that nothing else here can see:
+                      whether names resolve at all, and whether the local
+                      receivers are listening. The verdict is the server's —
+                      re-deriving it here is how a panel and an endpoint come
+                      to disagree about the same device. */}
+                  {emos.diag && (
+                    <div style={{ marginTop:14, paddingTop:12, borderTop:'1px solid var(--line)' }}>
+                      <div style={{ ...label, marginBottom:6 }}>{t('diagTitle')}</div>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10,
+                                    color: emos.diagSummary === 'ok' ? 'var(--muted)' : 'var(--warn)',
+                                    lineHeight:1.6, textWrap:'pretty' }}>
+                        {t('diag_' + emos.diagSummary)}
+                      </div>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:8, lineHeight:1.7 }}>
+                        {t('diagDns')}: {t('diagDns_' + emos.diag.dns)}
+                        {' · '}{t('diagPorts')}: {emos.diag.ports.length
+                          ? emos.diag.ports.join(', ')
+                          : t('diagNone')}
+                        {' · '}{diagAirplayLine(emos.diag)}
+                      </div>
+                      {emos.diag.dnsDetail && (
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--empty)', marginTop:6, wordBreak:'break-word' }}>
+                          {emos.diag.dnsDetail}
+                        </div>
+                      )}
+                      {/* emOS's own account of its boot, verbatim and
+                          newest last. It is the only place a proxy that
+                          could not bind ever says so. */}
+                      {emos.diag.netlog && emos.diag.netlog.length > 0 && (
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--empty)', marginTop:6, lineHeight:1.6, whiteSpace:'pre-wrap', wordBreak:'break-word' }}>
+                          {emos.diag.netlog.join('\n')}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   </>)}
                 </Panel>
               )}
@@ -4625,6 +4662,20 @@ function airplay2Line(airplayStatus, health, capable, receiverHealth) {
     restarts: health.restarts || 0,
     receiverRunning,
   };
+}
+
+// The AirPlay half of the emOS panel's diagnosis, as one line.
+//
+// A function rather than an expression in the JSX: a multi-line expression
+// inside a text node is read as TEXT by the i18n ratchet, which then counts
+// an identifier as an untranslated English string. It is also the shape the
+// panel wants — which binary is installed and whether its clock is up are
+// one fact about AirPlay, not three.
+function diagAirplayLine(d) {
+  const kind = d.ap2Installed ? 'ap2' : (d.classicInstalled ? 'classic' : 'none');
+  const clock = !d.nqptpInstalled ? t('diagClockMissing')
+    : (d.nqptpRunning === false ? t('diagClockStopped') : t('diagClockOk'));
+  return S().diagAirplay(kind, clock);
 }
 
 function endpointHealthLine(health, capable) {
