@@ -2821,6 +2821,55 @@ Three things came out of it that outlive the flag:
   either, so the known-bootable image goes back and the message says which of
   the two failed.
 
+### Why an endpoint is not working, asked in one round trip (`em_devicediag.py`)
+
+**Four causes, one symptom, and nothing here could tell them apart.** On
+2026-09-20 a device took emOS 0.6.0-fx.1 — a release whose entire content is a
+DNS proxy for bionic — and librespot went on exiting once a minute with
+`could not initialize spirc: Service unavailable { client error (Connect) }`,
+which is the failure that release ends. Either the image is not the one we
+think it is, or the proxy is running and something else is wrong; the two want
+opposite next steps, and the only person who could open a shell was asleep.
+
+The panel now asks the device, on the round trip the emOS version already
+costs. Every probe is chosen to SEPARATE two explanations rather than to
+confirm one:
+
+- **`/dev/socket/dnsproxyd` present, and a name resolved through BIONIC.**
+  Those two answers together are the discriminator: no socket means emOS is
+  not answering the resolver at all (an init below 0.6.0-fx.1, or one that
+  could not bind), while a socket plus a failed lookup is a proxy that is
+  running and not working.
+- **The probe is `/system/bin/ping`, and that is the one place in this tree
+  where Amazon's binary is deliberately preferred to busybox.** busybox here
+  is static and carries its own resolver reading `/etc/resolv.conf` — a file
+  emOS writes and no endpoint's libc has ever opened — so `busybox nslookup`
+  answers for a resolver nothing uses. The repo already knew this: it is
+  written down in `device/CLAUDE.md` under librespot, where it cost a wrong
+  conclusion once.
+- **Resolution is proven by the ADDRESS, not by a reply.** `PING host (1.2.3.4)`
+  has resolved even if every packet is lost, and a router that drops ICMP
+  would otherwise read as the fault being hunted.
+- **`/run/net.log`, the init's own account, rides along.** `dnsproxyd: could
+  not bind` is written there and nowhere else, and nothing in this controller
+  had ever read that file — from outside, a socket that was never created is
+  indistinguishable from an init too old to create one.
+- **Listening ports and the installed receivers**, so "names resolve and
+  nothing is listening" is a different sentence from "nothing resolves".
+
+**The device's answer is folded together with what the CONTROLLER asked for**
+(`with_intent`), and every endpoint verdict is gated on that endpoint being
+switched on. A device serving classic AirPlay because nobody asked for AirPlay
+2 is not a fault, and a diagnosis that accuses it is one people learn to
+ignore — the same reasoning as `endpointHealthLine` staying silent for
+firmware that cannot report.
+
+Two limits worth stating: it hangs off the emOS endpoint, so a FireOS device
+does not get it (that endpoint returns before any shell runs — `base_refusal`),
+and it measures the DEVICE, not the service. A resolver that works and a
+Spotify account that is refused look the same from here; the difference is in
+librespot's own stderr, which `internal/logrelay` already carries.
+
 ## A blipped device is link-down, not absent
 
 A control-plane drop leaves the device **in `_devices`** with

@@ -267,6 +267,40 @@
       emosFreePrefix: 'free on /data:',
       emosRollbackYes: 'Rollback image present.',
       emosRollbackNo: 'No rollback image.',
+      diagTitle: 'Diagnosis',
+      diag_ok: 'Names resolve and the receivers are listening.',
+      diag_not_asked: 'Nothing was measured — the device did not answer.',
+      diag_dns_no_socket: 'This device cannot resolve names at all: emOS is '
+        + 'not answering the resolver socket. Every local service that needs '
+        + 'the internet fails here, Spotify Connect first. An emOS below '
+        + '0.6.0 is the usual reason.',
+      diag_dns_unresolved: 'The resolver is running and the lookup still '
+        + 'failed. That is the resolver, not the network — the controller was '
+        + 'reached over the same link.',
+      diag_dns_unknown: 'Whether names resolve could not be measured.',
+      diag_endpoints_silent: 'Names resolve, but neither receiver is '
+        + 'listening — so nothing can find this device to play to it.',
+      diag_ap2_not_installed: 'AirPlay 2 is switched on and its binary is '
+        + 'not on this device, so it is serving classic AirPlay. Install '
+        + 'shairport-sync-ap2 and nqptp under Streaming endpoints.',
+      diag_ap2_not_listening: 'AirPlay 2 is switched on and nothing is '
+        + 'listening on its port — the receiver is not running as AirPlay 2.',
+      diag_ap2_without_clock: 'AirPlay 2 is installed without its clock '
+        + 'daemon, so it serves classic AirPlay only. Install nqptp under '
+        + 'Streaming endpoints.',
+      diag_ap2_clock_not_running: 'AirPlay 2 is installed and its clock '
+        + 'daemon is not running, so playback will not stay in sync.',
+      diagDns: 'Name resolution',
+      diagDns_ok: 'works',
+      diagDns_no_socket: 'no resolver socket',
+      diagDns_unresolved: 'lookup failed',
+      diagDns_no_tool: 'could not test',
+      diagDns_unknown: 'unknown',
+      diagPorts: 'Listening',
+      diagNone: 'none',
+      diagClockOk: 'clock running',
+      diagClockStopped: 'clock NOT running',
+      diagClockMissing: 'no clock daemon',
       emosWarning: 'This writes the boot partition. The controller rebuilds '
         + 'the image from THIS device — your own kernel, only the emOS part '
         + 'replaced — verifies it by checksum before and after writing, and '
@@ -280,6 +314,12 @@
           + 'previous image by itself if the new one cannot reach the '
           + 'network — but a boot partition is the one thing on this device '
           + 'with no second slot.\n\nThe device will be away for a few minutes.';
+      },
+      diagAirplay(kind, clock) {
+        // The product names are not translated; which one is INSTALLED is.
+        const what = kind === 'ap2' ? 'AirPlay 2'
+          : kind === 'classic' ? 'AirPlay' : 'none installed';
+        return `AirPlay: ${what} (${clock})`;
       },
       emosStarted: 'Started. It takes a few minutes and the device reboots at '
         + 'the end — watch the device log for each step.',
@@ -794,6 +834,43 @@
       emosFreePrefix: 'frei auf /data:',
       emosRollbackYes: 'Rücksetz-Abbild vorhanden.',
       emosRollbackNo: 'Kein Rücksetz-Abbild.',
+      diagTitle: 'Diagnose',
+      diag_ok: 'Namen lassen sich auflösen, und die Empfänger horchen.',
+      diag_not_asked: 'Nichts gemessen — das Gerät hat nicht geantwortet.',
+      diag_dns_no_socket: 'Dieses Gerät kann überhaupt keine Namen auflösen: '
+        + 'emOS beantwortet den Auflösungs-Socket nicht. Jeder lokale Dienst, '
+        + 'der ins Internet muss, scheitert hier — Spotify Connect zuerst. '
+        + 'Ein emOS älter als 0.6.0 ist der übliche Grund.',
+      diag_dns_unresolved: 'Die Auflösung läuft, und die Abfrage ist trotzdem '
+        + 'gescheitert. Das ist der Resolver, nicht das Netz — der Controller '
+        + 'wurde über dieselbe Verbindung erreicht.',
+      diag_dns_unknown: 'Ob Namen aufgelöst werden, war nicht messbar.',
+      diag_endpoints_silent: 'Namen lassen sich auflösen, aber keiner der '
+        + 'Empfänger horcht — es kann also niemand dieses Gerät finden, um '
+        + 'darauf zu spielen.',
+      diag_ap2_not_installed: 'AirPlay 2 ist eingeschaltet, die zugehörige '
+        + 'Datei liegt aber nicht auf dem Gerät — es bedient also klassisches '
+        + 'AirPlay. shairport-sync-ap2 und nqptp unter Streaming-Endpunkte '
+        + 'installieren.',
+      diag_ap2_not_listening: 'AirPlay 2 ist eingeschaltet, und auf seinem '
+        + 'Port horcht nichts — der Empfänger läuft nicht als AirPlay 2.',
+      diag_ap2_without_clock: 'AirPlay 2 ist installiert, sein Uhren-Dienst '
+        + 'aber nicht: Damit läuft nur klassisches AirPlay. nqptp unter '
+        + 'Streaming-Endpunkte installieren.',
+      diag_ap2_clock_not_running: 'AirPlay 2 ist installiert, sein '
+        + 'Uhren-Dienst läuft nicht — die Wiedergabe bleibt dann nicht '
+        + 'synchron.',
+      diagDns: 'Namensauflösung',
+      diagDns_ok: 'funktioniert',
+      diagDns_no_socket: 'kein Auflösungs-Socket',
+      diagDns_unresolved: 'Abfrage gescheitert',
+      diagDns_no_tool: 'nicht testbar',
+      diagDns_unknown: 'unbekannt',
+      diagPorts: 'Horcht auf',
+      diagNone: 'keine',
+      diagClockOk: 'Uhr läuft',
+      diagClockStopped: 'Uhr läuft NICHT',
+      diagClockMissing: 'kein Uhren-Dienst',
       emosWarning: 'Das schreibt die Boot-Partition. Der Controller baut das '
         + 'Abbild aus DIESEM Gerät neu — dein eigener Kernel, nur der '
         + 'emOS-Teil wird ersetzt —, prüft es vor und nach dem Schreiben per '
@@ -809,6 +886,11 @@
           + 'kein Netzwerk bekommt — aber die Boot-Partition ist das Einzige '
           + 'auf diesem Gerät ohne zweiten Platz.\n\nDas Gerät ist ein paar '
           + 'Minuten weg.';
+      },
+      diagAirplay(kind, clock) {
+        const what = kind === 'ap2' ? 'AirPlay 2'
+          : kind === 'classic' ? 'AirPlay' : 'nichts installiert';
+        return `AirPlay: ${what} (${clock})`;
       },
       emosStarted: 'Gestartet. Es dauert ein paar Minuten und das Gerät '
         + 'startet am Ende neu — jeder Schritt steht im Geräteprotokoll.',

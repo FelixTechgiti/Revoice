@@ -60,6 +60,7 @@ import em_ble_proxy
 import em_config_sections as sections_mod
 import em_console_pw
 import em_emos_build
+import em_devicediag
 import em_netflash
 import em_endpoint_bins
 import em_endpoint_release
@@ -6623,6 +6624,11 @@ async def _get_device_emos(request: web.Request) -> web.Response:
         "eligible": False,
         "reason": None,
         "reasonText": None,
+        # Present on every answer, including the ones that return before any
+        # shell runs: a key that appears only sometimes is a key the panel
+        # reads as "nothing wrong" when the truth is that nobody asked.
+        "diag": None,
+        "diagSummary": "not_asked",
     }
 
     # The base is answerable with no device at all, and it is the refusal that
@@ -6638,7 +6644,24 @@ async def _get_device_emos(request: web.Request) -> web.Response:
                              "emOS version nor its readiness can be read.")
         return _ok(out)
 
-    probe = await _shell_run(live, em_netflash.probe_cmd(), timeout=30.0)
+    # Both questions in ONE shell session. The round trip is ~26s of the ~26s
+    # this endpoint costs, so a second one would double the wait for a tab
+    # somebody is watching — and both answers are wanted at the same moment,
+    # by somebody looking at a device whose endpoints are not working.
+    probe = await _shell_run(
+        live, em_netflash.probe_cmd() + "; " + em_devicediag.diag_cmd(),
+        timeout=45.0)
+    # What the device HAS, folded together with what this controller asked
+    # of it. Either half alone accuses the wrong side: a missing AirPlay 2
+    # binary is a fault only where somebody switched AirPlay 2 on.
+    cfg = db.get_effective_device_config(device_id) or {}
+    diag = em_devicediag.with_intent(
+        em_devicediag.parse_diag(probe),
+        airplay_on=bool(cfg.get("airplayEnabled")),
+        airplay2_on=bool(cfg.get("airplay2Enabled")),
+        spotify_on=bool(cfg.get("spotifyEnabled")))
+    out["diag"] = diag
+    out["diagSummary"] = em_devicediag.summary(diag)
     parsed = em_netflash.parse_probe(probe)
     if parsed is None:
         # The shell did not answer. NOT a refusal about the device — it is a
