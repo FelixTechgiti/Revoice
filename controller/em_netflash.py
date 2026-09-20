@@ -97,31 +97,17 @@ def base_refusal(base_os):
         "works.")
 
 
-def preflight(base_os, good_image_present: bool, free_mb,
-              reference_head: bytes, init_arch):
-    """Everything that must hold before a single byte is written.
+def preview(base_os, good_image_present: bool, free_mb):
+    """The refusals answerable WITHOUT reading the device's boot image.
 
-    Returns None when the reflash may proceed, and a `Refusal` otherwise.
-    Ordered so the cheapest and most decisive question is asked first: a
-    device on FireOS is refused before anything is read off it.
+    Split out so the dashboard can say why a reflash is not on offer before
+    anybody clicks, using the same rules and the same words as the flash
+    itself — `preflight` below is this plus the two checks that need the
+    image. A second copy of these three, written so a preview could skip the
+    arguments it does not have, is exactly how the button and the endpoint
+    would come to disagree about whether a device is eligible.
 
-    Called TWICE by design, either side of the transfer. The architecture can
-    only be read from the whole kernel, and the kernel is eleven megabytes
-    that there is no point moving for a device we are going to refuse — so
-    everything else is asked first, off the 64-byte header.
-
-    Two of the arguments carry a three-way answer, and collapsing either to a
-    boolean is how this gate would quietly stop gating:
-
-    - `free_mb` of None means the check could not run — `df` unreadable, or a
-      busybox without it. That is NOT evidence of a full partition and must
-      not refuse, the same reading the OTA free-space check applies. An
-      actual number below the floor is evidence and does refuse.
-    - `init_arch` of None means NOT ASKED YET, and is skipped. `""` means
-      asked and unanswerable, and refuses. They are one keystroke apart and
-      mean opposite things: the first is the pre-transfer call, the second is
-      a kernel we could not identify, which is a device that would boot to
-      silence.
+    Returns None when nothing here objects; that is not yet permission.
     """
     # FIRST, and the only one whose absence would be catastrophic rather than
     # merely wrong. On Android the fixed node this writes to is not the
@@ -153,6 +139,41 @@ def preflight(base_os, good_image_present: bool, free_mb,
             f"Only {free_mb}MB free on /data, and staging an image needs at "
             f"least {MIN_FREE_MB}MB. Clear some space — saved utterances and "
             "old crash logs are the usual occupants — and try again.")
+
+    return None
+
+
+def preflight(base_os, good_image_present: bool, free_mb,
+              reference_head: bytes, init_arch):
+    """Everything that must hold before a single byte is written.
+
+    Returns None when the reflash may proceed, and a `Refusal` otherwise.
+    Ordered so the cheapest and most decisive question is asked first: a
+    device on FireOS is refused before anything is read off it.
+
+    Called TWICE by design, either side of the transfer. The architecture can
+    only be read from the whole kernel, and the kernel is eleven megabytes
+    that there is no point moving for a device we are going to refuse — so
+    everything else is asked first, off the 64-byte header.
+
+    Two of the arguments carry a three-way answer, and collapsing either to a
+    boolean is how this gate would quietly stop gating:
+
+    - `free_mb` of None means the check could not run — `df` unreadable, or a
+      busybox without it. That is NOT evidence of a full partition and must
+      not refuse, the same reading the OTA free-space check applies. An
+      actual number below the floor is evidence and does refuse.
+    - `init_arch` of None means NOT ASKED YET, and is skipped. `""` means
+      asked and unanswerable, and refuses. They are one keystroke apart and
+      mean opposite things: the first is the pre-transfer call, the second is
+      a kernel we could not identify, which is a device that would boot to
+      silence.
+    """
+    # Everything that does not need the image, in one place shared with the
+    # dashboard's preview.
+    refusal = preview(base_os, good_image_present, free_mb)
+    if refusal is not None:
+        return refusal
 
     # Read off the device's own image rather than assumed, for the reason
     # `reference_kernel_arch` gives: the image is the only thing that knows,
@@ -242,3 +263,165 @@ def flash_cmd() -> str:
     that can be the one that does not run.
     """
     return f"dd if={STAGE_IMG} of={BOOT_DEV} bs=65536 conv=fsync 2>&1"
+
+
+# ── Is this device's emOS behind the newest release? ──────────────────────────
+
+# What both sides of the comparison carry in front of the number: emOS stamps
+# `VERSION="emos-v0.5.0-fx.1"` into /etc/os-release at build time, and the
+# release it would be compared against is the tag `emos-v0.6.0-fx.1`.
+TAG_PREFIX = "emos-v"
+
+
+def strip_tag(v):
+    """The bare version, with the namespace prefix removed.
+
+    Load-bearing rather than cosmetic: `version.parse` answers **None** for
+    `emos-v0.6.0-fx.1` and a clean tuple for `0.6.0-fx.1`, so comparing the
+    stamped strings directly does not fail loudly — it reports "cannot tell"
+    for every device, for ever, and the Updates tab goes quiet instead of
+    wrong. Measured 2026-09-20.
+    """
+    s = (v or "").strip()
+    return s[len(TAG_PREFIX):] if s.startswith(TAG_PREFIX) else s
+
+
+def update_status(current, latest):
+    """Whether `current` is behind `latest`, as the dashboard should show it.
+
+    Returns a dict with `current`, `latest`, `comparable` and `available`.
+
+    **Absence is never "up to date".** A device whose version could not be
+    read, and a controller that could not reach GitHub, both answer
+    `comparable: False` — and the caller must render that as "unknown" rather
+    than as the reassuring answer. The failure this avoids is the one the
+    whole feature exists for: somebody looks at the tab, is told nothing is
+    waiting, and keeps a device on an emOS that cannot resolve a hostname.
+
+    Pure, and here rather than in `em_api`, so the prefix rule above and this
+    asymmetry are both exercised by `tests/test_netflash.py` without a device,
+    a release, or an event loop.
+    """
+    import version
+
+    cur_s, lat_s = strip_tag(current), strip_tag(latest)
+    cur, lat = version.parse(cur_s), version.parse(lat_s)
+    if cur is None or lat is None:
+        return {"current": cur_s, "latest": lat_s,
+                "comparable": False, "available": False}
+    return {"current": cur_s, "latest": lat_s,
+            "comparable": True, "available": lat > cur}
+
+
+# ── Asking the device what it is, once, for both readers ──────────────────────
+
+# The sentinel that says the probe RAN. Without it an empty answer parses as
+# "no rollback image and no free space", which is a refusal — and a device
+# with no shell would be reported as a device that is not eligible, which are
+# different problems with different next steps.
+PROBE_MARK = "_RFCHK"
+
+
+def probe_cmd() -> str:
+    """Everything cheap the device can be asked before a reflash, in one go.
+
+    One command and one round trip, because both callers want the same three
+    answers and a second copy of this string is how the Updates tab and the
+    reflash itself would come to disagree about whether a device is eligible.
+
+    `df` output is returned RAW and parsed below rather than reduced with an
+    awk field index: busybox wraps a long filesystem name onto its own line,
+    so `$4` is the available column on one device and the use PERCENTAGE on
+    another — which parses as no reading at all and silently retires the
+    free-space check. Same rule, and same reason, as
+    `em_oww_assets.parse_free_mb`.
+    """
+    return (f"[ -f {GOOD_IMG} ] && echo GOOD:yes || echo GOOD:no; "
+            f"echo \"VER:$(sed -n 's/^VERSION=//p' /etc/os-release 2>/dev/null "
+            f"| tr -d '\\\"')\"; "
+            f"echo DF:$(df -m /data 2>/dev/null | tail -1); "
+            f"echo {PROBE_MARK}")
+
+
+def parse_probe(out):
+    """Read `probe_cmd`'s answer.
+
+    Returns None when the probe did not run at all — see PROBE_MARK. Otherwise
+    a dict of `good_image`, `free_mb` (None when unreadable, which is NOT a
+    refusal) and `emos_version` ("" when the stamp could not be read, which is
+    not evidence of anything either).
+    """
+    text = out or ""
+    if PROBE_MARK not in text:
+        return None
+
+    good, free_mb, ver = False, None, ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("GOOD:"):
+            good = line[5:].strip() == "yes"
+        elif line.startswith("VER:"):
+            ver = line[4:].strip()
+        elif line.startswith("DF:"):
+            free_mb = free_from_df(line[3:])
+    return {"good_image": good, "free_mb": free_mb, "emos_version": ver}
+
+
+# Megabytes per unit suffix, for the `df` layout that prints them.
+_DF_UNITS = {"K": 1 / 1024.0, "M": 1.0, "G": 1024.0, "T": 1024.0 * 1024.0}
+
+
+def free_from_df(row):
+    """Free megabytes from one `df -m` data row, on either layout busybox
+    prints — and never from a left-hand column index.
+
+    **Two layouts, and the device in front of us prints the one the existing
+    reader could not see.** Measured on `G090L91180250AN1`, 2026-09-20:
+
+        Filesystem    Size   Used   Free  Blksize
+        /data       1010.8M 676.5M 334.3M   4096
+
+    There is no `Use%` column at all, and the values carry unit suffixes. The
+    classic layout, which `em_oww_assets.parse_free_mb` was written against,
+    is the other one:
+
+        /dev/block/x  1010    648    346   65%  /data
+
+    So each layout is anchored on the thing that is stable IN IT, and neither
+    on a field number counted from the left — which is the original trap, and
+    what makes a wrapped filesystem name harmless here:
+
+      - a `%` field means the classic layout, and available is the field
+        before it;
+      - otherwise the row ends `… Size Used Free Blksize`, so free is the
+        SECOND-TO-LAST field. Counting from the right is what survives the
+        wrap, because wrapping only ever removes fields from the left.
+
+    Returns None when neither shape fits. None means "could not measure" and
+    must not refuse — `preflight` is explicit that an unreadable `df` is not
+    evidence of a full partition.
+    """
+    fields = (row or "").split()
+    if len(fields) < 2:
+        return None
+
+    for i, f in enumerate(fields):
+        if f.endswith("%") and i > 0:
+            return _as_mb(fields[i - 1])
+
+    return _as_mb(fields[-2])
+
+
+def _as_mb(value):
+    """A df cell as whole megabytes. None when it is not a measurement."""
+    v = (value or "").strip()
+    if not v:
+        return None
+    scale = 1.0
+    if v[-1].upper() in _DF_UNITS:
+        scale = _DF_UNITS[v[-1].upper()]
+        v = v[:-1]
+    try:
+        return int(float(v) * scale)
+    except ValueError:
+        return None

@@ -280,3 +280,113 @@ def test_a_stage_probe_that_did_not_run_is_none_not_zero():
     assert em_netflash.stage_size("") is None
     assert em_netflash.stage_size("SIZE:\n_STAGECHK") is None
     assert em_netflash.stage_size("SIZE:11065344\n_STAGECHK") == 11065344
+
+
+# ── Is this device's emOS behind? ─────────────────────────────────────────────
+
+def test_strip_tag_removes_the_namespace_prefix():
+    # The whole reason this function exists: version.parse answers None for a
+    # prefixed string, so comparing the stamped values directly reports
+    # "cannot tell" for every device rather than failing loudly.
+    assert em_netflash.strip_tag("emos-v0.6.0-fx.1") == "0.6.0-fx.1"
+    assert em_netflash.strip_tag("0.6.0-fx.1") == "0.6.0-fx.1"
+    assert em_netflash.strip_tag("  emos-v0.5.0  ") == "0.5.0"
+    assert em_netflash.strip_tag(None) == ""
+
+
+def test_update_status_compares_prefixed_versions():
+    s = em_netflash.update_status("emos-v0.5.0-fx.1", "emos-v0.6.0-fx.1")
+    assert s == {"current": "0.5.0-fx.1", "latest": "0.6.0-fx.1",
+                 "comparable": True, "available": True}
+
+
+def test_update_status_says_current_when_it_is():
+    s = em_netflash.update_status("emos-v0.6.0-fx.1", "emos-v0.6.0-fx.1")
+    assert s["comparable"] is True and s["available"] is False
+
+
+def test_an_unreadable_version_is_never_reported_as_up_to_date():
+    # The failure this guards: "nothing is waiting" is the reassuring answer,
+    # and it must never be what a missing measurement produces.
+    for cur, lat in (("", "emos-v0.6.0-fx.1"),
+                     ("emos-v0.5.0-fx.1", ""),
+                     ("", ""),
+                     ("not-a-version", "emos-v0.6.0-fx.1")):
+        s = em_netflash.update_status(cur, lat)
+        assert s["comparable"] is False, (cur, lat)
+        assert s["available"] is False, (cur, lat)
+
+
+# ── The shared probe ──────────────────────────────────────────────────────────
+
+def test_probe_parses_the_layout_a_real_device_prints():
+    # Read off G090L91180250AN1 (emos-v0.5.0-fx.1) on 2026-09-20. Note there
+    # is NO Use% column and the values carry unit suffixes — the layout the
+    # percentage-anchored reader could not see.
+    out = ("GOOD:yes\n"
+           "VER:emos-v0.5.0-fx.1\n"
+           "DF:/data       1010.8M  676.5M  334.3M  4096\n"
+           "_RFCHK")
+    assert em_netflash.parse_probe(out) == {
+        "good_image": True, "free_mb": 334, "emos_version": "emos-v0.5.0-fx.1"}
+
+
+def test_probe_parses_the_classic_layout_too():
+    out = ("GOOD:no\nVER:\n"
+           "DF:/dev/block/x 1010 648 346 65% /data\n_RFCHK")
+    p = em_netflash.parse_probe(out)
+    assert p == {"good_image": False, "free_mb": 346, "emos_version": ""}
+
+
+def test_a_wrapped_filesystem_name_changes_nothing():
+    # busybox wraps a long name onto its own line, so the data row loses its
+    # leading field. Both layouts are anchored on something at the RIGHT, so
+    # neither is affected.
+    classic = em_netflash.parse_probe(
+        "GOOD:yes\nVER:x\nDF:1010 648 346 65% /data\n_RFCHK")
+    suffixed = em_netflash.parse_probe(
+        "GOOD:yes\nVER:x\nDF:1010.8M 676.5M 334.3M 4096\n_RFCHK")
+    assert classic["free_mb"] == 346
+    assert suffixed["free_mb"] == 334
+
+
+def test_a_probe_that_did_not_run_is_not_a_refusal():
+    # No sentinel means no shell. That must not read as "no rollback image
+    # and no free space", which is a device that looks ineligible.
+    assert em_netflash.parse_probe("") is None
+    assert em_netflash.parse_probe("bash: df: not found") is None
+
+
+def test_an_unreadable_df_measures_nothing_rather_than_zero():
+    p = em_netflash.parse_probe("GOOD:yes\nVER:x\nDF:\n_RFCHK")
+    assert p["free_mb"] is None
+    # And None must not refuse — preflight is explicit about that.
+    assert em_netflash.preview("emos", True, None) is None
+
+
+def test_free_from_df_scales_units():
+    assert em_netflash.free_from_df("/data 4.0G 1.0G 2.5G 4096") == 2560
+    assert em_netflash.free_from_df("/data 900K 100K 512K 4096") == 0
+    assert em_netflash.free_from_df("nonsense") is None
+
+
+# ── preview and preflight must not drift ──────────────────────────────────────
+
+def test_preview_is_the_head_of_preflight():
+    # Every case preview refuses, preflight must refuse identically — that is
+    # the whole reason the dashboard may use preview to decide what to show.
+    head = b"ANDROID!" + b"\0" * 56
+    for base, good, free in (("fireos", True, 500), (None, True, 500),
+                             ("emos", False, 500), ("emos", True, 1)):
+        pv = em_netflash.preview(base, good, free)
+        pf = em_netflash.preflight(base, good, free, head, None)
+        assert pv is not None and pf is not None, (base, good, free)
+        assert pv.code == pf.code, (base, good, free)
+        assert pv.message == pf.message, (base, good, free)
+
+
+def test_preview_passing_does_not_yet_mean_preflight_passes():
+    # preview cannot see the boot image, so it must not be read as permission.
+    assert em_netflash.preview("emos", True, 500) is None
+    assert em_netflash.preflight("emos", True, 500, b"nope", None).code \
+        == "not_boot_image"

@@ -1645,6 +1645,8 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
   const [diagBusy, setDiagBusy] = useState(false);
   const [fetchingSup, setFetchingSup] = useState(false);
   const [debloating, setDebloating] = useState(false);
+  const [emos, setEmos] = useState(null);
+  const [emosBusy, setEmosBusy] = useState(false);
   const [assets, setAssets] = useState(null);
   const [installing, setInstalling] = useState(false);
   // Wake word asset install progress: bytes confirmed sent, the file in
@@ -1685,6 +1687,10 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
     }
     if (tab === 'updates') {
       API.get('/api/releases/latest').then(setRelease).catch(() => {});
+      // emOS is a separate namespace from the firmware above, so it needs
+      // its own ask. One shell round trip; see _get_device_emos.
+      API.get(`/api/devices/${device.device_id}/emos`)
+        .then(setEmos).catch(() => setEmos(null));
       // Same tab-entry pattern as the asset state below: this changes only
       // when someone edits system config, so polling it would be waste.
       API.get('/api/system/status')
@@ -1903,6 +1909,42 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
             + 'watch the device log for details.');
     } catch(e) { alert(e.error || 'Debloat failed'); }
     setTimeout(() => setDebloating(false), 8000);
+  }
+
+  // Offered unless the device is PROVABLY already current.
+  //
+  // Not `available` on its own, which would strand the case it is easiest to
+  // get wrong: a device whose stamped version cannot be read compares as
+  // "cannot tell", and gating on `available` would mean that device could
+  // never be updated from here at all. Knowing it is behind and not knowing
+  // either way are both reasons to offer the button; only knowing it is
+  // current is a reason to withhold it. The confirm still names both versions
+  // and the cost.
+  // `latest` is required too: with no reachable release there is nothing to
+  // install, and the endpoint would refuse with `no_emos_release`. Offering a
+  // button whose only outcome is that message is worse than not offering one.
+  const emosOffered = !!emos && emos.eligible && !!emos.latest
+    && !(emos.comparable && !emos.available);
+
+  async function doEmosReflash() {
+    // A partition write, so it asks first and the question names the cost.
+    // Everything that decides whether this is offered at all is the server's
+    // (`em_netflash.preview`), not re-derived here — the same posture as the
+    // debloat button, and for a write where disagreeing would be worse.
+    if (!emosOffered) return;
+    if (!confirm(S().emosConfirm(emos.current || t('emosUnknown'), emos.latest))) return;
+    setEmosBusy(true);
+    try {
+      await API.post(`/api/devices/${device.device_id}/emos_reflash`, {});
+      alert(t('emosStarted'));
+    } catch (e) {
+      alert(e.error || t('emosFailed'));
+      setEmosBusy(false);
+      return;
+    }
+    // Deliberately NOT cleared on a timer: the device reboots at the end of
+    // this, so the button should stay spent until the window is reopened
+    // against a device that has come back.
   }
 
   // ─── Spotify / AirPlay binaries ────────────────────────────────────────────
@@ -3075,6 +3117,81 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   </div>
                 </Panel>
               </div>
+
+              {/* emOS — the system UNDER the firmware.
+
+                  Here, directly below the firmware panel, because this is the
+                  one place a user already looks for "is there an update" and
+                  the one place they currently find nothing: the firmware check
+                  matches `v*` tags and emOS is deliberately `emos-v*`, so the
+                  panel above can never mention it. A user searching for a new
+                  emOS found silence, and silence read as "nothing to do"
+                  (#156).
+
+                  Every verdict shown is the server's — `eligible`, `reason`
+                  and `reasonText` come from `em_netflash.preview`, the same
+                  function the reflash itself runs. Nothing about who may
+                  flash is decided here, so the button and the endpoint cannot
+                  drift apart. */}
+              {isAdmin && emos && (
+                <Panel label="emOS">
+                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', lineHeight:1.6, marginBottom:14, textWrap:'pretty' }}>
+                    {t('emosIntro')}
+                  </div>
+
+                  <div style={{ display:'flex', gap:18, flexWrap:'wrap', marginBottom:12, minWidth:0 }}>
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ fontSize:9, color:'var(--muted)' }}>{t('emosInstalled')}</div>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12 }}>
+                        {emos.current || t('emosUnknown')}
+                      </div>
+                    </div>
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ fontSize:9, color:'var(--muted)' }}>{t('emosLatest')}</div>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12 }}>
+                        {emos.latest || t('emosUnknown')}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Three states, not two. "Cannot tell" is its own line and
+                      never collapses into the reassuring one — a version that
+                      could not be read is not a version that matches. */}
+                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, lineHeight:1.6, marginBottom:12, textWrap:'pretty',
+                                color: emos.comparable && emos.available ? 'var(--accent)' : 'var(--muted)' }}>
+                    {!emos.comparable
+                      ? t('emosCannotTell')
+                      : emos.available ? t('emosBehindNote') : t('emosCurrentNote')}
+                  </div>
+
+                  {emosOffered && (
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', lineHeight:1.6, marginBottom:12, textWrap:'pretty' }}>
+                      {t('emosWarning')}
+                    </div>
+                  )}
+
+                  {/* Disabled WITH THE REASON, in the server's own words,
+                      rather than hidden — a control that vanishes teaches
+                      nobody why. */}
+                  <Pill small disabled={!emosOffered || emosBusy}
+                        onClick={doEmosReflash}>
+                    {emosBusy ? t('emosReflashing') : t('emosReflash')}
+                  </Pill>
+
+                  {emos.reasonText && (
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', marginTop:10, lineHeight:1.6, textWrap:'pretty' }}>
+                      {t('emosNotOffered')} {emos.reasonText}
+                    </div>
+                  )}
+
+                  {emos.eligible && (
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:10 }}>
+                      {emos.goodImage ? t('emosRollbackYes') : t('emosRollbackNo')}
+                      {emos.freeMb != null && ` · ${emos.freeMb} MB ${t('emosFreePrefix')}`}
+                    </div>
+                  )}
+                </Panel>
+              )}
 
               {/* Maintenance — device-side payloads that are not the firmware
                   binary. These used to sit on the Status tab beside Secure
