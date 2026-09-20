@@ -1807,6 +1807,42 @@ scripts and does not run, while the binary comes from `/system` and does. The
 same mistake is available for every Android tool this firmware reaches for.
 Ask which of the two an absence would come from before writing it down.
 
+### There was no 127.0.0.1 either, and that is the layer underneath
+
+**emOS' init brought up `wlan0` and nothing else** (#226). Linux does not
+configure the loopback by itself — Android's init does — so an emOS device had
+no 127.0.0.1 at all, for any program, from the first boot onwards.
+
+It stayed invisible because nothing had asked. The first thing that did was
+AirPlay 2, and only once the name half below was fixed: nqptp then resolved
+`localhost`, tried to bind, and got
+
+    nqptp is unable to listen on port 9000. The error is: 99,
+    "Cannot assign requested address".
+
+`EADDRNOTAVAIL` on a bind to 127.0.0.1 has one cause. **The discriminator is
+what did NOT fail**: nqptp's wildcard sockets on UDP 319 and 320 came up in the
+same breath, so it is the loopback and not the socket layer.
+
+`internal/loopback` brings it up from the firmware and `loopback_up` does it in
+the init. Both, deliberately: the init is the right home — a device should be
+correct before our firmware starts, and a console session is precisely the case
+the firmware's copy cannot cover — and the firmware's copy is the one that can
+reach a fielded device, because the init ships in a boot image somebody has to
+flash.
+
+**Neither is gated on the base**, for `internal/netfilter`'s reason: the
+question is about the INTERFACE, not about which userspace booted. The firmware
+reads the flags and the address first and writes nothing when both are already
+right, which is every FireOS device and every start after emOS' init learns to
+do it.
+
+**Two failures, one feature, and each was invisible while the other held.** The
+name not resolving and the address not existing both present as AirPlay 2 not
+working, and fixing either alone changes only which error you get. Worth
+remembering when a fix "does not help": it may have moved the wall rather than
+failed.
+
 ### A peer found by NAME is a peer this device cannot find
 
 **`getaddrinfo("localhost")` fails on emOS**, and the general form is worth

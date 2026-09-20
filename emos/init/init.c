@@ -1979,6 +1979,64 @@ static int ifup(const char *name)
     return r;
 }
 
+/* Give the loopback its address and bring it up.
+ *
+ * **Nothing else does, and until 2026-09-19 nothing ever had.** Linux does not
+ * configure `lo` by itself; Android's init does, and this init brought up
+ * wlan0 and stopped there. So an emOS device had no 127.0.0.1 at all, for any
+ * program — invisible until something asked, and the first thing that did was
+ * AirPlay 2 (#226):
+ *
+ *     nqptp is unable to listen on port 9000. The error is: 99,
+ *     "Cannot assign requested address".
+ *
+ * EADDRNOTAVAIL on a bind to 127.0.0.1 has one cause. nqptp's wildcard sockets
+ * on UDP 319 and 320 came up in the same breath, which is what makes that
+ * reading certain rather than likely.
+ *
+ * The firmware repairs this as well, because it ships by OTA and this file
+ * ships in a boot image somebody has to flash. It belongs HERE all the same: a
+ * device should be correct before our firmware starts and whether or not it
+ * ever does — and a console session is exactly the case the firmware's copy
+ * cannot cover, since that is the session somebody opens because the firmware
+ * is not running.
+ *
+ * ifr_addr for the netmask too, rather than ifr_netmask: they are two names
+ * for one union member, and one of them is a macro this libc is not obliged
+ * to define. */
+static int loopback_up(void)
+{
+    struct ifreq ifr;
+    struct sockaddr_in *sin = (struct sockaddr_in *)&ifr.ifr_addr;
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0)
+        return -1;
+
+    memset(&ifr, 0, sizeof ifr);
+    strncpy(ifr.ifr_name, "lo", IFNAMSIZ - 1);
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int r = ioctl(s, SIOCSIFADDR, &ifr);
+
+    /* The /8 with it. An address with no mask leaves the route wrong for every
+     * loopback address except the one written above, and 127.0.0.2 is one
+     * programs use. */
+    if (r == 0) {
+        memset(&ifr, 0, sizeof ifr);
+        strncpy(ifr.ifr_name, "lo", IFNAMSIZ - 1);
+        sin->sin_family = AF_INET;
+        sin->sin_addr.s_addr = htonl(0xff000000u);
+        r = ioctl(s, SIOCSIFNETMASK, &ifr);
+    }
+    close(s);
+
+    /* Flags last, and through ifup so the UP bit is OR-ed into what the kernel
+     * already holds rather than assigned over it. */
+    if (r == 0)
+        r = ifup("lo");
+    return r;
+}
+
 /* Bring up WiFi, then supervise the two daemons that keep it up.
  *
  * This is Amazon's own sequence, read off a running FireOS device rather than
@@ -2850,6 +2908,20 @@ int main(int argc, char **argv)
     }
     note("stage=etc farm=%d\n", access("/etc/dhcpcd", F_OK) == 0);
     led_step();                                  /* 5: /etc */
+
+    /* The loopback, as early as there is anything to log it to.
+     *
+     * Not a boot stage of its own: it is two ioctls that do not fail on a
+     * kernel that booted, and a device is not less usable without it in any
+     * way the ring could report. It is up HERE rather than beside WiFi
+     * because it depends on nothing — least of all on a radio — and because
+     * everything started after this point may reasonably expect 127.0.0.1 to
+     * be there. See loopback_up for what it cost to find out that it was
+     * not. */
+    {
+        int lo = loopback_up();
+        note("stage=lo rc=%d\n", lo);
+    }
 
     /* Preserve the previous boot's kernel log.
      *
