@@ -280,3 +280,39 @@ def test_a_stage_probe_that_did_not_run_is_none_not_zero():
     assert em_netflash.stage_size("") is None
     assert em_netflash.stage_size("SIZE:\n_STAGECHK") is None
     assert em_netflash.stage_size("SIZE:11065344\n_STAGECHK") == 11065344
+
+
+def test_the_reflash_reads_free_space_with_the_shared_parser_not_a_field_index():
+    """One parser for the df row, and never a field index.
+
+    This probe asked awk for $4, which on the layout emOS actually prints is
+    the free figure with its unit suffix still attached ("334.3M") — rejected
+    by the isdigit() behind it. So preflight received free_mb=None on every
+    call it ever had, and MIN_FREE_MB has never once been enforced.
+
+    Silent in both directions, which is why it needs a test rather than a
+    reader: None means "could not measure" and never refuses, so the feature
+    worked exactly as it looks. And it is worse here than at the OTA and
+    asset call sites rather than merely equal to it, because a network
+    reflash is emOS-only by design — there was no device on which the guard
+    did run.
+    """
+    src = (REPO / "controller" / "em_api.py").read_text(encoding="utf-8")
+    probe = src[src.index('say("Network reflash requested.")'):
+                src.index("# \u2500\u2500 2. The device's own boot image")]
+    # Comments stripped first: the trap is worth explaining at the call site,
+    # and a test that reads its own warning as the bug can only be silenced
+    # by deleting the explanation.
+    code = "\n".join(l for l in probe.splitlines()
+                     if not l.lstrip().startswith("#"))
+
+    assert "parse_free_mb" in code, (
+        "free space must be read with the shared parser, never a field index"
+    )
+    assert "awk" not in code, (
+        "an awk field index reads the percentage on one layout and a "
+        "suffixed figure on the other"
+    )
+    assert "isdigit" not in code, (
+        "isdigit() rejects every suffixed figure emOS prints"
+    )

@@ -6327,9 +6327,16 @@ async def _emos_reflash_steps(live, device_id: str) -> None:
     say("Network reflash requested.")
 
     # ── 1. What the device says about itself ─────────────────────────────────
+    # The WHOLE df row, read with parse_free_mb — never a field index. This
+    # asked awk for $4, which on the layout emOS actually prints is the free
+    # figure with its unit suffix still attached ("334.3M"), rejected by the
+    # isdigit() behind it. So every reading this preflight ever took was None
+    # and MIN_FREE_MB has never once been enforced. Worse here than at the
+    # other two call sites rather than merely equal to it: a network reflash
+    # is emOS-only by design, so there was no device on which it did run.
     probe = await _shell_run(live, (
         f"[ -f {em_netflash.GOOD_IMG} ] && echo GOOD:yes || echo GOOD:no; "
-        f"echo \"FREE:$(df -m /data 2>/dev/null | awk 'NR==2{{print $4}}')\"; "
+        f"echo \"FREE:$(df -m /data 2>/dev/null | tail -1)\"; "
         f"echo _RFCHK"), timeout=30.0)
     if "_RFCHK" not in probe:
         say("Could not ask the device anything — no shell session. Nothing "
@@ -6339,8 +6346,7 @@ async def _emos_reflash_steps(live, device_id: str) -> None:
     free_mb = None
     for line in probe.splitlines():
         if line.startswith("FREE:"):
-            raw = line[5:].strip()
-            free_mb = int(raw) if raw.isdigit() else None
+            free_mb = em_oww_assets.parse_free_mb(line[5:])
 
     # ── 2. The device's own boot image ───────────────────────────────────────
     # The header first, so the length is known before megabytes move.

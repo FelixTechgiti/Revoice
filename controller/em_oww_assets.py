@@ -379,9 +379,37 @@ def missing_assets(desired: list[Asset],
             if (actual.get(a.name) or (None,))[0] != a.md5]
 
 
+# The unit suffixes a df figure may carry, as megabytes each is worth. K
+# therefore floors to 0, which is a real answer rather than a failure to
+# parse: a partition with kilobytes free has no room for anything this
+# project writes to a device.
+_SIZE_UNITS = {"": 1.0, "K": 1.0 / 1024, "M": 1.0, "G": 1024.0, "T": 1048576.0}
+
+
+def _as_mb(value: str) -> int | None:
+    """
+    One df figure as whole megabytes, or None when it is not a figure at all.
+
+    Floors rather than rounds, because every caller compares the answer
+    against a floor it must not go under: erring downwards refuses a
+    borderline write, erring upwards allows one.
+    """
+    raw = (value or "").strip().rstrip("B")
+    if not raw:
+        return None
+    unit = ""
+    if raw[-1].upper() in ("K", "M", "G", "T"):
+        unit, raw = raw[-1].upper(), raw[:-1]
+    try:
+        number = float(raw)
+    except ValueError:
+        return None
+    return int(number * _SIZE_UNITS[unit]) if number >= 0 else None
+
+
 def parse_free_mb(df_line: str) -> int | None:
     """
-    Free megabytes from a `busybox df -m` data line.
+    Free megabytes from a `df` data line, in either layout a device prints.
 
     Parsed here rather than with awk because the column INDEX is not stable:
     busybox wraps a long filesystem name onto its own line, so the data row is
@@ -390,14 +418,34 @@ def parse_free_mb(df_line: str) -> int | None:
     and silently returns "65%" for the other — which parsed as no reading at
     all, and would have disabled the free-space check without saying so.
 
-    The use-percentage column is the anchor: available is always the field
-    immediately before it.
+    The use-percentage column is the anchor where there IS one: available is
+    the field immediately before it.
+
+    **emOS prints no such column**, which is the second layout and the reason
+    this reads two. Measured on G090L91180250AN1 (emos-v0.5.0-fx.1) on
+    2026-09-20:
+
+        /data       1010.8M  676.5M  334.3M  4096
+
+    Its header is "Filesystem Size Used Free Blksize" — no use percentage
+    anywhere, and figures carrying unit suffixes. So the anchor found nothing,
+    this returned None for every emOS device, and the guard in front of three
+    different device writes has never once run on the base this project is
+    aiming at.
+
+    With no anchor the row is read from the RIGHT — free is the second-to-last
+    field — which is the same defence the anchor is, because a wrapped
+    filesystem name only ever removes fields from the LEFT. It does assume the
+    row ENDS at Blksize, as the measured one does: a layout appending a mount
+    point after it would read the block size as free space, and that is the one
+    direction this can be wrong in that a caller would act on rather than
+    ignore.
     """
     fields = (df_line or "").split()
     for i, f in enumerate(fields):
-        if f.endswith("%") and i > 0 and fields[i - 1].isdigit():
-            return int(fields[i - 1])
-    return None
+        if f.endswith("%") and i > 0:
+            return _as_mb(fields[i - 1])
+    return _as_mb(fields[-2]) if len(fields) >= 2 else None
 
 
 def parse_device_listing(text: str) -> dict[str, tuple[str, int]]:

@@ -2020,6 +2020,28 @@ block updates on any device whose `df` we have not seen. Note binary growth
 is not a plausible cause of a space failure here — v2.9.8 is 10.1MB and
 v2.10.0 is 10.3MB.
 
+**That parser reads a SECOND layout, and teaching it the second one turned
+three inert guards back on.** emOS prints `Filesystem Size Used Free
+Blksize` — no use-percentage column anywhere, and a unit suffix on every
+figure (`/data 1010.8M 676.5M 334.3M 4096`, measured on G090L91180250AN1
+2026-09-20). The percentage anchor found nothing there, so `parse_free_mb`
+returned None for every emOS device, which reads as "could not measure" and
+never refuses: nothing broke, and nothing said so. With no anchor the row is
+read from the RIGHT — free is second-to-last — for the anchor's own reason,
+since a wrapped filesystem name only ever removes fields from the LEFT. It
+does assume the row ENDS at Blksize, and a layout appending a mount point
+after it would read the block size as free space, which is the one direction
+this can be wrong in that a caller acts on rather than ignores.
+
+**The network reflash was worse than inert, because it never used this
+parser at all**: `awk 'NR==2{print $4}'` behind an `isdigit()`, so
+`em_netflash.preflight` received None on every call it ever had and
+`MIN_FREE_MB` has never once been enforced. Unlike the OTA and asset call
+sites that is not a gap on some devices — a network reflash is emOS-only by
+design, so there was no device on which the guard did run.
+`tests/test_netflash.py` pins that call site against the shared parser, and
+against `awk` and `isdigit` returning to it.
+
 **Installing the version a device already runs is refused, and the guard that
 existed could not fire.** `_post_deploy_all` has skipped `already_current`
 since it was written — but gated on `not upload_token`, and it labelled every
