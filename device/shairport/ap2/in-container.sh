@@ -215,21 +215,26 @@ git clone --depth 1 --branch n7.1.5 https://github.com/FFmpeg/FFmpeg ffmpeg
 
 # ---------------------------------------------------------------------------
 say "the compat shims"
-# Five now, where the classic build has two. android_shm.c is the nqptp<->
+# Six now, where the classic build has two. android_shm.c is the nqptp<->
 # shairport clock interface (bionic has no POSIX shared memory); android_uuid.c
 # is the three libuuid functions shairport calls once, which util-linux would
 # otherwise have to be cross-built for; android_localhost.c is the one call both
 # AirPlay 2 binaries make before they can do anything at all, and the one that
-# had them exiting once a minute on a real device (#218).
+# had them exiting once a minute on a real device (#218); tinysvc_txt.c is the
+# TXT string encoder tinysvcmdns should have had, and without it the responder
+# thread dereferences a NULL on its first announcement because AirPlay 2's
+# `pk=` record is longer than a DNS name label may be (#229).
 "$CC" -c -O2 -fPIC -I/compat /compat/android_compat.c   -o /build/android_compat.o
 "$CC" -c -O2 -fPIC -I/compat /compat/android_ifaddrs.c  -o /build/android_ifaddrs.o
 "$CC" -c -O2 -fPIC -I/compat /compat/android_shm.c      -o /build/android_shm.o
 "$CC" -c -O2 -fPIC -I/compat /compat/android_uuid.c     -o /build/android_uuid.o
 "$CC" -c -O2 -fPIC -I/compat /compat/android_localhost.c -o /build/android_localhost.o
 "$CC" -c -O2 -fPIC -I/compat /compat/mdns_ap2.c         -o /build/mdns_ap2.o
+"$CC" -c -O2 -fPIC -I/compat /compat/tinysvc_txt.c      -o /build/tinysvc_txt.o
 llvm-ar rcs "$PREFIX/lib/libemcompat.a" \
     /build/android_compat.o /build/android_ifaddrs.o /build/android_shm.o \
-    /build/android_uuid.o /build/android_localhost.o /build/mdns_ap2.o
+    /build/android_uuid.o /build/android_localhost.o /build/mdns_ap2.o \
+    /build/tinysvc_txt.o
 
 # `-luuid` has to resolve, because configure probes for it by name. The symbols
 # are in libemcompat.a; this archive is what makes the -l work, the same trick
@@ -500,6 +505,27 @@ shim_check() {
 shim_check /build/shairport-sync/shairport-sync "/build/shairport-sync/*ptp-utilities.o"
 shim_check /build/nqptp/nqptp "/build/nqptp/*utilities.o"
 echo "both binaries carry the loopback shim"
+
+# The TXT encoder, in shairport-sync only — nqptp advertises nothing. Same
+# argument as above and the same reader: libemcompat.a is an archive, so
+# em_txt_label is in the binary only if a call site references it, and the call
+# site is one line in our own mdns_tinysvcmdns.c. Reverting that line to pass
+# the strings to mdnsd_register_svc builds, links, installs and then kills the
+# responder thread on its first announcement, because AirPlay 2's `pk=` record
+# is 67 bytes and tinysvcmdns runs TXT strings through the 63-byte name-label
+# helper (#229). Nothing else would report it; the symbol does.
+txtsyms="$("$NDK/bin/llvm-readelf" --symbols /build/shairport-sync/shairport-sync 2>&1 || true)"
+case "$txtsyms" in
+    *em_txt_label*) echo "shairport-sync carries the TXT encoder" ;;
+    *)
+        echo "ERROR: shairport-sync was linked without em_txt_label." >&2
+        echo "       Its mDNS responder would dereference a NULL encoding the" >&2
+        echo "       67-byte \`pk=\` record, about a second after every start." >&2
+        echo "--- the em_ symbols it does carry:" >&2
+        printf '%s\n' "$txtsyms" | grep " em_" >&2 || echo "    (none at all — suspect the reader)" >&2
+        exit 1
+        ;;
+esac
 
 "$NDK/bin/llvm-strip" /build/shairport-sync/shairport-sync
 "$NDK/bin/llvm-strip" /build/nqptp/nqptp
