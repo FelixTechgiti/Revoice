@@ -2800,18 +2800,51 @@ def _transfer_failed(stage: str, extra: str = "") -> TransferResult:
 # reports the same thing as one that never opened a shell.
 PULL_CHUNK = 1 << 20
 
+# The device's answer is framed by lines it prints itself. Exact whole-line
+# matches, never a substring: the command is sent as ONE line, so a shell that
+# echoes its input cannot produce a line equal to any of these.
+_PULL_BEGIN = "__EMPULL_B64__"
+_PULL_EOB   = "__EMPULL_EOB__"
+_PULL_DONE  = "__PULLEND__"
+
+# The digest of nothing at all. Named, because a device that answers with it
+# has not weighed the chunk — see _pull_range_from_device.
+_EMPTY_MD5 = hashlib.md5(b"").hexdigest()
+
 
 async def _pull_range_from_device(ws, path: str, offset: int, length: int,
                                   timeout: float = 60.0):
     """One chunk of a device file, with its md5, or (None, reason).
 
-    The device computes the digest of the SAME bytes it encodes, in the same
-    pipeline, so a mismatch here means the transfer corrupted them rather than
-    that two different things were measured.
-
-    Everything is framed by a sentinel. A chunk that arrives without its
+    Everything is framed by sentinels. A chunk that arrives without its
     trailing marker is a truncated read, and truncation is exactly the failure
     that must not look like a short file.
+
+    **The digest is a SECOND read of the same range, not a re-hash of the
+    base64 we just built, and that is a correction.** The first version kept
+    the encoded chunk in a shell variable and digested it with
+    `printf %s "$__R" | base64 -d | md5sum`. At 64 bytes that works, which is
+    why the header read of a reflash always succeeded; at 1MB the base64 is
+    1.37MB and an argument that size is past `MAX_ARG_STRLEN` (128KB) for any
+    `printf` that is a binary rather than a shell builtin. It fails, md5sum
+    weighs an empty pipe, and the caller is told the chunk arrived corrupt —
+    which is a wrong answer rather than no answer: the bytes were intact, and
+    every reflash refused at offset 0 with nothing wrong with the device
+    (measured 2026-09-20 on a live emOS Echo, both attempts identical).
+
+    Two reads of a block device nothing is writing return the same bytes, so
+    what the digest still proves is the thing that can actually go wrong on
+    this path: that the base64 which arrived here decodes to what the
+    partition holds. What it no longer covers is a file changing under us
+    between the two reads, which is why this stays what its docstring already
+    said it was — a boot-partition reader, not a general file fetch.
+
+    The variable is gone with it: the base64 streams straight out between two
+    sentinel lines, so nothing on the device has to hold a megabyte. The
+    general rule worth keeping is that a shell VARIABLE is not a way around an
+    argument-length limit — it only moves where the limit is met, and `echo`
+    being a builtin everywhere while `printf` need not be is what made the two
+    halves of one command disagree in silence.
     """
     skip, count = offset // PULL_CHUNK, max(1, length // PULL_CHUNK)
     # dd with bs=PULL_CHUNK so skip/count are in whole chunks, then `head -c`
@@ -2821,7 +2854,7 @@ async def _pull_range_from_device(ws, path: str, offset: int, length: int,
     # **The -w0 flag DOES NOT EXIST on this device**, so the newlines are
     # stripped with `tr` instead. Measured on hardware 2026-09-15: busybox
     # there is v1.22.1 from 2016 and rejects it, usage `base64 [-d] [FILE]`.
-    # `__R` is then empty and the caller reports that the device returned
+    # `__R` was then empty and the caller reported that the device returned
     # nothing for the range — an unsupported flag that reads as an unreadable
     # partition.
     #
@@ -2831,13 +2864,13 @@ async def _pull_range_from_device(ws, path: str, offset: int, length: int,
     # it was the emOS network reflash, on its first attempt against hardware.
     #
     # The general rule: a flag is not supported because the tool is.
-    cmd = (f"__R=$(dd if={_sh_quote(path)} bs={PULL_CHUNK} skip={skip} "
-           f"count={count} 2>/dev/null | head -c {length} "
-           f"| busybox base64 | busybox tr -d '\\n'); "
-           f'echo "B64:$__R"; '
-           f'echo "MD5:$(printf %s "$__R" | busybox base64 -d | busybox md5sum '
-           f"| cut -d' ' -f1)\"; "
-           f"echo __PULLEND__")
+    read = (f"dd if={_sh_quote(path)} bs={PULL_CHUNK} skip={skip} "
+            f"count={count} 2>/dev/null | head -c {length}")
+    cmd = (f"echo {_PULL_BEGIN}; "
+           f"{read} | busybox base64 | busybox tr -d '\\n'; echo; "
+           f"echo {_PULL_EOB}; "
+           f"echo \"MD5:$({read} | busybox md5sum | cut -d' ' -f1)\"; "
+           f"echo {_PULL_DONE}")
     await ws.send(cmd + "\n")
 
     buf = ""
@@ -2848,17 +2881,26 @@ async def _pull_range_from_device(ws, path: str, offset: int, length: int,
         except asyncio.TimeoutError:
             continue
         buf += msg.decode("utf-8", errors="replace") if isinstance(msg, bytes) else msg
-        if "__PULLEND__" in buf:
+        if _PULL_DONE in buf:
             break
 
-    if "__PULLEND__" not in buf:
+    if _PULL_DONE not in buf:
         return None, "the read did not complete"
 
-    b64 = md5 = ""
-    for line in buf.splitlines():
-        if line.startswith("B64:"):
-            b64 = line[4:].strip()
-        elif line.startswith("MD5:"):
+    # Stripped per line, so a shell plane that puts a carriage return on the
+    # end cannot turn a sentinel into an unrecognised line or a base64 body
+    # into something b64decode refuses.
+    lines = [line.strip() for line in buf.splitlines()]
+    try:
+        begin = len(lines) - 1 - lines[::-1].index(_PULL_BEGIN)
+        eob = begin + 1 + lines[begin + 1:].index(_PULL_EOB)
+    except ValueError:
+        return None, "the device's answer arrived unframed, so it is incomplete"
+
+    b64 = "".join(lines[begin + 1:eob])
+    md5 = ""
+    for line in lines[eob + 1:]:
+        if line.startswith("MD5:"):
             md5 = line[4:].strip()
     if not b64:
         return None, "the device returned nothing for that range"
@@ -2870,6 +2912,13 @@ async def _pull_range_from_device(ws, path: str, offset: int, length: int,
         return None, f"expected {length} bytes, got {len(raw)}"
     if not md5:
         return None, "the device sent no digest, so the bytes are unverifiable"
+    # An empty digest means the device's md5 step read nothing, which says
+    # nothing about the bytes that did arrive. Reporting it as corruption is
+    # how the printf limit above spent two reflash attempts pointing at the
+    # transfer, so it is named separately: unverified, not wrong.
+    if length and md5.lower() == _EMPTY_MD5:
+        return None, ("the device digested no bytes at all, so this chunk is "
+                      "unverified rather than wrong — its md5 step did not run")
     if hashlib.md5(raw).hexdigest() != md5.lower():
         return None, "the chunk arrived corrupt — md5 did not match"
     return raw, ""
@@ -6328,20 +6377,20 @@ async def _emos_reflash_steps(live, device_id: str) -> None:
     say("Network reflash requested.")
 
     # ── 1. What the device says about itself ─────────────────────────────────
-    probe = await _shell_run(live, (
-        f"[ -f {em_netflash.GOOD_IMG} ] && echo GOOD:yes || echo GOOD:no; "
-        f"echo \"FREE:$(df -m /data 2>/dev/null | awk 'NR==2{{print $4}}')\"; "
-        f"echo _RFCHK"), timeout=30.0)
-    if "_RFCHK" not in probe:
+    # `em_netflash.probe_cmd` is the same string the Updates tab sends to
+    # decide whether to offer this at all, and asking it here rather than
+    # keeping a second copy is what stops the panel and the flash it offers
+    # from disagreeing about one device. The copy it replaces read free space
+    # out of `awk '$4'`, which on this device's df layout is the BLOCK SIZE —
+    # so the free-space refusal parsed nothing and had never run on the
+    # hardware the whole feature is for.
+    parsed = em_netflash.parse_probe(
+        await _shell_run(live, em_netflash.probe_cmd(), timeout=30.0))
+    if parsed is None:
         say("Could not ask the device anything — no shell session. Nothing "
             "has been written.", "error")
         return
-    good = "GOOD:yes" in probe
-    free_mb = None
-    for line in probe.splitlines():
-        if line.startswith("FREE:"):
-            raw = line[5:].strip()
-            free_mb = int(raw) if raw.isdigit() else None
+    good, free_mb = parsed["good_image"], parsed["free_mb"]
 
     # ── 2. The device's own boot image ───────────────────────────────────────
     # The header first, so the length is known before megabytes move.

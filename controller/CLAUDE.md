@@ -2738,6 +2738,45 @@ returns `eligible` and not `willSucceed`. The panel renders the server's
 `reasonText` verbatim rather than re-deriving a reason, the same posture as
 the debloat button.
 
+### The only path that READS a file off a device, and where its limit was met
+
+**The reflash refused at offset 0 twice on a healthy device, and called it
+corruption.** `_pull_range_from_device` asked for 1MB at a time, kept the
+encoded chunk in a shell variable and digested it with
+`printf %s "$__R" | base64 -d | md5sum`. 1MB of binary is 1.37MB of base64,
+which is past `MAX_ARG_STRLEN` (128KB) for any `printf` that is a binary
+rather than a shell builtin: the digest step died, `md5sum` weighed an empty
+pipe, and the mismatch was reported as bytes that arrived wrong. Measured
+2026-09-20 on a live emOS Echo — the bytes were intact both times, and
+nothing was written to a boot partition.
+
+Everything else in this controller PUSHES, and a push decodes on the device,
+so this limit exists on exactly one code path and the first thing ever to
+run it was a network reflash against hardware.
+
+- **The digest is a second `dd` of the same range**, not a re-hash of the
+  base64 just built. Two reads of a block device nothing is writing return
+  the same bytes, and what the digest has to prove here is that what arrived
+  decodes to what the partition holds. What it gives up — a file changing
+  between the two reads — is why this stays what its docstring already called
+  it: a boot-partition reader, not a general file fetch.
+- **The chunk no longer passes through a shell variable at all.** It streams
+  between two sentinel lines. The general rule is that a variable is not a
+  way around an argument limit; it only moves where the limit is met — and
+  `echo` being a builtin everywhere while `printf` need not be is what let
+  the two halves of one command disagree in silence, the same command
+  reporting a complete chunk and a digest of nothing.
+- **An empty digest is named rather than called corruption.** A device that
+  answers with the md5 of no bytes has not weighed the chunk, so the bytes
+  are unverified rather than wrong — and the difference is which half the
+  next person looks at.
+
+**The header read is what made it look like a device fault.** 64 bytes go
+through the same pipeline and always worked, so every cheap probe agreed the
+partition was readable and only the expensive one failed. A size-dependent
+failure passes every small test, which is why `tests/test_shellpull.py`
+drives the real function at a megabyte rather than at a sentence.
+
 ## A blipped device is link-down, not absent
 
 A control-plane drop leaves the device **in `_devices`** with
