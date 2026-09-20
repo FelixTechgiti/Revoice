@@ -247,6 +247,40 @@
       devLastSeenSuffix: '(last seen)',
       devUnknownVersion: 'unknown',
       devUpdateAvailable: 'Update available',
+      // -- emOS (the base under the firmware), Updates tab --
+      emosIntro: 'emOS is the system underneath the firmware. It is updated '
+        + 'separately and does not appear in the firmware check above, because '
+        + 'the two use different release namespaces on purpose.',
+      emosInstalled: 'Installed',
+      emosLatest: 'Latest',
+      emosUnknown: 'unknown',
+      emosCurrentNote: 'This device is on the newest emOS.',
+      emosBehindNote: 'A newer emOS is available.',
+      emosCannotTell: 'Cannot tell whether this is current — one of the two '
+        + 'versions could not be read. This is not the same as being up to date.',
+      emosReflash: 'Update emOS',
+      emosReflashing: 'Running…',
+      emosNotOffered: 'Not available:',
+      emosFreePrefix: 'free on /data:',
+      emosRollbackYes: 'Rollback image present.',
+      emosRollbackNo: 'No rollback image.',
+      emosWarning: 'This writes the boot partition. The controller rebuilds '
+        + 'the image from THIS device — your own kernel, only the emOS part '
+        + 'replaced — verifies it by checksum before and after writing, and '
+        + 'does not reboot if the read-back disagrees. If the new system '
+        + 'cannot reach the network, emOS restores the previous image by '
+        + 'itself after three boots.',
+      emosConfirm(from_, to) {
+        return `Write emOS ${to} to this device?\n\nIt is on ${from_} now.\n\n`
+          + 'This rewrites the boot partition and reboots the device. It is '
+          + 'verified before and after the write, and emOS restores the '
+          + 'previous image by itself if the new one cannot reach the '
+          + 'network — but a boot partition is the one thing on this device '
+          + 'with no second slot.\n\nThe device will be away for a few minutes.';
+      },
+      emosStarted: 'Started. It takes a few minutes and the device reboots at '
+        + 'the end — watch the device log for each step.',
+      emosFailed: 'Could not start the emOS update',
       devDeleteDevice: 'Delete device',
       devDeleteAsk: 'Delete?',
       devDeleteConfirm: 'Confirm',
@@ -736,6 +770,42 @@
       devLastSeenSuffix: '(zuletzt gesehen)',
       devUnknownVersion: 'unbekannt',
       devUpdateAvailable: 'Update verfügbar',
+      // -- emOS (das System unter der Firmware), Updates-Tab --
+      emosIntro: 'emOS ist das System unter der Firmware. Es wird getrennt '
+        + 'aktualisiert und taucht in der Firmware-Prüfung oben bewusst nicht '
+        + 'auf, weil beide verschiedene Release-Namensräume benutzen.',
+      emosInstalled: 'Installiert',
+      emosLatest: 'Neueste',
+      emosUnknown: 'unbekannt',
+      emosCurrentNote: 'Dieses Gerät hat das neueste emOS.',
+      emosBehindNote: 'Ein neueres emOS ist verfügbar.',
+      emosCannotTell: 'Lässt sich nicht sagen — eine der beiden Versionen war '
+        + 'nicht lesbar. Das ist nicht dasselbe wie „ist aktuell".',
+      emosReflash: 'emOS aktualisieren',
+      emosReflashing: 'Läuft…',
+      emosNotOffered: 'Nicht verfügbar:',
+      emosFreePrefix: 'frei auf /data:',
+      emosRollbackYes: 'Rücksetz-Abbild vorhanden.',
+      emosRollbackNo: 'Kein Rücksetz-Abbild.',
+      emosWarning: 'Das schreibt die Boot-Partition. Der Controller baut das '
+        + 'Abbild aus DIESEM Gerät neu — dein eigener Kernel, nur der '
+        + 'emOS-Teil wird ersetzt —, prüft es vor und nach dem Schreiben per '
+        + 'Prüfsumme und startet nicht neu, wenn das Zurücklesen nicht passt. '
+        + 'Erreicht das neue System das Netzwerk nicht, stellt emOS nach drei '
+        + 'Startversuchen von selbst das alte Abbild wieder her.',
+      emosConfirm(from_, to) {
+        return `emOS ${to} auf dieses Gerät schreiben?\n\nEs läuft gerade `
+          + `${from_}.\n\n`
+          + 'Dabei wird die Boot-Partition neu geschrieben und das Gerät '
+          + 'startet neu. Es wird vor und nach dem Schreiben geprüft, und '
+          + 'emOS stellt das alte Abbild selbst wieder her, wenn das neue '
+          + 'kein Netzwerk bekommt — aber die Boot-Partition ist das Einzige '
+          + 'auf diesem Gerät ohne zweiten Platz.\n\nDas Gerät ist ein paar '
+          + 'Minuten weg.';
+      },
+      emosStarted: 'Gestartet. Es dauert ein paar Minuten und das Gerät '
+        + 'startet am Ende neu — jeder Schritt steht im Geräteprotokoll.',
+      emosFailed: 'emOS-Update konnte nicht gestartet werden',
       devDeleteDevice: 'Gerät löschen',
       devDeleteAsk: 'Löschen?',
       devDeleteConfirm: 'Bestätigen',

@@ -550,6 +550,7 @@ async def create_app() -> web.Application:
     app.router.add_post("/api/devices/{id}/secure_link",  _post_secure_link)
     app.router.add_post("/api/devices/{id}/debloat",      _post_debloat)
     app.router.add_post("/api/devices/{id}/emos_reflash", _post_emos_reflash)
+    app.router.add_get("/api/devices/{id}/emos",          _get_device_emos)
 
     # Live events WebSocket
     app.router.add_get("/api/events", _ws_events)
@@ -6443,6 +6444,89 @@ async def _emos_reflash_steps(live, device_id: str) -> None:
     # property service that is not running and fails with ENOENT naming a
     # socket. busybox's goes through the syscall.
     await _shell_run(live, "busybox reboot || reboot", timeout=15.0)
+
+
+async def _get_device_emos(request: web.Request) -> web.Response:
+    """
+    GET /api/devices/{id}/emos
+
+    What emOS this device is on, what the newest release is, and whether a
+    network reflash is on offer — everything the Updates tab needs to show the
+    control or to say why there is none.
+
+    Read-only and cheap: one shell round trip for the device's half, and the
+    cached release poll for the other. Asked when the tab is open rather than
+    carried on the register message, because that is when the only consumer
+    needs it — the same rule that put `base_os` on register, applied to a
+    question with a different consumer.
+
+    **Absence is never reported as "up to date".** A device that is offline,
+    a shell that did not answer, a GitHub poll that failed: each of those
+    leaves `comparable` false, and the tab says it does not know. Telling
+    somebody nothing is waiting, when the truth is that nobody looked, is the
+    failure this whole panel exists to end — that is how a device sat on an
+    emOS that could not resolve a hostname.
+    """
+    device_id = request.match_info["id"]
+    live = _live(device_id)
+    base_os = getattr(live, "base_os", None) if live else None
+
+    release = await _fetch_latest_emos_release()
+    latest = release["version"] if release else ""
+
+    out = {
+        "connected": live is not None,
+        "baseOs": base_os,
+        "current": "",
+        "latest": em_netflash.strip_tag(latest),
+        "comparable": False,
+        "available": False,
+        "goodImage": None,
+        "freeMb": None,
+        "eligible": False,
+        "reason": None,
+        "reasonText": None,
+    }
+
+    # The base is answerable with no device at all, and it is the refusal that
+    # matters most — a FireOS device must never be offered this button.
+    refusal = em_netflash.base_refusal(base_os)
+    if refusal is not None:
+        out["reason"], out["reasonText"] = refusal.code, refusal.message
+        return _ok(out)
+
+    if live is None:
+        out["reason"] = "device_offline"
+        out["reasonText"] = ("This device is not connected, so neither its "
+                             "emOS version nor its readiness can be read.")
+        return _ok(out)
+
+    probe = await _shell_run(live, em_netflash.probe_cmd(), timeout=30.0)
+    parsed = em_netflash.parse_probe(probe)
+    if parsed is None:
+        # The shell did not answer. NOT a refusal about the device — it is a
+        # measurement that did not happen, and the two must not read alike.
+        out["reason"] = "no_shell"
+        out["reasonText"] = ("The device did not answer its shell, so nothing "
+                             "could be read. Worth simply trying again.")
+        return _ok(out)
+
+    out["goodImage"] = parsed["good_image"]
+    out["freeMb"] = parsed["free_mb"]
+    out.update(em_netflash.update_status(parsed["emos_version"], latest))
+    # update_status returns the stripped pair; keep the keys it owns.
+
+    verdict = em_netflash.preview(base_os, parsed["good_image"],
+                                  parsed["free_mb"])
+    if verdict is not None:
+        out["reason"], out["reasonText"] = verdict.code, verdict.message
+        return _ok(out)
+
+    # Eligible as far as anything readable from here can say. The boot header
+    # and the kernel architecture are still checked by the reflash itself,
+    # which is why this is `eligible` and not `willSucceed`.
+    out["eligible"] = True
+    return _ok(out)
 
 
 async def _post_emos_reflash(request: web.Request) -> web.Response:

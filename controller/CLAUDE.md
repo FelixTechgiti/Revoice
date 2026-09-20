@@ -2016,7 +2016,18 @@ Free space is checked before anything is written, via
 `em_oww_assets.parse_free_mb` — never an awk field index, for the busybox
 line-wrap reason documented in the asset section. An unreadable `df` reads as
 **carry on**: it is not evidence of a full disk, and refusing on it would
-block updates on any device whose `df` we have not seen. Note binary growth
+block updates on any device whose `df` we have not seen. **And on emOS that
+check has never actually run**, which is the failure the line-wrap rule was
+not wide enough to catch: measured on a live device 2026-09-20, `df -m /data`
+prints `Filesystem Size Used Free Blksize` — `/data 1010.8M 676.5M 334.3M
+4096` — with **no `Use%` column at all** and unit suffixes on the values. A
+reader anchored on the percentage finds nothing, answers None, and the guard
+retires itself in the safe direction with nobody told. `em_netflash.
+free_from_df` handles both layouts by anchoring each on what is stable *in
+it* — the `%` field where there is one, otherwise the second-to-last field,
+since the row ends `… Size Used Free Blksize`. Counting from the RIGHT is
+also what survives the wrapped filesystem name, because wrapping only ever
+removes fields from the left. `parse_free_mb` still has the old blind spot. Note binary growth
 is not a plausible cause of a space failure here — v2.9.8 is 10.1MB and
 v2.10.0 is 10.3MB.
 
@@ -2669,6 +2680,49 @@ a probe collected and dropped looks identical to one never asked for.
 Scan results are the real tension: the flags and frequency ARE the diagnosis
 (`[SAE-CCMP]` is the whole answer to #82) while the names locate someone's
 house, so rows survive with the SSID replaced and the selected network marked.
+
+## The Updates tab shows emOS, because nothing else could
+
+**A user looking for a new emOS found silence, and silence read as "nothing
+to do."** The firmware check matches `v*` tags with a `server` asset; emOS is
+deliberately `emos-v*` so the OTA poller can never select it (see the root
+CLAUDE.md on versioning). That separation is right and stays — but it meant
+the one place somebody looks for an update structurally could not mention the
+half that was behind. Measured 2026-09-20: a device sat on `emos-v0.5.0-fx.1`
+five days after `0.6.0-fx.1` shipped the DNS proxy, so no bionic-linked
+program on it could resolve a hostname and Spotify Connect restarted every
+minute.
+
+`GET /api/devices/{id}/emos` answers it, and the panel below the firmware one
+shows it. Four things are load-bearing:
+
+- **The version is asked when the tab opens, not carried on the register
+  message.** `base_os` rides register because `reconcile_on_connect` needs it
+  the instant a device connects; this has one consumer and it is a tab
+  somebody opened. Same rule — ask where the consumer needs the answer — with
+  a different answer, and it costs no firmware release, so the whole fielded
+  fleet gets the panel at once.
+- **"Cannot tell" is a third state and never collapses into "up to date".**
+  An offline device, a shell that did not answer, a GitHub poll that failed:
+  each leaves `comparable` false. Reporting the reassuring answer for a
+  measurement nobody took is exactly how the device above stayed behind.
+- **`em_netflash.strip_tag` is not cosmetic.** `version.parse` answers None
+  for `emos-v0.6.0-fx.1` and a clean tuple for `0.6.0-fx.1`, so comparing the
+  stamped strings does not fail loudly — it reports "cannot tell" for every
+  device for ever, and the panel goes quiet instead of wrong.
+- **The button is offered unless the device is PROVABLY current**, rather than
+  only when it is known to be behind. Gating on "known behind" would strand
+  the device whose stamp cannot be read, which is the one case least able to
+  help itself.
+
+**Whether a reflash may be offered is decided once, server-side.**
+`em_netflash.preview` is the head of `preflight` — literally, `preflight`
+calls it — so the button and the flash cannot disagree about eligibility.
+`preview` answers everything readable without the boot image; `preflight`
+adds the header and kernel-architecture checks, which is why the endpoint
+returns `eligible` and not `willSucceed`. The panel renders the server's
+`reasonText` verbatim rather than re-deriving a reason, the same posture as
+the debloat button.
 
 ## A blipped device is link-down, not absent
 
