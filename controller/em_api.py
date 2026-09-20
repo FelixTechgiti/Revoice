@@ -2694,11 +2694,21 @@ async def _release_shell_ws(device_id: str, live=None) -> None:
     _release_shell_lock(device_id)
 
 
-async def _shell_run(live, cmd: str, timeout: float = 30.0) -> str:
+async def _shell_run(live, cmd: str, timeout: float = 30.0,
+                    idle: float = 5.0) -> str:
     """
     Run a shell command on the device and return its stdout as a string.
 
     Appends a sentinel marker to detect when output is complete.
+
+    **`idle` is how long a SILENT command may run, and it is not the same
+    thing as `timeout`.** The loop gives up after that much quiet even when
+    the caller allowed minutes, which is right for the commands here — they
+    answer at once or not at all — and wrong for one that works before it
+    speaks. `dd` writing a boot partition prints its report at the END, so a
+    five-second cutoff returns an empty string mid-write and the caller reads
+    that as a command that did nothing, while the device is still writing.
+    The default is unchanged; the partition writes pass their own.
     """
     SENTINEL = "__CMD_DONE_9f3a__"
     device_id = live.device_id
@@ -2709,7 +2719,7 @@ async def _shell_run(live, cmd: str, timeout: float = 30.0) -> str:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                msg  = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                msg  = await asyncio.wait_for(ws.recv(), timeout=idle)
                 text = msg.decode("utf-8", errors="replace") if isinstance(msg, bytes) else msg
                 if SENTINEL in text:
                     output.append(text[:text.index(SENTINEL)])
@@ -6345,6 +6355,69 @@ EMOS_PAYLOAD_ASSET = "emos-payload.zip"
 BOOT_PARTITION_BYTES = 16 * 1024 * 1024
 
 
+async def _emos_restore_good(live, device_id: str, say, verdict: str,
+                             got: str) -> None:
+    """Put the device's own rollback image back after a write that did not
+    verify, and say plainly what state the partition is in.
+
+    **This is the one repair emOS cannot make for itself.** Its rollback
+    restores `boot-good.img` after three unconfirmed boots — from the init
+    INSIDE the image that was just overwritten, so a partition holding half
+    of something never reaches the code that would undo it. The device is
+    still running, still reachable and still holding the good image at this
+    moment; that window closes at the next power cut, and the next power cut
+    is the thing nobody schedules.
+
+    Two failing verdicts arrive here and they are not the same fault:
+
+    - `different` — the partition holds something other than what was sent.
+      The write is the suspect and the restore is the point.
+    - `unreadable` — the read-back produced no digest at all, so nothing is
+      known about the partition. That is not evidence of a bad write, but it
+      is also not permission to leave an unverified boot partition in place:
+      the previous image is the one this device is known to boot, so it goes
+      back and the message says the verification, not the write, is what
+      failed.
+
+    Every outcome ends with a sentence about what happens at the next boot,
+    because that is the only question the person reading this has.
+    """
+    trouble = ("does not hold what was sent" if verdict == "different"
+               else f"could not be read back (the device said: {got[:120]})")
+    say(f"The boot partition {trouble}. Putting the previous image back "
+        f"before anything reboots.", "error")
+
+    good = em_netflash.good_image(
+        await _shell_run(live, em_netflash.good_image_cmd(), timeout=60.0))
+    if good is None:
+        say("Could not read the rollback image to restore it. DO NOT power "
+            "the device off — it is still running the old emOS from RAM, and "
+            "the next boot would come from a partition nothing here can "
+            "vouch for. Reflashing again is the safe move; a cable and TWRP "
+            "are the fallback.", "error")
+        return
+
+    out = await _shell_run(live, em_netflash.restore_cmd(), timeout=300.0,
+                           idle=300.0)
+    wrote = em_netflash.wrote_bytes(out)
+    if wrote == 0:
+        say(f"The restore did not run — the device said: {out.strip()[:300]}. "
+            f"DO NOT power the device off; try the reflash again.", "error")
+        return
+
+    back = await _shell_run(live, em_netflash.read_back_cmd(good["size"]),
+                            timeout=300.0, idle=300.0)
+    verdict2, got2 = em_netflash.read_back_verdict(back, good["md5"])
+    if verdict2 == "ok":
+        say("The previous image is back and verified — the device is where it "
+            "started, and its next boot is the emOS it is running now. "
+            "Nothing is lost by trying the update again.")
+    else:
+        say(f"The restore did not verify either ({verdict2}: {got2[:120]}). DO "
+            f"NOT power the device off. Ask for the reflash again while it is "
+            f"still up; a cable and TWRP are the fallback.", "error")
+
+
 async def _emos_reflash_steps(live, device_id: str) -> None:
     """Re-flash a device's emOS image over the network. No USB, no TWRP.
 
@@ -6471,19 +6544,34 @@ async def _emos_reflash_steps(live, device_id: str) -> None:
         return
 
     # ── 5. Write, and check the bytes rather than the blocks ─────────────────
+    #
+    # Both writes run with a long `idle`: dd says nothing until it is done, so
+    # the default five-second silence budget would return an empty string
+    # while the device was still writing a boot partition.
     say("Writing the boot partition.")
-    await _shell_run(live, em_netflash.flash_cmd(), timeout=180.0)
+    out = await _shell_run(live, em_netflash.flash_cmd(), timeout=300.0,
+                           idle=300.0)
+    # dd's own account of the write, which used to be discarded. It is the
+    # only thing on this path that can name a cause, and its absence is what
+    # made the first two failures unattributable — the device had said
+    # exactly what was wrong, into a variable nobody read.
+    wrote = em_netflash.wrote_bytes(out)
+    if wrote == 0:
+        say(f"The write did not run — the device said: {out.strip()[:300]}. "
+            f"Nothing has been written to the boot partition.", "error")
+        return
+    if wrote is not None and wrote != len(image):
+        say(f"dd wrote {wrote} bytes of {len(image)}. The device said: "
+            f"{out.strip()[:300]}", "error")
+    elif wrote is None:
+        say(f"dd reported nothing recognisable: {out.strip()[:300]}. Reading "
+            f"the partition back to find out what happened.")
+
     back = await _shell_run(live, em_netflash.read_back_cmd(len(image)),
-                            timeout=180.0)
-    # The digest is the LAST line: dd writes its block counts to stderr, which
-    # the read-back command redirects, but a shell that echoes anything else
-    # first would otherwise be compared instead of the md5.
-    got = back.strip().splitlines()[-1] if back.strip() else ""
-    if not em_netflash.written_correctly(got, want):
-        say("The boot partition does not read back as what was written. NOT "
-            "rebooting — the device is still running its current emOS, and "
-            "the safest next move is to try again rather than to power-cycle.",
-            "error")
+                            timeout=300.0, idle=300.0)
+    verdict, got = em_netflash.read_back_verdict(back, want)
+    if verdict != "ok":
+        await _emos_restore_good(live, device_id, say, verdict, got)
         return
     say(f"Verified. Rebooting into {version}; if it cannot reach the network, "
         f"emOS restores the previous image by itself after three boots.")

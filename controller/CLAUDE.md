@@ -2777,6 +2777,50 @@ partition was readable and only the expensive one failed. A size-dependent
 failure passes every small test, which is why `tests/test_shellpull.py`
 drives the real function at a megabyte rather than at a sentence.
 
+### And then the write did not write, in thirteen milliseconds
+
+**The second attempt read the partition fine, built the image, staged it, and
+reported that the boot partition did not hold what was sent.** It did not:
+nothing had been written at all. Measured 2026-09-20 from the shell-session
+timestamps — the write command opened a session at 22:07:01.922 and closed it
+at 22:07:01.935. Thirteen milliseconds for 6.9MB.
+
+**A bare `dd` is Amazon's toolbox binary out of `/system`, which emOS
+mounts.** The tool is present, the name resolves, and its NetBSD `dd` rejects
+`conv=fsync` — a GNU/busybox extension — outright. The read-back then took
+369ms, which is exactly what reading 6.9MB off eMMC and digesting it costs, so
+that half was working and honestly reported a partition that had not changed.
+`flash_cmd`, `restore_cmd` and `read_back_cmd` all go through `busybox` now,
+and a test pins all three rather than the one that was measured.
+
+Three things came out of it that outlive the flag:
+
+- **The device said what was wrong and nobody read it.** `flash_cmd` ends
+  `2>&1` precisely so dd's account reaches us, and the call site discarded the
+  return value. `em_netflash.wrote_bytes` parses the byte count out of it, and
+  a count that is absent, zero or short each mean something different: absent
+  is "dd did not say", which is NOT zero and must still be verified, because a
+  write we cannot account for may have happened.
+- **`_shell_run` ends a command after five seconds of SILENCE, whatever
+  timeout it was given.** Right for everything else here — those commands
+  answer at once or not at all — and wrong for `dd`, which speaks only when it
+  is finished. Left alone it would have returned an empty string mid-write on
+  the first flash that actually ran, and the caller would have read that as a
+  command that did nothing. The partition writes pass `idle=` now; the default
+  is untouched.
+- **A failed verification now puts the previous image back.** This is the one
+  repair emOS cannot make for itself: its rollback restores `boot-good.img`
+  after three unconfirmed boots, from the init INSIDE the image that was just
+  overwritten — so a partition holding half of something never reaches the
+  code that would undo it. At that moment the device is still up, still
+  reachable and still holding the good image, and that window closes at the
+  next power cut. `read_back_verdict` is three-way for the same reason the
+  chunk digest is: `different` means the write is the suspect, `unreadable`
+  means nothing measured the partition — and while that is not evidence of a
+  bad write, it is not permission to leave an unverified boot partition
+  either, so the known-bootable image goes back and the message says which of
+  the two failed.
+
 ## A blipped device is link-down, not absent
 
 A control-plane drop leaves the device **in `_devices`** with

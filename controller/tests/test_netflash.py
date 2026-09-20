@@ -222,21 +222,23 @@ def test_every_refusal_says_what_to_do_next():
 # ─── The comparison that gates a reboot ──────────────────────────────────────
 
 def test_a_matching_read_back_passes():
-    assert em_netflash.written_correctly("ABC123", "abc123") is True
+    want = "b50954d19e1ae698049ec2d739d85763"
+    assert em_netflash.read_back_verdict(want.upper(), want)[0] == "ok"
 
 
 def test_a_read_that_did_not_happen_is_not_a_pass():
     """Empty is a read that failed, never a partition that matched.
 
     This is the wizard's lesson in a different file: a check that cannot run
-    must not read as a pass.
+    must not read as a pass. It is now its own verdict rather than a False,
+    because after a write the two want opposite next moves.
     """
-    assert em_netflash.written_correctly("", "abc123") is False
-    assert em_netflash.written_correctly("abc123", "") is False
+    assert em_netflash.read_back_verdict("", "abc123")[0] == "unreadable"
+    assert em_netflash.read_back_verdict("b" * 32, "")[0] == "unreadable"
 
 
 def test_a_mismatch_fails():
-    assert em_netflash.written_correctly("abc123", "def456") is False
+    assert em_netflash.read_back_verdict("a" * 32, "b" * 32)[0] == "different"
 
 
 # ─── The device-side commands ────────────────────────────────────────────────
@@ -390,3 +392,121 @@ def test_preview_passing_does_not_yet_mean_preflight_passes():
     assert em_netflash.preview("emos", True, 500) is None
     assert em_netflash.preflight("emos", True, 500, b"nope", None).code \
         == "not_boot_image"
+
+
+# ── The write, its account of itself, and the repair ──────────────────────────
+#
+# The first network flash against hardware wrote nothing and blamed the
+# partition (2026-09-20). Everything below stands in for one step of that
+# evening, because every one of them is silent when wrong: a tool that answers
+# and refuses, a report nobody reads, and a verification that cannot tell "the
+# partition holds something else" from "nothing measured the partition".
+
+def test_every_partition_command_goes_through_busybox():
+    # A bare dd/md5sum on either base is Amazon's toolbox binary out of
+    # /system, which emOS mounts — so the name resolves, the tool answers, and
+    # `conv=fsync` is rejected in 13 milliseconds. Pinned on all three
+    # commands rather than on the one that was measured: the next one written
+    # will be copied from these.
+    for cmd in (em_netflash.flash_cmd(), em_netflash.restore_cmd(),
+                em_netflash.read_back_cmd(6928384)):
+        assert cmd.startswith("busybox dd "), cmd
+    assert "busybox md5sum" in em_netflash.read_back_cmd(6928384)
+    assert "conv=fsync" in em_netflash.flash_cmd()
+    assert "conv=fsync" in em_netflash.restore_cmd()
+
+
+def test_the_write_reads_its_own_byte_count():
+    busybox = ("106+1 records in\n106+1 records out\n"
+               "6928384 bytes (6.6MB) copied, 0.352 seconds, 18.7MB/s")
+    assert em_netflash.wrote_bytes(busybox) == 6928384
+
+
+def test_a_refused_flag_reports_no_count_at_all():
+    # The measured failure: toolbox dd rejecting conv=fsync. None means "dd
+    # did not say", which is NOT zero — the caller must still verify, because
+    # a write it cannot account for may have happened.
+    assert em_netflash.wrote_bytes("dd: unrecognized conv: fsync") is None
+    assert em_netflash.wrote_bytes("") is None
+
+
+def test_zero_and_short_counts_are_distinct_from_silence():
+    assert em_netflash.wrote_bytes("0 bytes copied, 0.001 seconds") == 0
+    assert em_netflash.wrote_bytes("65536 bytes (64KB) copied, 0.01 s") == 65536
+
+
+def test_the_verdict_separates_a_bad_write_from_a_failed_measurement():
+    want = "b50954d19e1ae698049ec2d739d85763"
+    assert em_netflash.read_back_verdict(want.upper(), want)[0] == "ok"
+    assert em_netflash.read_back_verdict("a" * 32, want)[0] == "different"
+    # Neither of these says anything about the partition, and calling either
+    # one corruption would mean writing again on the strength of a missing
+    # tool.
+    for answer in ("md5sum: not found", "", "   ", "dd: can't open"):
+        verdict, got = em_netflash.read_back_verdict(answer, want)
+        assert verdict == "unreadable", answer
+        assert got == answer.strip()
+
+
+def test_the_digest_is_the_last_line_the_device_printed():
+    want = "b50954d19e1ae698049ec2d739d85763"
+    noisy = f"106+0 records in\n106+0 records out\n{want}"
+    assert em_netflash.read_back_verdict(noisy, want)[0] == "ok"
+
+
+def test_a_missing_sent_digest_is_unreadable_rather_than_different():
+    # Nothing to compare against is not a mismatch, and reporting it as one
+    # would send somebody looking at the device.
+    assert em_netflash.read_back_verdict("a" * 32, "")[0] == "unreadable"
+
+
+def test_the_rollback_image_probe_needs_both_halves():
+    good = em_netflash.good_image(
+        "SIZE:6928384\nMD5:b50954d19e1ae698049ec2d739d85763\n_GOODCHK")
+    assert good == {"size": 6928384,
+                    "md5": "b50954d19e1ae698049ec2d739d85763"}
+    # No sentinel: the probe did not run. Distinct from an answer, because a
+    # restore that cannot be verified is a second unverified write.
+    assert em_netflash.good_image(
+        "SIZE:6928384\nMD5:b50954d19e1ae698049ec2d739d85763") is None
+    # A file that is not there, and a digest that is not one.
+    assert em_netflash.good_image("SIZE:\nMD5:\n_GOODCHK") is None
+    assert em_netflash.good_image("SIZE:12\nMD5:nope\n_GOODCHK") is None
+    assert em_netflash.good_image_cmd().count("busybox") == 2
+
+
+# ── The call site, which is where both faults actually lived ─────────────────
+
+def _reflash_src():
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import apisrc
+    src = apisrc.extract("_emos_reflash_steps") + apisrc.extract(
+        "_emos_restore_good")
+    return "\n".join(line for line in src.splitlines()
+                     if not line.lstrip().startswith("#"))
+
+
+def test_the_write_is_not_cut_off_by_the_silence_budget():
+    # dd says nothing until it finishes, and _shell_run gives up after five
+    # seconds of quiet however long a timeout it was given — so the default
+    # returns an empty string mid-write and the caller reads a command that
+    # did nothing.
+    src = _reflash_src()
+    for call in ("flash_cmd()", "restore_cmd()"):
+        i = src.index(call)
+        assert "idle=" in src[i:i + 200], call
+
+
+def test_dd_is_asked_what_it_did_rather_than_assumed():
+    src = _reflash_src()
+    assert "wrote_bytes(" in src
+    assert "read_back_verdict(" in src
+
+
+def test_a_partition_that_did_not_verify_is_put_back():
+    src = _reflash_src()
+    assert "_emos_restore_good(" in src
+    assert "restore_cmd()" in src
+    # And the restore is verified in turn, or it is just a second write.
+    assert src.count("read_back_cmd(") == 2
