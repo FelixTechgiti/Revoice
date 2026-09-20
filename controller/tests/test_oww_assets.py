@@ -8,6 +8,7 @@ the model a device is using; a wrong "keep" leaves it scoring against a
 stale classifier that silently disagrees with the controller.
 """
 
+import inspect
 import time
 
 import pytest
@@ -230,7 +231,73 @@ def test_free_space_is_read_from_the_percentage_anchor_not_a_column_index(line, 
     assert A.parse_free_mb(line) == want
 
 
-@pytest.mark.parametrize("line", ["", "garbage", "df: /data: No such file or directory"])
+@pytest.mark.parametrize("line,want", [
+    # Measured on G090L91180250AN1 (emos-v0.5.0-fx.1), 2026-09-20. Header is
+    # "Filesystem Size Used Free Blksize": no use-percentage column at all,
+    # and every figure carrying a unit suffix.
+    ("/data       1010.8M  676.5M  334.3M  4096", 334),
+    # The same row with the filesystem name wrapped away. Counting from the
+    # right is what survives it — wrapping only removes fields from the LEFT.
+    ("       1010.8M  676.5M  334.3M  4096", 334),
+    ("/data 2.0G 1.0G 1.0G 4096", 1024),
+    ("/data 1010 648 346 4096", 346),
+])
+def test_free_space_is_read_where_there_is_no_percentage_column(line, want):
+    """
+    emOS prints no use percentage, so the anchor found nothing and this
+    returned None for every emOS device — leaving the guard in front of the
+    OTA and of the asset push unrun on the base this project is aiming at.
+    Nothing broke, because None reads as "could not measure" and never
+    refuses; the check simply was not happening.
+
+    em_netflash met this row first and was repaired on its own; these two
+    call sites were not, because nothing connected them but the question.
+    """
+    assert A.parse_free_mb(line) == want
+
+
+def test_there_is_one_parser_and_this_is_not_it():
+    """
+    parse_free_mb delegates rather than carrying a second copy.
+
+    Two readers of one device's one df row is exactly how the blind spot
+    outlived being found. A copy here would pass every test above on the day
+    it was written and drift the next time only one of them is corrected.
+    """
+    import em_netflash
+    src = inspect.getsource(A.parse_free_mb)
+    body = src[src.index('"""', src.index('"""') + 3) + 3:]
+    assert "free_from_df" in body, (
+        "parse_free_mb must delegate to em_netflash.free_from_df"
+    )
+    assert "endswith" not in body and "split()" not in body, (
+        "a second copy of the layout rules is what this test exists to stop"
+    )
+    # And the direction of the import: em_netflash stays pure, so it must not
+    # reach back into this module, which carries em_oww_models behind it.
+    assert "em_oww_assets" not in [
+        l.split()[1] for l in inspect.getsource(em_netflash).splitlines()
+        if l.startswith("import ")
+    ], "em_netflash must not import em_oww_assets — it is the pure one"
+
+
+def test_a_partition_with_only_kilobytes_free_reads_as_zero_not_as_unknown():
+    """
+    0 and None are opposite instructions — refuse, against carry on unchecked
+    — so a figure too small to express in megabytes must floor rather than
+    fail to parse.
+    """
+    assert A.parse_free_mb("/data 1010.8M 1010.3M 500K 4096") == 0
+
+
+@pytest.mark.parametrize("line", [
+    "",
+    "garbage",
+    "df: /data: No such file or directory",
+    # A wrapped filesystem name on its own — a real line of a real df, and one
+    # carrying no measurement at all.
+    "/dev/block/platform/mtk-msdc.0/by-name/userdata",
+])
 def test_unreadable_df_yields_no_measurement(line):
     """None means 'unknown', which plan_sync treats as 'do not check' — the
     opposite of 0, which would block every install."""

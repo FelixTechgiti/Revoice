@@ -2027,7 +2027,21 @@ free_from_df` handles both layouts by anchoring each on what is stable *in
 it* — the `%` field where there is one, otherwise the second-to-last field,
 since the row ends `… Size Used Free Blksize`. Counting from the RIGHT is
 also what survives the wrapped filesystem name, because wrapping only ever
-removes fields from the left. `parse_free_mb` still has the old blind spot. Note binary growth
+removes fields from the left.
+
+**`parse_free_mb` DELEGATES to it rather than having been fixed alongside
+it**, and the reason is the shape of how this survived: the reflash met the
+row first and was repaired, while the OTA and the asset push went on
+answering None, because nothing connects those three but the fact that they
+ask the same question of the same output. Two correct copies is the state
+that produced one fixed bug and two unfixed call sites, so **the duplication
+is the defect rather than the divergence** — `tests/test_oww_assets.py`
+fails on a second copy even when that copy is right, because a copy that
+agrees today is exactly what the next one-sided correction drifts from.
+**The import goes `em_oww_assets` → `em_netflash` and must not be turned
+round**: em_netflash reaches only `em_platform`, which imports nothing, and
+every rule in it guards a partition write — the other direction hangs
+`em_oww_models` off that, for a parser. Note binary growth
 is not a plausible cause of a space failure here — v2.9.8 is 10.1MB and
 v2.10.0 is 10.3MB.
 
