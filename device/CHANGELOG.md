@@ -12,6 +12,34 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.51.0-fx.1
+
+### AirPlay 2 kann jetzt überhaupt starten: es gab kein 127.0.0.1
+
+**Wenn du AirPlay 2 eingeschaltet hattest und es nie lief, ist das der Grund.
+Ohne AirPlay 2 ändert dieses Update für dich nichts.**
+
+AirPlay 2 besteht aus zwei Programmen, die über einen Kontrollport auf dem
+Loopback miteinander reden. Auf einem emOS-Gerät gab es dieses Loopback nicht:
+Linux richtet `lo` nicht von selbst ein, Androids init tut es, unseres tat es
+nicht. Es gab also **kein 127.0.0.1, für kein Programm** — von der ersten
+Sekunde nach dem Flashen an, und niemandem aufgefallen, weil bis dahin nichts
+danach gefragt hatte.
+
+Die Firmware bringt das Loopback jetzt beim Start selbst hoch. Auf FireOS
+passiert dabei nichts: Sie liest erst nach, ob die Schnittstelle oben ist und
+die Adresse trägt, und schreibt nur, wenn nicht.
+
+**Der richtige Ort dafür ist emOS' init**, und der bekommt es auch — aber der
+fährt nur in einem Boot-Image mit, das du flashen müsstest. Diese Fassung
+erreicht dich per OTA. Beide zusammen heisst: Ein Gerät ist künftig auch
+korrekt, bevor die Firmware startet, und in einer Konsolensitzung, in der sie
+gar nicht läuft.
+
+**Was noch dazugehört:** die reparierten AirPlay-2-Binaries in
+`endpoints-v1.11.0` und Controller 2.55.0-fx.1, der sie überhaupt installiert.
+Ohne alle drei bleibt AirPlay 2 aus.
+
 ## 2.50.0-fx.1
 
 ### Ein neu installierter AirPlay-2-Empfänger wurde nicht gestartet
