@@ -1,5 +1,66 @@
 # Changelog
 
+## 2.56.0-fx.1
+
+### Der Updates-Tab zeigt jetzt auch emOS
+
+**Wer nach einem neuen emOS gesucht hat, hat nichts gefunden — und das als
+„nichts zu tun" gelesen.** Die Firmware-Suche kann emOS gar nicht sehen: die
+beiden benutzen absichtlich getrennte Release-Namensräume, damit die
+Firmware-Aktualisierung nie versehentlich ein emOS-Abbild auswählt. Nur war
+damit ausgerechnet die eine Stelle, an der man nach Updates sieht, blind für
+die Hälfte, die zurückhing.
+
+Am 20.09.2026 gemessen: ein Echo stand fünf Tage lang auf emOS 0.5.0-fx.1,
+nachdem 0.6.0-fx.1 die Namensauflösung repariert hatte. Auf dem Gerät konnte
+deshalb kein Programm einen Hostnamen nachschlagen, und Spotify Connect hat
+sich jede Minute neu gestartet. Der Weg, das übers Netzwerk zu reparieren, war
+längst gebaut — er hatte nur keinen Knopf.
+
+### Was du siehst
+
+Auf dem Updates-Tab eines Geräts steht unter der Firmware jetzt ein
+emOS-Abschnitt: installierte Fassung, neueste Fassung, und ein Knopf, wenn
+etwas anliegt.
+
+- **„Lässt sich nicht sagen" ist eine eigene Antwort.** Ist das Gerät offline,
+  antwortet seine Shell nicht oder ist GitHub nicht erreichbar, steht das
+  dort — und nicht das beruhigende „ist aktuell". Genau diese falsche
+  Beruhigung hat das Gerät oben fünf Tage stehen lassen.
+- **Der Knopf erscheint, solange das Gerät nicht nachweislich aktuell ist.**
+  Auch dann, wenn seine Version nicht lesbar ist — sonst wäre ausgerechnet
+  dieses Gerät für immer ausgesperrt.
+- **Vor dem Schreiben wird gefragt**, und die Frage nennt beide Fassungen und
+  was passiert.
+
+### Bevor du ihn drückst
+
+**Das schreibt die Boot-Partition, und die ist das Einzige auf dem Gerät ohne
+zweiten Platz.** Der Controller baut das Abbild aus deinem eigenen Gerät neu —
+dein Kernel bleibt, nur der emOS-Teil wird ersetzt —, prüft es per Prüfsumme
+vor und nach dem Schreiben, und **startet nicht neu, wenn das Zurücklesen
+nicht passt**. Erreicht das neue System das Netzwerk nicht, stellt emOS nach
+drei Startversuchen von selbst das alte Abbild wieder her.
+
+Trotzdem: dieser Schreibvorgang ist nach allem, was dokumentiert ist, noch nie
+an echter Hardware gelaufen. Geht dabei doch etwas schief, führt der Weg
+zurück über Kabel und TWRP.
+
+### Eine Prüfung, die es nur auf dem Papier gab
+
+Beim Bauen aufgefallen: die Prüfung auf freien Speicherplatz hat auf
+emOS-Geräten nie gemessen. Deren `df` gibt die Werte in einem Format aus, das
+der Leser nicht kannte, also lautete die Antwort immer „nicht messbar" — was
+korrekt nichts blockiert, aber eben auch nichts prüft. Repariert für den
+Reflash-Pfad.
+
+### Nicht in diesem Update
+
+**AirPlay 2 läuft seit heute**, aber das kam über die Endpunkt-Binaries
+(`endpoints-v1.12.0`) und braucht kein Controller-Update. Wenn dein Echo
+AirPlay 2 noch nicht anbietet, hilft ein Blick auf den Updates-Tab unter
+„Streaming-Endpunkte", nicht dieses Update.
+
 ## 2.55.0-fx.1
 
 ### AirPlay 2 lief auf keinem Gerät, und jetzt kommt die Reparatur auch an
