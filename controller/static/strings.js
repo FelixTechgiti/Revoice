@@ -252,6 +252,9 @@
         + 'separately and does not appear in the firmware check above, because '
         + 'the two use different release namespaces on purpose.',
       emosInstalled: 'Installed',
+      emosChecking: 'Asking the device…',
+      emosUnreachable: 'Could not read this device\u2019s emOS state. That is not '
+        + 'the same as being up to date — reopen the tab to try again.',
       emosLatest: 'Latest',
       emosUnknown: 'unknown',
       emosCurrentNote: 'This device is on the newest emOS.',
@@ -775,6 +778,10 @@
         + 'aktualisiert und taucht in der Firmware-Prüfung oben bewusst nicht '
         + 'auf, weil beide verschiedene Release-Namensräume benutzen.',
       emosInstalled: 'Installiert',
+      emosChecking: 'Frage das Gerät…',
+      emosUnreachable: 'Der emOS-Zustand dieses Geräts war nicht lesbar. Das ist '
+        + 'nicht dasselbe wie „ist aktuell" — Tab neu öffnen, um es erneut zu '
+        + 'versuchen.',
       emosLatest: 'Neueste',
       emosUnknown: 'unbekannt',
       emosCurrentNote: 'Dieses Gerät hat das neueste emOS.',

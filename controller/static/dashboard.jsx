@@ -1646,6 +1646,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
   const [fetchingSup, setFetchingSup] = useState(false);
   const [debloating, setDebloating] = useState(false);
   const [emos, setEmos] = useState(null);
+  const [emosErr, setEmosErr] = useState(false);
   const [emosBusy, setEmosBusy] = useState(false);
   const [assets, setAssets] = useState(null);
   const [installing, setInstalling] = useState(false);
@@ -1689,8 +1690,13 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
       API.get('/api/releases/latest').then(setRelease).catch(() => {});
       // emOS is a separate namespace from the firmware above, so it needs
       // its own ask. One shell round trip; see _get_device_emos.
+      // Cleared first: reopening the tab must show "asking" again rather
+      // than last time's answer, which may be minutes old and is about to be
+      // replaced. The call waits on a shell round trip to the Echo and has
+      // been measured at ~26s, so this is a state a user really sees.
+      setEmos(null); setEmosErr(false);
       API.get(`/api/devices/${device.device_id}/emos`)
-        .then(setEmos).catch(() => setEmos(null));
+        .then(setEmos).catch(() => setEmosErr(true));
       // Same tab-entry pattern as the asset state below: this changes only
       // when someone edits system config, so polling it would be waste.
       API.get('/api/system/status')
@@ -3133,22 +3139,39 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   function the reflash itself runs. Nothing about who may
                   flash is decided here, so the button and the endpoint cannot
                   drift apart. */}
-              {isAdmin && emos && (
+              {isAdmin && (
                 <Panel label="emOS">
                   <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', lineHeight:1.6, marginBottom:14, textWrap:'pretty' }}>
                     {t('emosIntro')}
                   </div>
 
+                  {/* Three states, and NONE of them is an empty panel. The
+                      whole feature exists because silence read as "nothing to
+                      do"; a panel that renders only on success repeats that
+                      one level up, which is exactly what shipped in
+                      2.56.0-fx.1 and what a user reported as "there is no
+                      button". */}
+                  {emosErr && (
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--warn)', lineHeight:1.6, textWrap:'pretty' }}>
+                      {t('emosUnreachable')}
+                    </div>
+                  )}
+                  {!emosErr && !emos && (
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', lineHeight:1.6 }}>
+                      {t('emosChecking')}
+                    </div>
+                  )}
+                  {emos && (<>
                   <div style={{ display:'flex', gap:18, flexWrap:'wrap', marginBottom:12, minWidth:0 }}>
                     <div style={{ minWidth:0 }}>
                       <div style={{ fontSize:9, color:'var(--muted)' }}>{t('emosInstalled')}</div>
-                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12 }}>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:'var(--text)' }}>
                         {emos.current || t('emosUnknown')}
                       </div>
                     </div>
                     <div style={{ minWidth:0 }}>
                       <div style={{ fontSize:9, color:'var(--muted)' }}>{t('emosLatest')}</div>
-                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12 }}>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:'var(--text)' }}>
                         {emos.latest || t('emosUnknown')}
                       </div>
                     </div>
@@ -3190,6 +3213,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                       {emos.freeMb != null && ` · ${emos.freeMb} MB ${t('emosFreePrefix')}`}
                     </div>
                   )}
+                  </>)}
                 </Panel>
               )}
 
