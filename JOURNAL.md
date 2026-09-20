@@ -2782,3 +2782,58 @@ the one line that identifies an `ask_question` flow — the exact flow being
 debugged in #423, where an `ask_question` called from a voice turn's own intent
 deadlocks against that turn's 30s TTS wait (#506). The marker was meant for
 transcripts; `{msg.text!r}` is quoted and `_QUOTED` already covers it.
+
+---
+
+## 2026-09-20 — The first emOS reflash over the network, and the three walls in front of it
+
+**It worked, on hardware: `G090L91180250AN1` went from emOS 0.5.0-fx.1 to
+0.6.0-fx.1 with nobody in the room, no cable and no TWRP.** The write verified
+against the image's own md5 at 23:13:08, the device rebooted and registered
+again 53 seconds later, still on firmware v2.51.0-fx.1 and with every
+capability it had before. That is the first time the path built for #156 has
+run end to end.
+
+It took three attempts and two fixes to get there, and **all three walls were
+the same shape**: a tool whose NAME resolves, answering as something other
+than what the command was written for. emOS mounts Amazon's `/system`, so
+every bare `dd`, `md5sum`, `base64` and `reboot` on the PATH is Amazon's
+toolbox binary. The tool is present, it answers, and it refuses in its own
+way.
+
+| attempt | where it stopped | what it actually was |
+|---|---|---|
+| 20:55, 21:18 | read, at offset 0 | `printf %s "$__R"` with 1.37MB of base64 in it — past `MAX_ARG_STRLEN` for a `printf` that is a binary, so md5sum weighed an empty pipe (#238) |
+| 22:07 | write, "does not read back as what was written" | toolbox `dd` rejecting `conv=fsync`, in **13 milliseconds** for 6.9MB (#241) |
+| 23:13 | — | verified, rebooted, back in 53s |
+
+**The measurement that named the second one was a pair of timestamps, not a
+log line.** Nothing in the output said anything was wrong; the shell session
+opened at 22:07:01.922 and closed at .935, and 6.9MB does not move in thirteen
+milliseconds. The read-back next to it took 369ms, which is exactly what
+reading and digesting 6.9MB off this eMMC costs — so that half was working and
+honestly reporting a partition that had not changed. **Two durations, one of
+them plausible, is what separated "the write is broken" from "the check is
+broken".**
+
+Three things came out of it that outlive the flag, and they are in
+`controller/CLAUDE.md` in full:
+
+- **The device said what was wrong and nobody read it.** `flash_cmd` ends
+  `2>&1` precisely so dd's account comes back, and the call site discarded the
+  return value.
+- **`_shell_run` ends a command after five seconds of SILENCE**, whatever
+  timeout it was given. Right for everything else here; wrong for a `dd` that
+  speaks only when it is finished. The first write that actually ran would
+  have returned an empty string mid-write.
+- **A failed verification now puts `boot-good.img` back.** emOS's rollback
+  runs from the init INSIDE the image being replaced, so a partition holding
+  half of something never reaches the code that would undo it — and at the
+  moment the check fails, the device is still up, still reachable and still
+  holding the good image.
+
+**What is still not answered:** librespot on that device goes on failing with
+`could not initialize spirc: Service unavailable { client error (Connect) }`
+every minute, which is the fault 0.6.0's DNS proxy exists to end. Either the
+running image is not what it should be or the proxy does not cover this case,
+and the two want different next steps — see the follow-up.
