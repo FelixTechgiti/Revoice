@@ -65,6 +65,7 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -73,6 +74,7 @@
 #include "mdns.h"
 
 #include "mdns_ap2.h"
+#include "tinysvc_txt.h"
 #include "tinysvcmdns.h"
 
 static struct mdnsd *svr = NULL;
@@ -165,13 +167,112 @@ static int set_hostname_and_addresses(void) {
   return 0;
 }
 
+/* Build the service's TXT record and give it to the responder.
+ *
+ * This is the one job deliberately taken away from mdnsd_register_svc, and
+ * the reason is #229. Its TXT path goes through `rr_add_txt`, which encodes
+ * each string with `create_label` — the helper for DNS *name* labels, which
+ * refuses anything over 63 bytes and answers NULL. `rr_add_txt` stores that
+ * NULL, and the responder thread dereferences it the first time it encodes
+ * an announcement, which kills the whole receiver about a second after it
+ * starts. AirPlay 2's `pk=` record is `pk=` plus a 32-byte key as hex: 67
+ * bytes, every time, on every device — so AirPlay 2 could not once have
+ * worked, and the crash is in a thread whose output nobody reads.
+ *
+ * A TXT string's real limit is 255 (RFC 6763 section 6.1). em_txt_label
+ * enforces that one and returns NULL only for a string that genuinely cannot
+ * be represented, which is checked here rather than stored.
+ *
+ * Everything below is the public tinysvcmdns API, so upstream stays
+ * untouched: `struct mdnsd` is opaque, but `mdnsd_add_rr` takes its lock and
+ * adds to the same group `mdnsd_register_svc` would have. The record's name
+ * is built exactly as it builds it, or the SRV would point at one name and
+ * the TXT would sit under another, and the two would never be answered
+ * together.
+ *
+ * Caller holds ad_lock. */
+static int add_txt_record(const char *instance, const char *type, const char *txt[]) {
+  uint8_t *inst_label = create_label(instance);
+  uint8_t *type_nlabel = create_nlabel(type);
+  uint8_t *nlabel = NULL;
+  struct rr_entry *e = NULL;
+  struct rr_data_txt *tail = NULL;
+  int filled = 0;
+
+  if (inst_label != NULL && type_nlabel != NULL)
+    nlabel = join_nlabel(inst_label, type_nlabel);
+  free(inst_label);
+  free(type_nlabel);
+  if (nlabel == NULL) {
+    warn("tinysvcmdns: cannot form a record name for \"%s\" under %s", instance, type);
+    return -1;
+  }
+
+  /* The same call mdnsd_register_svc makes, so the record carries the same
+   * class, cache-flush bit and 4500-second TTL as every other one on the
+   * air. */
+  e = rr_create(nlabel, RR_TXT);
+  if (e == NULL) {
+    free(nlabel);
+    warn("tinysvcmdns: out of memory creating the TXT record for \"%s\"", instance);
+    return -1;
+  }
+
+  /* The first string lives in the entry itself and the rest hang off it —
+   * tinysvcmdns's own layout, which its encoder walks. */
+  tail = &e->data.TXT;
+  for (; txt != NULL && *txt != NULL; txt++) {
+    uint8_t *label = em_txt_label(*txt);
+    if (label == NULL) {
+      /* Loud and survivable: one unrepresentable record is worth less than
+       * the service it is attached to, and silence here is how a 67-byte
+       * string became a segmentation fault. */
+      warn("tinysvcmdns: dropping a %zu-byte TXT record from \"%s\" — the limit is %d",
+           strlen(*txt), instance, EM_TXT_MAX);
+      continue;
+    }
+    if (!filled) {
+      tail->txt = label;
+      filled = 1;
+      continue;
+    }
+    struct rr_data_txt *next = calloc(1, sizeof(*next));
+    if (next == NULL) {
+      free(label);
+      warn("tinysvcmdns: out of memory extending the TXT record for \"%s\"", instance);
+      break;
+    }
+    next->txt = label;
+    tail->next = next;
+    tail = next;
+  }
+
+  /* An empty TXT record is legal and is what a service with no strings is
+   * supposed to advertise — but the encoder reads txt[0] unconditionally, so
+   * the single embedded node must hold something. A zero-length string is
+   * the encoding of "no attributes". */
+  if (!filled) {
+    tail->txt = em_txt_label("");
+    if (tail->txt == NULL) {
+      warn("tinysvcmdns: out of memory creating an empty TXT record for \"%s\"", instance);
+      return -1;
+    }
+  }
+
+  mdnsd_add_rr(svr, e);
+  return 0;
+}
+
 static int register_one(const char *instance, const char *regtype, const char *txt[]) {
   char type[128];
   if (regtype == NULL || em_regtype_local(regtype, type, sizeof(type)) != 0) {
     warn("tinysvcmdns: cannot form a service type from \"%s\"", regtype ? regtype : "(null)");
     return -1;
   }
-  struct mdns_service *svc = mdnsd_register_svc(svr, instance, type, ad.port, NULL, txt);
+  /* NULL rather than txt: the TXT record is built by add_txt_record below,
+   * for the reason in its comment. Passing the strings here is what crashes
+   * the responder. */
+  struct mdns_service *svc = mdnsd_register_svc(svr, instance, type, ad.port, NULL, NULL);
   if (svc == NULL) {
     warn("tinysvcmdns: could not register %s as \"%s\"", type, instance);
     return -1;
@@ -179,6 +280,11 @@ static int register_one(const char *instance, const char *regtype, const char *t
   /* Frees the wrapper only — the records themselves belong to the responder
    * and are freed by mdnsd_stop. Upstream does the same. */
   mdns_service_destroy(svc);
+
+  if (add_txt_record(instance, type, txt) != 0) {
+    warn("tinysvcmdns: %s as \"%s\" has no TXT record", type, instance);
+    return -1;
+  }
   return 0;
 }
 

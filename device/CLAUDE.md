@@ -1870,6 +1870,54 @@ signal that section was built for — and the thing that named the cause was
 Neither existed a fortnight ago, and without the second this is a binary that
 does not work for a reason nobody can see.
 
+### One helper for two limits: a TXT string is 255 bytes, a name label is 63
+
+**The third wall behind the two above, and the one that had actually never
+let AirPlay 2 start** (#229). tinysvcmdns encodes every DNS-SD TXT string with
+`create_label` — the helper that also builds *name* labels, so it enforces 63
+bytes and returns `NULL` past it. `rr_add_txt` stores that `NULL` without
+looking, and `mdns_encode_rr` reads `txt_rec->txt[0]` off it. AirPlay 2
+advertises `pk=` plus a 32-byte Ed25519 key as hex: **67 bytes**, on every
+device, every time. RFC 6763 allows a TXT string 255; only the name label is
+63, and the two limits met in one function.
+
+`compat/tinysvc_txt.c` is the encoder that separates them, and
+`mdns_tinysvcmdns.c` builds the service's TXT record itself and hands it over
+with `mdnsd_add_rr` rather than letting `mdnsd_register_svc` run the strings
+through `create_label`. Upstream is untouched, so the 4.3.7 pin stays movable.
+
+Four things worth keeping:
+
+- **The general rule: two limits that differ must not share a helper**, and
+  the tell is a function whose name says one of them. `create_label` is right
+  about labels and was never asked whether it was the right tool for TXT.
+- **A NULL that is STORED rather than checked moves the crash to another
+  thread, another file and another second.** The refusal was correct and local;
+  everything expensive came from nobody looking at the return. The same pair
+  is the reason `em_txt_label` is documented as returning NULL *only* for what
+  cannot be represented, and why its caller warns per record and carries on.
+- **Why it hid for so long, and this is the part that generalises past mDNS:
+  the crash was on the responder thread and the receiver is a subprocess.**
+  Everything an operator can see said the endpoint was installed, executable,
+  the right size and `ok: true`; `endpoint_health` said enabled-and-not-alive
+  with a climbing restart count, which is exactly right and names no cause. It
+  took `-vvv` on the device to see that only the FIRST of two announcements was
+  ever sent, and the kernel's own `unhandled ... fault at 0x00000000, esr
+  0x92000005` — a READ of zero, with `pkt_buffer` and `PACKET_SIZE` in the
+  register dump — to place it inside the encoder.
+- **The classic build is the control, and it stays one.** Only the AP2 recipe
+  copies our `mdns_tinysvcmdns.c` over upstream's, and our backend builds the
+  primary service's TXT from mdns.h's `MDNS_RECORD_*` macros, which are all
+  short. So classic ran throughout — which is what proved this was AP2-only
+  and not the cancellation shim, whose `pthread_setcancelstate` call at
+  `rtsp.c:5548` classic reaches and survives.
+
+`compat/txtcheck.c` pins 63, 64, 67, 255 and 256 on a host, because those
+numbers are the whole of what separates working from not; and the release
+build asserts `em_txt_label` is actually linked into shairport-sync, since
+reverting the one call site that references it would restore the fault with
+nothing failing.
+
 ## Advertised is not reachable: FireOS drops every inbound port (`internal/netfilter`)
 
 **This is what #77 was, after weeks of looking at mDNS.** FireOS ships

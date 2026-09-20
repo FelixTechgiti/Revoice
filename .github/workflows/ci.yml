@@ -773,3 +773,17 @@ jobs:
           cc -O2 -Wall -Wextra -I device/shairport/compat \
             -o /tmp/localhostcheck device/shairport/compat/localhostcheck.c
           /tmp/localhostcheck
+
+      # The TXT encoder. tinysvcmdns builds TXT strings with create_label, the
+      # helper for DNS NAME labels, so it refuses anything over 63 bytes and
+      # answers NULL — which rr_add_txt stores and the encoder dereferences on
+      # the responder thread. AirPlay 2's `pk=` record is 67 bytes, so the
+      # receiver died about a second after every start, on every device, and
+      # the only sign was a restart count climbing (#229). A TXT string's real
+      # limit is 255; 63 is the name label's. The numbers are the whole of what
+      # separates working from not, so they are what is pinned.
+      - name: A TXT record may be 255 bytes, not 63
+        run: |
+          cc -O2 -Wall -Wextra -I device/shairport/compat \
+            -o /tmp/txtcheck device/shairport/compat/txtcheck.c
+          /tmp/txtcheck
