@@ -59,9 +59,18 @@ Direkt nach dem Öffnen des `/control`-Sockets sendet das Gerät eine einzelne
   "version": "<Firmware-Version, aus den Build-ldflags>",
   "capabilities": ["mic", "speaker", ...],
   "ip": "<lokale IP, weggelassen bei 127.0.0.1 oder unauflösbar>",
-  "ambient_light_status": { "...": "..." }
+  "ambient_light_status": { "...": "..." },
+  "base_os": "emos | fireos | unknown",
+  "board": "<pkg/board id, oder unknown>",
+  "kernel_arch": "<uname -m, z. B. aarch64>",
+  "kernel_release": "<uname -r, z. B. 3.18.19+>"
 }
 ```
+
+`base_os`, `board` und die beiden `kernel_*`-Felder beschreiben den Boot und
+sind Information: Der Controller speichert und zeigt sie an und schaltet
+Android-only-Nutzlasten an `base_os` frei. Das Kernel-Paar entfällt, wenn
+`uname` scheitert. Ein Gerät für ein neues Board sollte alle senden.
 
 `capabilities` ist das Aushandlungssignal. Der Dot kündigt die folgenden
 bedingungslos an, dazu eine bedingte (`capabilities()` in `control.go`) — die
@@ -151,6 +160,8 @@ bzw. voreingestellte Verhalten.
 | `ambient_light` | `value` | Lichtwert (nur bei `ambient_light`) |
 | `audio_source` | `source` | Die Musikebene hat den Besitzer gewechselt: `"none"`, `"controller"`, `"sendspin"`, `"spotify"` oder `"airplay"` (nur bei `audio_state`). Der aktuelle Wert reitet auch auf `register` mit, damit ein Wiederverbinden mitten im Stück nicht als Stille gelesen wird. Es ist die EINZIGE Möglichkeit für den Controller zu erfahren, dass ein lokaler Endpunkt spielt — kein Frame dieses Tons kommt durch ihn hindurch |
 | `ble_adverts` | `adverts[]` | Stapel vom passiven BLE-Scanner. **Alter Pfad** — sende diese auf `/data` als `0x06`, wann immer der Controller `ble_adverts_data` angekündigt hat, und nimm diese Nachricht nur, wenn er es nicht tat (#404) |
+| `wifi_scan_result` | `networks[]` aus `{ssid, ssid_hex, signal}`, oder `error` | Antwort auf `wifi_scan` |
+| `wifi_result` | `ok`, `ssid`, `error?` | Ergebnis eines `wifi_change`, erneut gesendet bis `wifi_commit` |
 | `pong` | — | Keepalive-Antwort |
 
 **Controller → Gerät**
@@ -166,9 +177,18 @@ bzw. voreingestellte Verhalten.
 | `volume_set` | `level` | Absolute Lautstärke setzen |
 | `duck` | `on` | Musik unter einem Sprachgespräch absenken (Gesprächsbeginn/-ende) |
 | `config` | `ConfigMessage`-Felder | Konfiguration schieben (siehe unten) |
-| `wifi_change` / `wifi_commit` | `ssid`,`psk` / — | WLAN mit automatischem Rückfall wechseln; Commit macht es endgültig |
+| `wifi_scan` | — | Nach Netzen suchen; beantwortet mit `wifi_scan_result` |
+| `wifi_change` / `wifi_commit` | `ssid`, `ssid_hex?`, `psk` / — | WLAN mit automatischem Rückfall wechseln; Commit macht es endgültig |
 | `shell_open` / `shell_close` | `pty?` | Das Gerät bitten, `/shell` zu wählen (`pty:true` = interaktiv) / zu schließen |
 | `music_flush` / `speaker_flush` | — | Musik- bzw. Sprachpuffer leeren (Barge-in nutzt `speaker_flush`) |
+
+**Eine SSID sind 0–32 beliebige Bytes**, ein Name allein kann ein Netz also
+nicht immer adressieren. `ssid` ist zur Anzeige da (ungültiges UTF-8 wird als
+U+FFFD gezeigt); `ssid_hex` sind die exakten Bytes, in jedem Scan-Ergebnis
+gemeldet und bei `wifi_change` zurückgeschickt, wenn das Netz aus einem Scan
+stammt. Ein `wifi_change` ohne dieses Feld meint das UTF-8 von `ssid`. `psk`
+ist leer bei einem offenen Netz, 8–63 druckbare ASCII-Zeichen oder ein rohes
+64-stelliges Hex-PSK. Firmware, die älter ist als `ssid_hex`, ignoriert es.
 
 ## `/data` — binäre Frames
 

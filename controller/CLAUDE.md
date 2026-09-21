@@ -1369,6 +1369,7 @@ single written ladder. `docs/audio-states.md` §2 is the nearest thing.
 | `em_runbarrier.py` | Serialising ESPHome pipeline runs across a barge-in, as a pure state machine. The protocol carries **no run identifier**, so the satellite is what keeps two runs from overlapping — see the barge-in rules under the voice backend. Split out for `em_linkauth`'s reason: the suite cannot import `em_esphome` |
 | `em_audiostate.py` | Whether this Echo is audible and what is making the sound — the aggregate behind the HA `Audio` / `Audio Source` entities, and the hold-off that keeps an amplifier automated on them from switching input across every gap. Pure; split out for `em_barge`'s reason |
 | `em_announce.py` | Running an HA announcement to completion. Owns the two rules that pull against each other — never reply early, always reply — because `VoiceAssistantAnnounceFinished` is HA's completion signal and HA **blocks** on it |
+| `em_wifi.py` | What a WiFi network may be called (0–32 arbitrary bytes, `ssid_hex` on the wire) and what its WPA2 passphrase may be. Mirrors `device/internal/wifi/ssid.go` and the dashboard's `_ssidProblem`/`_pskProblem`; `_post_device_wifi` checks with it so a bad request fails before a device-side switch and rollback |
 | `em_linkauth.py` | The device-link auth decision as a pure function. Split out of `em_controller._link_auth_ok` so it is testable: the suite does not import em_controller, so this was security logic with no coverage until it orphaned a device |
 | `em_timers.py` | Voice-assistant timers (#167) — the alarm ring, and the two dismissal matchers that must NOT be one. `is_dismissal` is generous because a missed dismissal leaves the alarm going and HA answering "there are no timers"; `is_dismissal_only` is strict because it suppresses HA's reply, and a false positive there is not a spare stop, it is a lost answer ("turn off the kitchen light" over a ringing alarm). Phrases are stripped longest-first so `turn off` is consumed before the bare `off` strands `turn` |
 | `em_ble_proxy.py` | BLE proxy ESPHome servers — a second, separate ESPHome device per Echo (own port from the shared counter, own mDNS, MAC = serial-derived with the locally-administered bit flipped). Forwards `ble_adverts` control messages from the device's passive scanner (`device/internal/bluetooth`, raw HCI over `/dev/stpbt`; enabling durably disables Android's BT stack) to HA as raw advertisements. Lifecycle = idempotent `reconcile()` driven by `bleProxyEnabled` |
@@ -1879,6 +1880,23 @@ failure time — the device being gone IS the failure — so both failure paths
 record that an explanation is owed and the next successful connect collects
 it into the device's log events. Takes effect on the next device reboot after
 the script syncs.
+
+**A kernel crash on emOS is collected the same way** (`em_crashlog`,
+`_collect_crash_log`, 2026-09-17). emOS init copies the ram console to
+`/data/emos/last_kmsg.prev` on every boot, and nothing read it — a crash was
+found only if someone opened a USB console before the next reboot. On connect,
+before the reconcile debounce, the controller md5s that copy and compares it
+with `last_kmsg.prev.seen` on the device; a new copy is read, and if the boot
+did not end cleanly an excerpt becomes an `error` log event from `kernel`,
+which is how it reaches support bundles. Three rules: **clean is positive
+evidence** — `reboot: Restarting system` or `reboot: Power down` — because
+MediaTek prints a `Call trace:` on every restart and a crash need not leave a
+panic line (C95's recursed in its own printk until reset); the crash markers
+only anchor the excerpt, with the tail as the fallback. **The marker is written
+after a complete read**, so a dropped session retries on the next connect.
+**Lines naming an SSID are dropped and addresses masked** before storage, since
+the WLAN driver logs association. `messages.last` is not used: init writes it
+only on an orderly shutdown, so it never exists after a crash.
 
 
 **An update that does not confirm in 90s is OPEN, not failed, and saying
@@ -2636,6 +2654,62 @@ throughout — so the rules below are all one rule seen from different angles.
   token, and only a real registration sets it. **Nothing in the wizard's
   completion may depend on something reachable only after the wizard is
   closed.**
+
+**The stock boot image is PRESERVED, not overwritten, and the slot it keeps is
+not the one the device booted.** Until 2026-09-14 the flow escrowed and wrote
+`boot$(getprop ro.boot.slot_suffix)` — which on a stock device is the slot the
+stock image is in, so every provision destroyed it. That image is the build
+reference for any future emOS image and the only way back to FireOS, and we ship
+neither a kernel nor a userspace: once both slots hold emOS there is nothing on
+the device to rebuild from.
+
+**emOS always goes in `boot_a`, because amonet v2's bootloader on biscuit only
+ever starts `boot_a` (#544).** The BCB changes `androidboot.slot_suffix` and
+nothing else. Measured twice: the reporter's device, BCB B-active, ran the stock
+image in `boot_a` while a marker stamped into `boot_b`'s cmdline never
+appeared; and the spare on 2026-09-17, BCB B-active, booted the emOS image in
+`boot_a` with `slot_suffix=_b`. kaeru hooks the slot choice and passes normal
+boots straight to the stock LK's `get_boot_part()`, so the source does not
+settle it — the hardware does. The earlier rule (write the slot that is not
+stock) was right only when stock happened to be in B, which is why the spare
+provisioned fine on 09-16 and @jthoward64's device did not.
+
+`classifyBootSlots` reads each slot's own 512-byte header and `chooseBootSlots`
+decides; both are pure, and `tests/slot_choice.test.mjs` covers them. The
+target is A in every case:
+- **stock in A, stock in B** — build from A, overwrite A, B keeps its stock.
+- **stock only in A** — copy A to B first, through the same verified
+  `_writeBootPartition`, and do not touch A unless that copy verified.
+- **stock only in B** (the re-provision case) — build from B, overwrite A.
+- **no stock anywhere, or no slot B to keep a copy in** — refuse.
+
+The escrow reads the DONOR slot (`plan.donorDev`), not the slot LK reports
+booting, since the suffix says nothing about which image is running. The
+restore writes the escrow to A, which is what makes it boot.
+
+- **Ours-vs-stock is decided in SHELL, not in the parser**, so no test of
+  `classifyBootSlots` can reach it. It matches TWO markers: `emos.system=`,
+  which the packer stamps, and `ramoops.mem_address=0x44400000`, which it has
+  appended to every image it has ever built. The stamp alone classified a
+  FIELDED emOS image as stock — measured on the spare, slot B — which would have
+  escrowed an emOS image AS the stock recovery image while the real one was
+  never found. Matched by full ADDRESS, because reading OURS as stock costs the
+  escrow and reading STOCK as ours overwrites it.
+- **The BCB is still set to A** (`_activateBootSlot`, TWRP's `bcbtool
+  set_active`, raw read as fallback). It no longer chooses the image, but it
+  decides the suffix LK passes, and a stock image restored into A expects its
+  own slot's system. Layout at `misc`+864: magic `0x42424100`, a version byte,
+  then AOSP's `slot_metadata` bitfield per slot (priority low 4 bits, tries
+  next 3, successful top), no checksum.
+- **The image records which `/system` it was built beside** (`system_part` on
+  the build POST → `emos.system=` on the cmdline). The wizard resolves
+  `system_a`/`system_b` through TWRP's by-name map because that is the only
+  place those names exist; emOS has none. Do NOT derive it from the BCB or
+  the suffix — neither says which image is running.
+- **v1 is gated out of all of it.** Its `other-boot` names the active slot and
+  it has no BCB of this shape. It therefore still overwrites the stock image,
+  and fixing that needs a v1 device: the boot partitions are p17/p18 in
+  Android's map against p10/p11 on v2, so nothing here transfers by inspection.
 
 **The restore is the wizard's undo and it is proven.** `_writeBootPartition` is
 shared by the flash and the restore deliberately — it is the only code here

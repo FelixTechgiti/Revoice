@@ -12,13 +12,15 @@ offenen Fehler auf, die vor einem Issue einen Blick wert sind, und
 ## Rooten und Entsperren
 
 ### Der XDA-Thread sagt, ich soll auf amonet v2.0.0 aktualisieren. Soll ich?
-**Nicht auf einem Echo, auf dem Revoice läuft.** v2.0.0 (10. September 2026)
-ersetzt die Bootloader des Echo, und danach bootet FireOS 5 nicht mehr — ein
-laufendes Gerät hört also auf zu laufen, und einen sicheren Rückweg gibt es
-nicht.
+**Nicht auf einem Echo, auf dem Revoice unter FireOS 5 läuft.** v2.0.0
+(10. September 2026) ersetzt die Bootloader des Echo, und danach bootet
+FireOS 5 nicht mehr — ein laufendes Gerät hört also auf zu laufen, und einen
+sicheren Rückweg gibt es nicht.
 
-- **Du entsperrst einen neuen Echo:** nimm **v1.1.0**, das weiterhin im Thread
-  hängt. Auf diesem Weg hat das Projekt die meisten Gerätestunden.
+- **Du entsperrst einen neuen Echo:** beide Versionen gehen, sie entscheiden
+  nur, welcher Weg des Assistenten offen steht — v1.1.0 lässt das Gerät auf
+  FireOS 5 und damit beide Wege, v2.0.0 bringt es auf FireOS 6, wo nur emOS
+  geht. Auf **v1.1.0** hat das Projekt die meisten Gerätestunden.
 - **v2.0.0 ist schon drauf:** versuche nicht, durch Flashen von FireOS 5 oder
   eines älteren amonet zurückzukommen. v2.0.0 hat Preloader, LK und TrustZone
   überschrieben, und die alten von Hand zurückzuschreiben ist genau der Weg,

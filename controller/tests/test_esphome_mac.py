@@ -176,7 +176,7 @@ def test_migrations_are_append_only():
     rather than edited — which is the mistake this guards, and the one that
     broke every stats write and disconnect-looped the fleet when it happened.
     """
-    assert len(db.MIGRATIONS) == 23
+    assert len(db.MIGRATIONS) == 25
     assert "esphome_mac" in db.MIGRATIONS[18]
     assert "esphome_mac" not in db.MIGRATIONS[17]
     # v20 is its own entry and did not get appended onto v19's.
@@ -185,9 +185,18 @@ def test_migrations_are_append_only():
     # v22 likewise: vad_start_ms is a new entry, not an edit to v21's.
     assert "vad_start_ms" in db.MIGRATIONS[21]
     assert "vad_start_ms" not in db.MIGRATIONS[20]
-    # v23 likewise: emos_ver is a new entry, not an edit to v22's — and note
-    # it touches the same TABLE as v21's base_os, which is exactly the shape
-    # that invites appending onto the existing entry.
-    assert "emos_ver" in db.MIGRATIONS[22]
-    assert "emos_ver" not in db.MIGRATIONS[21]
-    assert "emos_ver" not in db.MIGRATIONS[20]
+    # v23: the kernel columns are their own entry too.
+    assert "kernel_arch" in db.MIGRATIONS[22]
+    assert "kernel_arch" not in db.MIGRATIONS[21]
+    # v24 moves only the version; its work is the Python fixup.
+    assert "'24'" in db.MIGRATIONS[23]
+    assert "kernel_arch" not in db.MIGRATIONS[23]
+    # v25 likewise: emos_ver is a new entry, not an edit to v23's — and note
+    # it touches the same TABLE as v21's base_os and v23's kernel columns,
+    # which is exactly the shape that invites appending onto an existing
+    # entry. It WAS numbered 23 until the 2026-09-21 upstream sync took that
+    # number, and appending rather than renumbering upstream's is the only
+    # safe resolution: the stored version is an index into the list.
+    assert "emos_ver" in db.MIGRATIONS[24]
+    assert "emos_ver" not in db.MIGRATIONS[23]
+    assert "emos_ver" not in db.MIGRATIONS[22]

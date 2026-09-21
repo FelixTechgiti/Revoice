@@ -59,6 +59,8 @@ import em_auth as auth
 import em_ble_proxy
 import em_config_sections as sections_mod
 import em_console_pw
+import em_labels
+import em_crashlog
 import em_emos_build
 import em_devicediag
 import em_updates
@@ -79,6 +81,7 @@ import em_player
 import em_recordings
 import em_volume
 import em_ring_light
+import em_wifi
 import em_scenes
 import em_shadow
 import em_support
@@ -1188,7 +1191,7 @@ async def _patch_device(request: web.Request) -> web.Response:
     """PATCH /api/devices/{id} — update label."""
     device_id = request.match_info["id"]
     body  = await _json_body(request)
-    label = _require_str(body, "label")
+    label = _require_label(body)
 
     loop = asyncio.get_event_loop()
     row = await loop.run_in_executor(None, db.get_device, device_id)
@@ -1219,6 +1222,13 @@ async def _delete_device(request: web.Request) -> web.Response:
     # silently. Lazy import — em_esphome imports em_api at module level.
     import em_esphome
     await em_esphome.device_deleted(device_id)
+    # Free the device's cached OWW models (#512), or a deleted device keeps its
+    # models — and their ONNX sessions — for the life of the process. Resolve
+    # the RUNNING controller module (not a fresh import) for the same reason
+    # _running_controller_module exists.
+    ctrl = _running_controller_module()
+    if ctrl is not None:
+        ctrl._forget_oww_models(device_id)
     # A re-added device is the one whose payloads are least likely to be
     # right, so it must not inherit the deleted row's debounce and skip its
     # first reconcile — the bounce below has it redialling within seconds.
@@ -1274,7 +1284,7 @@ async def _post_approve(request: web.Request) -> web.Response:
     """
     device_id = request.match_info["id"]
     body   = await _json_body(request)
-    label  = _require_str(body, "label")
+    label  = _require_label(body)
     config = body.get("config")  # optional
 
     loop = asyncio.get_event_loop()
@@ -1536,7 +1546,9 @@ async def _post_device_wifi(request: web.Request) -> web.Response:
     """
     POST /api/devices/{id}/wifi — switch the device to a new WiFi network.
 
-    Body: {"ssid": "...", "psk": "..."} (empty/absent psk = open network).
+    Body: {"ssid": "...", "ssid_hex": "...", "psk": "..."} — ssid_hex is
+    optional and names the exact SSID bytes from a scan; empty/absent psk =
+    open network. Rules in em_wifi.
 
     Returns 202 immediately: the device owns the whole switch (associate →
     DHCP → reconnect gates, auto-rollback on any failure — see the device's
@@ -1547,18 +1559,17 @@ async def _post_device_wifi(request: web.Request) -> web.Response:
     device_id = request.match_info["id"]
     body = await _json_body(request)
     ssid = _require_str(body, "ssid")
+    ssid_hex = str(body.get("ssid_hex") or "")
     psk  = str(body.get("psk") or "")
 
     # Mirror the device's own validation so obvious mistakes fail fast
     # with a readable message instead of a full switch/rollback cycle.
-    if any(ch in ssid or ch in psk for ch in ('"', "\\")):
-        return _error("invalid_credentials",
-                      "SSID/passphrase cannot contain double-quote or "
-                      "backslash characters (wpa_supplicant.conf cannot "
-                      "represent them safely)", 400)
-    if psk and not 8 <= len(psk) <= 63:
-        return _error("invalid_credentials",
-                      f"WPA passphrase must be 8–63 characters (got {len(psk)})", 400)
+    try:
+        why = em_wifi.problem(em_wifi.ssid_bytes(ssid, ssid_hex), psk)
+    except ValueError as e:
+        why = str(e)
+    if why:
+        return _error("invalid_credentials", why, 400)
 
     live = _live(device_id)
     if live is None:
@@ -1572,7 +1583,12 @@ async def _post_device_wifi(request: web.Request) -> web.Response:
 
     st["pending"] = {"ssid": ssid, "started_at": time.time()}
     st["last_result"] = None
-    await live.send_control({"type": "wifi_change", "ssid": ssid, "psk": psk})
+    # ssid_hex rides alongside the name. Firmware that predates it ignores
+    # the field and uses the name, which is its behaviour today.
+    change = {"type": "wifi_change", "ssid": ssid, "psk": psk}
+    if ssid_hex:
+        change["ssid_hex"] = ssid_hex
+    await live.send_control(change)
     db.log_device(device_id, "info", "controller", f'WiFi change to "{ssid}" requested')
     await _push_event({"type": "device_update", "device_id": device_id,
                        "state": {"wifi": st}})
@@ -5040,6 +5056,58 @@ def _reconcile_due(device_id: str, now: float,
     return True
 
 
+# How long to wait before asking again when the shell plane did not answer:
+# seconds after a register it is often not up yet.
+CRASH_LOG_RETRY_S = 10.0
+
+
+async def _collect_crash_log(live, device_id: str) -> None:
+    """
+    Report an emOS device's previous boot if it did not end cleanly.
+
+    emOS saves the ram console on every boot (em_crashlog explains how a crash
+    is told from a restart). A marker on the device records which copy has been
+    handled, so each boot is examined once however often the device reconnects,
+    and a controller restart does not report the same crash twice. The marker
+    is written only after a successful read, so a device that did not answer
+    is asked again on its next connect.
+    """
+    kmsg, seen = em_crashlog.KMSG_PATH, em_crashlog.SEEN_PATH
+    probe = ""
+    for attempt in range(2):
+        probe = await _shell_run(
+            live, f"busybox md5sum {kmsg} 2>/dev/null; cat {seen} 2>/dev/null; "
+                  f"echo {_SHELL_OK}")
+        if _SHELL_OK in probe:
+            break
+        if attempt == 0:
+            await asyncio.sleep(CRASH_LOG_RETRY_S)
+            if _devices.get(device_id) is not live:
+                return
+    else:
+        log.info(f"[api] [{device_id}] crash log: no answer from the device")
+        return
+    m = re.search(r"\b([0-9a-f]{32})\s+" + re.escape(kmsg), probe)
+    if not m:
+        return  # nothing saved: a cold boot, or init that predates the copy
+    md5 = m.group(1)
+    if probe.count(md5) > 1:
+        return  # this copy was already handled
+    await asyncio.sleep(1.0)  # let the probe's shell session close
+    out = await _shell_run(live, f"cat {kmsg}; echo {_SHELL_OK}", timeout=60.0)
+    if _SHELL_OK not in out:
+        log.info(f"[api] [{device_id}] crash log: read incomplete, will retry "
+                 f"on the next connect")
+        return
+    msg = em_crashlog.summarise(out[:out.rindex(_SHELL_OK)])
+    if msg:
+        log.warning(f"[api] [{device_id}] previous boot did not end cleanly — "
+                    f"kernel log saved to the device's log events")
+        await _push_log_event(device_id, "error", "kernel", msg)
+    await asyncio.sleep(1.0)
+    await _shell_run(live, f"echo {md5} > {seen}")
+
+
 async def reconcile_on_connect(device_id: str, live) -> None:
     """
     Bring a freshly-connected device's four installed payloads back in line.
@@ -5068,7 +5136,16 @@ async def reconcile_on_connect(device_id: str, live) -> None:
     Runs as a background task off the connect handler: nothing about the
     handshake should wait on a shell round trip over a link measured at 5-7%
     packet loss.
+
+    An emOS device's crash log is checked first and is NOT debounced: a device
+    that crashed and came back inside the window is exactly the one to look
+    at, and the on-device marker already makes a repeat check one round trip.
     """
+    if not live.android_userspace:
+        try:
+            await _collect_crash_log(live, device_id)
+        except Exception as e:
+            log.warning(f"[api] [{device_id}] crash log check failed ({e})")
     if not _reconcile_due(device_id, time.monotonic()):
         return
 
@@ -6405,10 +6482,19 @@ EMOS_INIT_ASSETS = {
     em_emos_build.ARCH_ARM: "init32",
 }
 
-# emOS's own WiFi userspace, installed into the image's /sbin. ONE build serves
+# emOS's own userspace, installed into the image's /sbin. ONE build serves
 # both kernels — these are ordinary processes, and a 64-bit kernel runs 32-bit
 # binaries — so unlike the init there is nothing per-architecture here.
-EMOS_SBIN_ASSETS = ("wpa_supplicant", "wpa_cli", "em-wifi")
+#
+# busybox is here for the same reason the supplicant is: a FireOS 6 /system
+# ships toybox and no busybox at all, so without ours there is no udhcpc and
+# the image boots, associates, and never gets an address — plus no ntpd, no
+# syslogd/klogd, and no awk for em-wifi to read a scan with.
+#
+# This tuple is an allowlist and a payload missing any member is REFUSED, so
+# adding a name here strands every emOS release cut before it. Tag emOS first,
+# then the controller.
+EMOS_SBIN_ASSETS = ("wpa_supplicant", "wpa_cli", "em-wifi", "busybox")
 
 # One archive with a manifest of sha256s — see build_payload_bundle.
 EMOS_PAYLOAD_ASSET = "emos-payload.zip"
@@ -6672,7 +6758,14 @@ async def _get_device_emos(request: web.Request) -> web.Response:
     """
     device_id = request.match_info["id"]
     live = _live(device_id)
-    base_os = getattr(live, "base_os", None) if live else None
+    # A live report wins; offline it falls back to the value stored at the
+    # device's last registration (schema v21). The panel's whole job is to
+    # explain a device that is in trouble, and "which userspace is this"
+    # vanishing exactly when the device goes away is the failure the stored
+    # column exists to prevent.
+    row = db.get_device(device_id)
+    base_os = (getattr(live, "base_os", None) if live else None) \
+              or (row["base_os"] if row else None)
 
     release = await _fetch_latest_emos_release()
     latest = release["version"] if release else ""
@@ -6875,9 +6968,10 @@ async def _fetch_emos_payload(arch: str) -> tuple:
             return None, {}, version, _error(
                 "no_wifi_tools_for_arch",
                 f"emOS release {version} carries no {', '.join(missing)}. A "
-                f"FireOS 6 image needs emOS's own WiFi tools — Amazon's "
-                f"supplicant cannot run under emOS — so there is nothing to "
-                f"build a working image from. Cut a newer emos-v* tag.", 404)
+                f"FireOS 6 image needs emOS's own userspace — Amazon's "
+                f"supplicant cannot run under emOS and its /system has no "
+                f"busybox — so there is nothing to build a working image "
+                f"from. Cut a newer emos-v* tag.", 404)
         sbin = {n: files[n] for n in EMOS_SBIN_ASSETS}
 
     return init, sbin, version, None
@@ -6989,10 +7083,28 @@ async def _get_provision_emos_init(request: web.Request) -> web.Response:
     )
 
 
+# The multipart fields _post_provision_emos_image reads, and the only ones. A
+# field the wizard sends that is not named here is dropped without a word.
+#
+# That is how `system_part` went missing for the life of the feature (#545).
+# The wizard resolved it, logged which partition it had chosen, and appended
+# it; the loop below had no branch for it, so `parts` never carried it, the
+# validation that follows could not fire, and every v2 image was built with no
+# `emos.system=` stamp — while the release notes, the wizard transcript and
+# this file all said otherwise. emOS then fell back to its hardcoded p13, which
+# is the right partition about half the time.
+#
+# tests/test_emos_image_fields.py compares this against what dashboard.jsx
+# appends to the same POST, so the next field to be added has to be read here
+# or fail CI.
+EMOS_IMAGE_FIELDS = ("reference", "init", "reference_md5", "version",
+                     "use_latest_init", "system_part")
+
+
 @auth.require_admin
 async def _post_provision_emos_image(request: web.Request) -> web.Response:
     """
-    POST /api/provision/emos_image (multipart: "reference", "init", "version")
+    POST /api/provision/emos_image (multipart: EMOS_IMAGE_FIELDS)
 
     Build an emOS boot image from the reference the wizard just escrowed off
     the device, and stream it back. Step 5 of the emOS provisioning flow.
@@ -7022,8 +7134,18 @@ async def _post_provision_emos_image(request: web.Request) -> web.Response:
             field = await reader.next()
             if field is None:
                 break
+            if field.name not in EMOS_IMAGE_FIELDS:
+                # Loud, because the silent version of this cost every v2
+                # device its /system stamp.
+                log.warning(f"[api] emOS image: ignoring multipart field "
+                            f"{field.name!r}, which this endpoint does not "
+                            f"read")
+                continue
             if field.name in ("reference", "init"):
                 parts[field.name] = await field.read()
+            elif field.name == "system_part":
+                parts["system_part"] = (await field.read()).decode(
+                    errors="replace")[:8]
             elif field.name == "reference_md5":
                 parts["reference_md5"] = (await field.read()).decode(
                     errors="replace")[:64].strip().lower()
@@ -7073,6 +7195,26 @@ async def _post_provision_emos_image(request: web.Request) -> web.Response:
         # A hand-picked init carries no WiFi tools, matching emos/build.sh.
         sbin = {}
 
+        # Which FireOS userspace this reference was read beside, stamped onto
+        # the image so emOS mounts that one rather than assuming. The WIZARD
+        # resolves it, because system_a/system_b are names and TWRP's by-name
+        # map is the only place those names exist — this end never guesses.
+        #
+        # Absent is allowed: an image with no stamp falls back to the partition
+        # emOS hardcoded before this existed, so an older wizard keeps working.
+        # A value we cannot read is refused rather than dropped, because
+        # silently omitting it builds an image that mounts the wrong userspace
+        # and boots.
+        system_part = None
+        raw_part = (parts.get("system_part") or "").strip()
+        if raw_part:
+            if not raw_part.isdigit() or not 1 <= int(raw_part) <= 127:
+                return _error(
+                    "bad_system_part",
+                    f"system_part must be an mmcblk0 partition number (1-127), "
+                    f"not {raw_part!r}. Nothing has been built.", 400)
+            system_part = int(raw_part)
+
         # Also keeps ~3.5MB out of a request that has already hit HA ingress's
         # 413 once (2026-09-06).
         if parts.get("use_latest_init"):
@@ -7100,9 +7242,17 @@ async def _post_provision_emos_image(request: web.Request) -> web.Response:
         # through this process while somebody provisions a new one.
         info = await loop.run_in_executor(
             None, em_emos_build.build_emos_image, reference, init_bin, version,
-            "", sbin)
+            "", sbin, system_part)
 
-        log.info(f"[api] emOS image built: {info['size']:,} bytes "
+        log.info(f"[api] emOS image built"
+                 # Not "(older wizard)", which is one of three ways to get
+                 # here and was the wrong one when this line last mattered:
+                 # the v1 path sends no partition by design, and until #545
+                 # the handler dropped the one the wizard did send. State
+                 # what is true — no stamp — and leave the cause alone.
+                 + (f" for /system on p{system_part}" if system_part else
+                    " with no /system stamp")
+                 + f": {info['size']:,} bytes "
                  f"md5={info['md5'][:8]}… from a {info['reference_size']:,} "
                  f"byte reference (md5 {info['reference_md5'][:8]}…)")
 
@@ -7823,6 +7973,17 @@ async def _json_body(request: web.Request) -> dict:
         )
 
 
+def _require_label(body: dict) -> str:
+    """The body's label, or a 400 naming the rule it broke (em_labels)."""
+    label, err = em_labels.check_label(body.get("label"))
+    if err:
+        raise web.HTTPBadRequest(
+            content_type="application/json",
+            body=json.dumps({"error": err, "code": "invalid_label"}),
+        )
+    return label
+
+
 def _require_str(body: dict, key: str) -> str:
     """Extract a required string field from a parsed JSON body."""
     value = body.get(key)
@@ -8012,17 +8173,27 @@ def _merge_device(row, releases: Optional[dict] = None) -> dict:
         # Which userspace the device booted: "emos", "fireos", or null from
         # firmware that cannot say. Null is not FireOS — the wizard, the
         # support bundle and the payload reconcile all need to tell "Android"
-        # apart from "not asked".
-        "baseOs":          getattr(live, "base_os", None) if live else None,
+        # apart from "not asked". Offline it falls back to the value stored at
+        # its last registration (schema v21), so the dashboard's slug does not
+        # vanish when a device does; a live report always wins.
+        "baseOs":          (getattr(live, "base_os", None) if live else None)
+                           or row["base_os"],
+        # `uname -m` / `uname -r` from the register message, stored value when
+        # offline (schema v23). Null from firmware that does not send them.
+        "kernelArch":      (getattr(live, "kernel_arch", None) if live else None)
+                           or row["kernel_arch"],
+        "kernelRelease":   (getattr(live, "kernel_release", None) if live else None)
+                           or row["kernel_release"],
         # WHICH emOS, live if the device is connected and from the last
-        # register otherwise. The stored value is what makes the fleet
-        # answerable at all: reading it off a device costs a ~26s shell
+        # register otherwise (schema v25). The stored value is what makes the
+        # fleet answerable at all: reading it off a device costs a ~26s shell
         # probe, so before #255 the emOS version could not appear in a list.
         #
         # Null is never "up to date": it is FireOS, where the question does
         # not apply, or firmware too old to report it. `updates` below tells
         # those apart using baseOs, which is the only place that distinction
         # can be made.
+        #
         # `row` is a sqlite3.Row, which indexes but has no .get — and not
         # every caller here selects the whole table, so the column is guarded
         # rather than assumed (the same shape as `token` above).
@@ -8045,13 +8216,13 @@ def _merge_device(row, releases: Optional[dict] = None) -> dict:
         "updates": em_updates.device_summary(em_updates.device_tracks(
             firmware_ver=row["firmware_ver"] if "firmware_ver" in row.keys() else None,
             firmware_latest=(releases.get("firmware") or {}).get("version"),
-            # The STORED base_os is consulted here and deliberately not by
-            # the `baseOs` field above. That field's consumers — the wizard,
-            # the support bundle, the payload reconcile — are all asking
-            # about a device they are talking to right now, and a stored
-            # value would answer for one that is not there. This asks the
-            # fleet question, where a device that is offline is the normal
-            # case rather than the exception.
+            # Reads the same live-then-stored answer as `baseOs` above. It was
+            # written here as a deliberate ASYMMETRY — that field being live
+            # only, because its consumers all ask about a device they are
+            # talking to — and the 2026-09-21 upstream sync removed the
+            # asymmetry by giving `baseOs` the stored fallback too, for a
+            # reason that also holds here: an offline device should not lose
+            # what is known about it. One rule now, not two.
             base_os=(getattr(live, "base_os", None) if live else None)
                     or (row["base_os"] if "base_os" in row.keys() else None),
             emos_ver=(getattr(live, "emos_ver", None) if live else None)

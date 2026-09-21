@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,7 @@ import (
 	"github.com/wilbowes/EchoMuse/internal/platform"
 	"github.com/wilbowes/EchoMuse/internal/spotify"
 	"github.com/wilbowes/EchoMuse/internal/wifi"
+	"github.com/wilbowes/EchoMuse/pkg/board"
 	"github.com/wilbowes/EchoMuse/pkg/buttons"
 	"github.com/wilbowes/EchoMuse/pkg/led"
 )
@@ -81,10 +83,11 @@ type ConfigAppliedCallback func(msg config.ConfigMessage)
 type VolumeSetCallback func(level int)
 type BeamLockCallback func(lock bool)
 
-// WifiChangeCallback receives a wifi_change request. It must return
+// WifiChangeCallback receives a wifi_change request, with the SSID as its exact
+// bytes (see internal/wifi/ssid.go). It must return
 // quickly (the executor runs in its own goroutine) — the control
 // connection is about to drop when the network switches.
-type WifiChangeCallback func(ssid, psk string)
+type WifiChangeCallback func(ssid []byte, psk string)
 
 // ─── ControlClient ────────────────────────────────────────────────────────────
 
@@ -749,6 +752,17 @@ func (c *ControlClient) connect(ctx context.Context, server *discovery.ServerInf
 		// feature exists to prevent. Almost always "none"; the one time it is
 		// not is the one time it matters.
 		"audio_source": c.currentAudioSource(),
+		// Which board detection matched (pkg/board), "unknown" when none did.
+		// Unread by current controllers, so safe to add unnegotiated.
+		"board": board.IDOf(board.Detect("")),
+	}
+	// The running kernel, `uname -m` and `uname -r`. Generic across boards, and
+	// on biscuit the only thing that separates emOS on FireOS 5's 64-bit
+	// kernel from emOS on FireOS 6's 32-bit one. Unread by older controllers,
+	// so safe to add unnegotiated; omitted if uname fails.
+	if m, r := platform.Kernel(); m != "" {
+		reg["kernel_arch"] = m
+		reg["kernel_release"] = r
 	}
 	// Resolved fresh per registration: a cached-at-startup value goes stale
 	// after a WiFi change, and if the process started while the network was
@@ -1071,13 +1085,25 @@ func (c *ControlClient) connect(ctx context.Context, server *discovery.ServerInf
 			// Safe network switch (see internal/wifi). The executor owns
 			// the whole sequence device-side — this connection is about to
 			// die when the network flips.
+			//
+			// ssid_hex carries the SSID's exact bytes, which is the only way
+			// to name a network whose SSID is not valid UTF-8 (any 0–32
+			// octets are valid). An older controller sends only ssid, whose
+			// UTF-8 bytes are the SSID for every name it could offer. A
+			// malformed ssid_hex becomes an empty SSID, which the change
+			// refuses with a reason rather than guessing.
 			var msg struct {
-				SSID string `json:"ssid"`
-				PSK  string `json:"psk"`
+				SSID    string `json:"ssid"`
+				SSIDHex string `json:"ssid_hex"`
+				PSK     string `json:"psk"`
 			}
 			if err := json.Unmarshal(raw, &msg); err == nil && c.wifiChangeCallback != nil {
+				ssid := []byte(msg.SSID)
+				if msg.SSIDHex != "" {
+					ssid, _ = hex.DecodeString(msg.SSIDHex)
+				}
 				log.Printf("[control] wifi_change received (ssid=%q)", msg.SSID)
-				c.wifiChangeCallback(msg.SSID, msg.PSK)
+				c.wifiChangeCallback(ssid, msg.PSK)
 			}
 
 		case "wifi_commit":
@@ -1740,38 +1766,107 @@ func probeTCP(addr string, timeout time.Duration) bool {
 	return true
 }
 
-// GetSerialNo reads ro.serialno — stable device identifier matching adb devices output.
+// idmePath is Amazon's ID Manager, exported by their kernel driver. It holds
+// this unit's factory identity — serial, board_id, MAC addresses, per-unit ALS
+// and microphone calibration — and the files are world-readable.
 //
-// Falls back to androidboot.serialno on the kernel command line, which is where
-// the value comes from in the first place. The two sources are complementary
-// rather than redundant: Android's init consumes every androidboot.* argument
-// into a property and strips it from /proc/cmdline, so on stock FireOS only
-// getprop answers — while on a device booted without Android's userspace there
-// is no property service and only the cmdline answers. Both yield the identical
-// string, which matters because the whole fleet is keyed on the serial.
+// A variable so tests can point it elsewhere.
+var idmePath = "/proc/idme/serial"
+
+// GetSerialNo returns this unit's serial. The whole fleet is keyed on it, so a
+// wrong or missing answer is not cosmetic: every device that cannot resolve one
+// registers as "unknown-device" and they collide with each other.
+//
+// Three sources, in descending order of how much has to be working for them to
+// answer:
+//
+//  1. /proc/idme/serial — the hardware value, straight from Amazon's kernel
+//     driver. No property service, no bootloader argument, and it answers
+//     identically under FireOS, emOS and TWRP. Verified 2026-09-15 on a v1
+//     (FireOS 5, matching getprop exactly) and a v2 (FireOS 6, in recovery).
+//  2. getprop ro.serialno — needs Android's property service, so FireOS only.
+//  3. androidboot.serialno on the kernel command line, where the property came
+//     from — needs Android's init NOT to have run, since it consumes every
+//     androidboot.* argument and strips it from /proc/cmdline.
+//
+// idme leads because the cmdline is not reliably there to be read. On FireOS 6
+// the kernel is 32-bit, COMMAND_LINE_SIZE is 1024, and emOS's own cmdline is
+// 385 bytes against stock's 70 — which pushes androidboot.serialno, near the
+// end of what LK appends, to byte 1040. It is truncated away before the kernel
+// ever sees it, and both this and emOS's init then correctly find nothing.
+// Measured on the spare, 2026-09-15.
 func GetSerialNo() string {
+	if serial := serialFromIdme(); serial != "" {
+		return serial
+	}
 	out, err := exec.Command("getprop", "ro.serialno").Output()
 	if err == nil {
-		if serial := strings.TrimSpace(string(out)); serial != "" {
+		if serial := sanitiseSerial(string(out)); serial != "" {
 			return serial
 		}
 	}
+	// Last resort, and the only source that can be WRONG rather than absent.
+	// The kernel truncates at COMMAND_LINE_SIZE wherever it lands, so a cut
+	// mid-value leaves a short but well-formed serial — and it cannot be told
+	// apart from a real one, because procfs appends a newline either way and a
+	// serial legitimately last on the line looks identical. Hence the log line:
+	// the fallback being used at all is the thing worth seeing, since every
+	// device with an idme node should never reach here.
 	if serial := serialFromCmdline(); serial != "" {
+		log.Printf("[control] Serial came from the kernel cmdline, not idme — "+
+			"%q may be truncated; check /proc/idme/serial", serial)
 		return serial
 	}
-	log.Printf("[control] Warning: could not read ro.serialno: %v", err)
+	log.Printf("[control] Warning: no serial from idme, getprop or cmdline: %v", err)
 	return "unknown-device"
 }
 
+func serialFromIdme() string {
+	// Not cached, for the reason als.resolve() documents: this is first asked
+	// at registration, moments after boot, and a negative answer frozen there
+	// would outlive the condition that caused it.
+	b, err := os.ReadFile(idmePath)
+	if err != nil {
+		return ""
+	}
+	return sanitiseSerial(string(b))
+}
+
+// sanitiseSerial trims and validates a serial read from a device file.
+//
+// procfs hands back a value with no trailing newline, other sources add one,
+// and a partially written or absent field can read as NULs. Anything that is
+// not printable ASCII is rejected outright rather than passed on: a serial is
+// an identifier the controller stores, logs and keys rows on, and a plausible
+// but corrupt one is worse than none, since "unknown-device" at least says so.
+func sanitiseSerial(raw string) string {
+	if i := strings.IndexByte(raw, 0); i >= 0 {
+		raw = raw[:i]
+	}
+	s := strings.TrimSpace(raw)
+	if s == "" || len(s) > 64 {
+		return ""
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x21 || s[i] > 0x7e {
+			return ""
+		}
+	}
+	return s
+}
+
+// A variable so tests can point it elsewhere, like idmePath.
+var cmdlinePath = "/proc/cmdline"
+
 func serialFromCmdline() string {
-	b, err := os.ReadFile("/proc/cmdline")
+	b, err := os.ReadFile(cmdlinePath)
 	if err != nil {
 		return ""
 	}
 	const key = "androidboot.serialno="
 	for _, field := range strings.Fields(string(b)) {
 		if strings.HasPrefix(field, key) {
-			return strings.TrimPrefix(field, key)
+			return sanitiseSerial(strings.TrimPrefix(field, key))
 		}
 	}
 	return ""
