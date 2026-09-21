@@ -1,5 +1,54 @@
 # Changelog
 
+## 2.63.0-fx.1
+
+### Sicherheitsfix: vier Schnittstellen waren nicht abgesichert
+
+**Bitte einspielen.** Vier Routen der Controller-Schnittstelle prüften nicht,
+wer sie aufruft. Die folgenreichste davon **schreibt die Boot-Partition eines
+Geräts**.
+
+| Route | was sie tut |
+|---|---|
+| `POST …/emos_reflash` | schreibt die Boot-Partition |
+| `GET …/emos` | öffnet eine Shell auf dem Gerät und meldet Version, freien Platz, installierte Programme, Netz-Log |
+| `GET …/oww_assets` | öffnet eine Shell und listet die Weckwort-Dateien |
+| `GET /api/releases/controller` | liest eine zwischengespeicherte Release-Angabe |
+
+### Wen das betrifft, und wie weit
+
+- **Als Home-Assistant-Add-on** ist die Schnittstelle nur über Ingress
+  erreichbar, und dafür braucht es eine Anmeldung an Home Assistant. Es
+  reichte allerdings **jedes Konto, auch eines ohne Adminrechte** — die
+  Admin-Prüfung des Controllers wurde für diese vier schlicht übersprungen.
+- **Wer den Controller per `docker-compose` betreibt**, hatte alle vier
+  **ohne jede Anmeldung im lokalen Netz** offen, die Reflash-Route
+  eingeschlossen. Dort ist das Update dringend.
+
+Es gibt **keinen Hinweis auf einen Missbrauch**. Gefehlt hat eine
+Absicherung, es ist kein beobachteter Vorfall.
+
+### Wie es aufgefallen ist
+
+Beim Nachsehen eines ganz anderen Fehlers: eine der vier Routen antwortete
+über Ingress mit einem Ergebnis, während alle anderen die Anmeldung
+verlangten. Dieser Unterschied war der Fund.
+
+Jede der vier hatte einen korrekt abgesicherten Nachbarn, der dasselbe tut.
+Die Absicht stand also jedes Mal daneben — gefehlt hat eine Zeile.
+
+### Was dagegen jetzt hilft
+
+Ein Test über die gesamte Routentabelle, der die Regel umdreht: eine Route
+gilt als abgesichert, **es sei denn**, sie steht mit ausgeschriebener
+Begründung auf einer Ausnahmeliste. Eine Ausnahme ist damit eine sichtbare
+Handlung und keine Lücke mehr. Gegengeprüft, indem der Fehler wieder
+eingebaut wurde.
+
+### Was du tun musst
+
+Nur das Update. An Einstellungen und Geräten ändert sich nichts.
+
 ## 2.62.0-fx.1
 
 ### Eine Stelle, an der steht, ob etwas ansteht
