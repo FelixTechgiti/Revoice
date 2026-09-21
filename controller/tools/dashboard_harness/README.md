@@ -27,7 +27,9 @@ real ones), serves them, and shoots.
 
 **It needs a Chromium.** `CHROME=/path/to/chrome ./run.sh` if the usual
 places do not have one — the script names what it looked for when it cannot
-find one.
+find one. Inside a container, where everything runs as root, Chromium refuses
+to start at all without `CHROME_NO_SANDBOX=1`; it stays opt-in so nobody gives
+up the sandbox on a machine that has one.
 
 ## What is real and what is not
 
