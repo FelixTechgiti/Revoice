@@ -108,6 +108,8 @@ jobs:
           node controller/tests/emos_connect_advice.test.mjs
           node controller/tests/device_state.test.mjs
           node controller/tests/fleet_summary.test.mjs
+          node controller/tests/update_badge.test.mjs
+          node controller/tests/device_tools.test.mjs
           node controller/tests/dashboard_definitions.test.mjs
           node controller/tests/i18n_untranslated.test.mjs
           node controller/tests/slot_choice.test.mjs

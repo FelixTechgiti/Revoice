@@ -109,17 +109,46 @@ const playing = (o = {}) => dev({ audio: { active: true, source: "spotify" }, ..
   eq("playing", s.playing, 1);
   eq("waiting", s.pending, 1);
 }
+// ── Updates, which this page no longer decides ───────────────────────────
+//
+// The comparison moved to the server (em_updates) when emOS joined firmware
+// as a track the fleet has to show (#255). It used to happen HERE, as a
+// string inequality against the release — so the row, this summary and the
+// device's own Updates tab were three rules that could disagree about one
+// device. What is left to test is that the page reads the answer it was
+// given and does not reconstruct one.
+const upd = state => ({ state, tracks: {}, available: [], unknown: [] });
 {
-  // A device with no firmware reported yet is not "behind" — it has not said.
   const s = fleetSummary([
-    dev({ firmware_ver: "v2.39.0" }),
-    dev({ firmware_ver: "v2.40.0" }),
-    dev({ firmware_ver: null }),
+    dev({ updates: upd("available") }),
+    dev({ updates: upd("current") }),
+    dev({ updates: upd("unknown") }),
   ], { version: "v2.40.0" });
-  eq("only a KNOWN older version counts as an update", s.updates, 1);
+  eq("devices with something waiting", s.updates, 1);
+  eq("devices nobody could check", s.updatesUnknown, 1);
 }
-eq("no release means nothing is behind",
+{
+  // The one number that must never absorb the other. A device that could not
+  // be checked is not a device with nothing to do, and a summary that added
+  // them would say "everything is current" about a fleet nobody has read.
+  const s = fleetSummary([dev({ updates: upd("unknown") })], { version: "v2.40.0" });
+  eq("an unreadable device does not count as an update", s.updates, 0);
+  eq("and is not silently current either", s.updatesUnknown, 1);
+}
+{
+  // A version inequality is no longer enough on its own — the server says
+  // whether it is an update, and this page must not second-guess it. The
+  // fixture is a device that LOOKS behind and is reported current (a build
+  // ahead of the tag is the real case).
+  const s = fleetSummary([
+    dev({ firmware_ver: "v2.1.0", updates: upd("current") }),
+  ], { version: "v2.40.0" });
+  eq("the page does not re-derive the comparison", s.updates, 0);
+}
+eq("a server too old to send the field counts as neither",
   fleetSummary([dev({ firmware_ver: "v1.0.0" })], null).updates, 0);
+eq("and not as unknown either — that is about a DEVICE, not a controller",
+  fleetSummary([dev({ firmware_ver: "v1.0.0" })], null).updatesUnknown, 0);
 
 // ── The sentence, in both languages ──────────────────────────────────────
 const en = (devices, release) => fleetSentence(fleetSummary(devices, release), EN);
@@ -196,11 +225,14 @@ eq("de: a quiet fleet says so", exc([dev(), dev()], null, DE), "Nichts zu tun");
     "Dot 1 offline seit 5 Minuten · Dot 2 offline seit 5 Minuten · 2 weitere offline");
 }
 {
-  const ds = [dev({ firmware_ver: "v2.1.0" }), dev({ approved: false })];
+  // Track-neutral wording: the count includes emOS now, so "on older
+  // firmware" would be false for a device whose firmware is current and
+  // whose emOS is not — and it sends the reader to the wrong button.
+  const ds = [dev({ updates: upd("available") }), dev({ approved: false })];
   eq("en: waiting and behind both make the line", exc(ds, { version: "v2.40.0" }, EN),
-    "1 waiting for approval · 1 on older firmware");
+    "1 waiting for approval · 1 with updates");
   eq("de: waiting and behind both make the line", exc(ds, { version: "v2.40.0" }, DE),
-    "1 wartet auf Freigabe · 1 auf älterer Firmware");
+    "1 wartet auf Freigabe · 1 mit Updates");
 }
 {
   // A device that has never connected has no last_seen. Saying "for 56 years"

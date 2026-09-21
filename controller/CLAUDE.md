@@ -2784,12 +2784,29 @@ minute.
 `GET /api/devices/{id}/emos` answers it, and the panel below the firmware one
 shows it. Four things are load-bearing:
 
-- **The version is asked when the tab opens, not carried on the register
-  message.** `base_os` rides register because `reconcile_on_connect` needs it
-  the instant a device connects; this has one consumer and it is a tab
-  somebody opened. Same rule — ask where the consumer needs the answer — with
-  a different answer, and it costs no firmware release, so the whole fielded
-  fleet gets the panel at once.
+- **The version is asked when the tab opens AND carried on the register
+  message, and the second half arrived later.** This bullet read "not carried
+  on the register message" until 2026-09-21, and the reasoning behind it was
+  sound: `base_os` rides register because `reconcile_on_connect` needs it the
+  instant a device connects, this had ONE consumer and it was a tab somebody
+  opened, and probing costs no firmware release so the whole fielded fleet got
+  the panel at once.
+
+  **It stopped being true when a second consumer appeared.** A ~26s shell
+  probe per device is affordable for a tab and impossible for a list, so the
+  emOS version could not appear anywhere a person would notice it — a fleet
+  with three devices behind read as a fleet with nothing waiting, which is the
+  same silence this whole section exists to end, one level up (#255). It now
+  also rides register as `emos_ver` and is stored (schema v23); the tab still
+  probes, because it is the page somebody opens when they are about to write a
+  partition and a release cut two minutes ago should be visible there.
+
+  **The general shape is worth more than the fix: "ask where the consumer
+  needs the answer" is a rule about the CONSUMERS, so it expires when one is
+  added.** Nothing here would have said so — the old bullet named the single
+  consumer as part of its justification, which is what made the staleness
+  findable at all, and is worth copying wherever a decision rests on how many
+  callers something has.
 - **"Cannot tell" is a third state and never collapses into "up to date".**
   An offline device, a shell that did not answer, a GitHub poll that failed:
   each leaves `comparable` false. Reporting the reassuring answer for a
@@ -2802,6 +2819,51 @@ shows it. Four things are load-bearing:
   only when it is known to be behind. Gating on "known behind" would strand
   the device whose stamp cannot be read, which is the one case least able to
   help itself.
+
+### And one indicator over four things that update apart (`em_updates.py`)
+
+**Four things version independently and a user had to check four places for
+them**, reported in those words: emOS, firmware, the streaming endpoints and
+the controller, updated by an OTA, a partition write, a file push and the
+user's own `docker compose pull`. Two were prominent and two were not, and the
+split was not a judgement about importance — it followed what the controller
+knew cheaply. Which is why the emOS version, the one behind a 26s probe, was
+the one nobody could see.
+
+`em_updates` folds the per-device tracks into one answer and `/api/devices`
+carries it as `updates`. Four rules:
+
+- **THREE answers per track, never a boolean.** `available`, `current`,
+  `unknown` — and aggregating is precisely where the third one gets lost,
+  because a count of "devices with updates" reports every unreadable device as
+  a device with nothing waiting. So `fleet_summary` returns the availables and
+  the unknowns as separate numbers, and they never overlap: a device with one
+  of each is counted once, as needing an update, or the two would add to more
+  than the fleet.
+- **The comparison is server-side, and that is the change rather than an
+  implementation detail.** `dashboard.jsx` used to derive `needsUpdate` itself
+  from a string inequality on the firmware version, so the row, the fleet
+  summary and the device's own Updates tab were three rules free to disagree
+  about one device. `em_netflash.update_status` is a fourth reader of the same
+  question and `tests/test_updates.py` pins that the two agree rather than
+  assuming it.
+- **Tracks are NAMED, not counted.** An OTA and a partition write are not
+  interchangeable, so "2 updates" tells the reader nothing they can act on.
+  The badge's title names them and `updateTracks` in `strings.js` translates
+  them.
+- **The controller and the endpoint store are deliberately NOT per-device
+  tracks.** There is one controller and one store, so folding them in would
+  make "3 devices have updates" mean something different depending on which
+  tracks happened to be counted. The controller keeps its own advisory banner,
+  which is the right shape and must stay advisory (`tests/test_deploy.py`).
+
+**A per-device endpoint track is the piece that is missing**, and it is
+missing for a measurable reason rather than an oversight: `spotify.Report()`
+and `airplay.Report()` carry the binary's SIZE and no digest, so "is this
+device's librespot the published build" has only a weak answer. The store's
+own state is known exactly (`em_endpoint_release.published_state`); the
+device's copy is not. An md5 computed once at endpoint start would close it —
+see #255.
 
 **Whether a reflash may be offered is decided once, server-side.**
 `em_netflash.preview` is the head of `preflight` — literally, `preflight`

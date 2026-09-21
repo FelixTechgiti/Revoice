@@ -267,6 +267,36 @@ function playbackSource(d) {
 // There is no `dot` any more. It used to be the simulated LED colour, a
 // literal hex, because LedRing drew the physical Echo Dot's ring. The ring
 // is chrome now, so there is one colour and it is a token.
+// What a device row shows about updates, in one place because two row
+// shapes and a sidebar all read it (#255).
+//
+// The server computes WHICH tracks are waiting (em_updates), and this only
+// picks a mark for the answer. Deliberately not a second comparison in
+// JavaScript: the row used to derive `needsUpdate` itself, from a string
+// inequality on the firmware version, so the row and the device's own
+// Updates tab were free to disagree about the same device.
+//
+// THREE marks, not two. A device whose emOS version nobody could read gets
+// `?`, never a blank — a blank is what "nothing waiting" looks like, and
+// absence read as currency is the one failure this whole feature exists to
+// remove. The title names the tracks, because an OTA and a partition write
+// are not interchangeable and a bare arrow says neither.
+function updateBadge(device, str) {
+  const L = str || S();
+  const u = device.updates;
+  if (!u) return null;
+  const names = ts => ts.map(k => L.updateTracks[k] || k).join(', ');
+  if (u.state === 'available') {
+    return { mark: ' ↑', color: 'var(--warn)',
+             title: L.updatesWaiting(names(u.available)) };
+  }
+  if (u.state === 'unknown') {
+    return { mark: ' ?', color: 'var(--muted)',
+             title: L.updatesUnreadable(names(u.unknown)) };
+  }
+  return { mark: '', color: null, title: L.updatesNoneWaiting };
+}
+
 function deviceState(d) {
   if (!d.approved)  return { key: 'pending',   labelKey: 'statePending',   color: 'var(--warn)' };
   if (!d.connected) return { key: 'offline',   labelKey: 'stateOffline',   color: 'var(--error)' };
@@ -11072,6 +11102,17 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
 
 // The counts every part of this page is derived from, in one place so the
 // sentence, the readouts and the rows can never disagree about them.
+// `release` is still taken and is still displayed beside this — the sidebar
+// shows the newest firmware version — but `updates` no longer derives from
+// it. It counts EVERY track the server resolved (firmware and emOS), which
+// is the whole of #255: emOS updates existed and this number could not see
+// them, so a fleet with three of them read as a fleet with nothing waiting.
+//
+// `updatesUnknown` is a second count rather than a flag, and the two never
+// overlap: a device with one update and one unreadable track is counted as
+// needing an update and not again here, or the two numbers would add to
+// more than the fleet. That rule lives in em_updates, server-side, so this
+// only adds up what it was handed.
 function fleetSummary(devices, release) {
   const approved = devices.filter(d => d.approved);
   return {
@@ -11080,8 +11121,8 @@ function fleetSummary(devices, release) {
     active:   approved.filter(d => d.speaking || d.listening || d.thinking).length,
     playing:  approved.filter(d => deviceState(d).key === 'playing').length,
     pending:  devices.filter(d => !d.approved).length,
-    updates:  approved.filter(d => d.firmware_ver && release?.version
-                                   && d.firmware_ver !== release.version).length,
+    updates:  approved.filter(d => d.updates?.state === 'available').length,
+    updatesUnknown: approved.filter(d => d.updates?.state === 'unknown').length,
   };
 }
 
@@ -11119,7 +11160,7 @@ function fleetException(devices, s, nowMs, str) {
     d.label || d.device_id.slice(0, 8), sinceText(d.last_seen, nowMs, L))));
   if (off.length > 2) bits.push(L.moreOffline(off.length - 2));
   if (s.pending) bits.push(L.waitingForApproval(s.pending));
-  if (s.updates) bits.push(L.onOlderFirmware(s.updates));
+  if (s.updates) bits.push(L.withUpdates(s.updates));
   return L.exception(bits);
 }
 
@@ -11349,8 +11390,7 @@ function DeviceRow({ device, release, onClick }) {
   const [hover, setHover] = useState(false);
   const state = deviceState(device);
   const ip = device.ip && device.ip !== '127.0.0.1' ? device.ip : null;
-  const needsUpdate = device.firmware_ver && release?.version
-                      && device.firmware_ver !== release.version;
+  const badge = updateBadge(device);
   return (
     <div onClick={onClick}
          onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
@@ -11392,9 +11432,9 @@ function DeviceRow({ device, release, onClick }) {
               ships carries an -fx.N suffix — plus the update arrow, so
               `v2.38.0-fx.1 ↑` is fourteen monospace characters. Truncating
               hides the digit somebody is comparing. */}
-          <RowValue value={device.firmware_ver ? `${device.firmware_ver}${needsUpdate ? ' ↑' : ''}` : null}
-                    width={120} title={needsUpdate ? `${t('updateAvailable')}: ${release.version}` : t('firmware')}
-                    color={needsUpdate ? 'var(--warn)' : 'var(--text2)'}/>
+          <RowValue value={device.firmware_ver ? `${device.firmware_ver}${badge?.mark || ''}` : null}
+                    width={120} title={badge?.title || t('firmware')}
+                    color={badge?.color || 'var(--text2)'}/>
         </div>
       </div>
       {state.key === 'playing' && <PlaybackLine device={device} state={state}/>}
@@ -11433,8 +11473,7 @@ function DenseRow({ device, release, onClick }) {
   const [hover, setHover] = useState(false);
   const state = deviceState(device);
   const ip = device.ip && device.ip !== '127.0.0.1' ? device.ip : null;
-  const needsUpdate = device.firmware_ver && release?.version
-                      && device.firmware_ver !== release.version;
+  const badge = updateBadge(device);
   const cell = { fontFamily: "'IBM Plex Mono',monospace", fontSize: 13,
                  textAlign: 'right', color: 'var(--text2)', minWidth: 0,
                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
@@ -11473,9 +11512,10 @@ function DenseRow({ device, release, onClick }) {
       <div style={{ ...cell, color: device.rttMs >= 200 ? 'var(--warn)' : 'var(--text2)' }}>
         {device.rttMs == null
           ? <span style={{ color: 'var(--empty)' }}>—</span> : `${device.rttMs}ms`}</div>
-      <div style={{ ...cell, color: needsUpdate ? 'var(--warn)' : 'var(--text2)' }}>
+      <div title={badge?.title || t('firmware')}
+           style={{ ...cell, color: badge?.color || 'var(--text2)' }}>
         {device.firmware_ver
-          ? `${device.firmware_ver}${needsUpdate ? ' ↑' : ''}`
+          ? `${device.firmware_ver}${badge?.mark || ''}`
           : <span style={{ color: 'var(--empty)' }}>—</span>}</div>
       <div style={{ textAlign: 'right', color: 'var(--muted)', fontSize: 15 }}>›</div>
     </div>
@@ -12009,6 +12049,21 @@ function App() {
                     ? S().behindCount(summary.updates, summary.approved)
                     : t('everyDeviceLatest')}
                 </div>
+                {/* Said SEPARATELY rather than folded into the sentence
+                    above, because it is a different claim: the sentence says
+                    how many devices are behind, and this says how many could
+                    not be asked. Adding them would turn "nobody looked" into
+                    "nothing to do" for anyone who read only the number —
+                    which is the failure the whole indicator exists to
+                    remove, arriving through the summary instead of through
+                    the data. */}
+                {summary.updatesUnknown > 0 && (
+                  <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                                color: 'var(--muted)', lineHeight: 1.6, marginTop: 6,
+                                textWrap: 'pretty' }}>
+                    {S().updatesUnknownCount(summary.updatesUnknown)}
+                  </div>
+                )}
                 {isAdmin && (
                   <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
                     <Pill small disabled={checkingRelease} onClick={async () => {

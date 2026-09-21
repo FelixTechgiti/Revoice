@@ -3505,6 +3505,34 @@ def test_the_device_pull_uses_no_base64_flag_the_device_lacks():
     assert "busybox tr -d" in code, \
         "the pulled base64 must be joined into one line"
 
+
+# ── Every dashboard test is actually run ─────────────────────────────────────
+
+def test_ci_runs_every_dashboard_test():
+    """
+    A `.test.mjs` that CI does not name is a test nobody runs.
+
+    The dashboard suite is a list of explicit `node <file>` lines rather than
+    a glob, which is deliberate — `node --test tests/` picks up files that are
+    not tests and reports differently — but it means adding a test file is two
+    steps, and the second one is invisible when it is missed: the file exists,
+    it passes locally, and it never runs again.
+
+    Found while adding `update_badge.test.mjs` (#255); nothing had ever
+    checked the list.
+    """
+    ci = (CONTROLLER.parent / ".github" / "workflows" / "ci.yml").read_text()
+    tests = sorted(p.name for p in (CONTROLLER / "tests").glob("*.test.mjs"))
+    assert tests, "no dashboard tests found — has the directory moved?"
+    missing = [t for t in tests if f"controller/tests/{t}" not in ci]
+    assert not missing, (
+        "These dashboard tests exist and CI never runs them:\n  "
+        + "\n  ".join(missing)
+        + "\n\nAdd a `node controller/tests/<file>` line to the Dashboard "
+          "logic tests step in .github/workflows/ci.yml."
+    )
+
+
 def test_the_fireos_flow_refuses_an_emos_boot_image_before_it_writes():
     """
     Patching an emOS boot image with Magisk bootloops the device — reported and

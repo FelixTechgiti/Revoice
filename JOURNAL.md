@@ -3544,3 +3544,83 @@ the resolution grid, the limiter being left alone, idempotence, the wiring
 guards, and the controller half. What no test here can answer is whether
 `Ext_Speaker_Amp_Switch` gates the internal driver, and that is precisely the
 question the default-off choice exists to avoid having to answer blind.
+
+## 2026-09-21 — Four things update apart, and the invisible one was invisible for a measurable reason
+
+**"Ich finde es etwas unübersichtlich für den Nutzer, weil er emOS, firmware
+und die einzelnen streaming endpoint updaten muss + den controller und nur
+zwei davon werden prominent angezeigt."** An accurate description of the UI
+rather than a preference, and the interesting part is WHY the split fell where
+it did.
+
+| track | where it was shown | fleet-wide question answerable? |
+|---|---|---|
+| Controller | banner across the dashboard, with notes and the command | n/a |
+| Firmware | `↑` on every device row | yes — `firmware_ver` rides register |
+| emOS | device → Updates tab only | **no** — ~26s shell probe per device |
+| Endpoints | Updates tab, plus a fleet store page | partly |
+
+**The two prominent ones are the two the controller already knew without
+asking.** That is not a coincidence and it is not a judgement about
+importance: visibility followed what was cheap to know. So the fix is not a
+panel, it is a missing register field.
+
+`_get_device_emos` reads the emOS version by opening a shell and running a
+probe — right for a tab somebody deliberately opened, impossible for a list of
+twelve devices. Nothing else in the controller ever learned it, so even a
+perfect aggregated indicator would have had nothing to aggregate.
+
+**Which is `base_os`'s mistake in a different costume.** That field shipped on
+the stats tick for exactly one commit, read as unknown precisely when its
+consumer asked, and cost 240s of OTA timeouts. The emOS version has the same
+shape — stamped into `/etc/os-release` at BUILD time, so it cannot change
+without a reboot — and it is nearly free to send, because `platform.Detect`
+already opens and parses that exact file to answer `base_os`. It reads `ID=`;
+`VERSION_ID=` is two lines below it.
+
+So: `emos_ver` on the register message, stored as schema v23, and
+`em_updates` folding the per-device tracks into one answer the row and the
+fleet line both read.
+
+**Three things that are the whole of the design:**
+
+- **Three answers per track, never a boolean, and aggregating is where the
+  third one dies.** A count of "devices with updates" silently reports every
+  device whose version could not be read as a device with nothing waiting.
+  That is the answer that stops somebody looking, and it is exactly how a
+  device sat five days on an emOS whose DNS proxy could not resolve a hostname
+  while every panel said it was fine. `fleet_summary` therefore returns the
+  availables and the unknowns as two numbers that never overlap, and the row's
+  badge has a `?` where a blank would read as "current".
+- **The comparison moved SERVER-side, and that is a fix rather than
+  plumbing.** `dashboard.jsx` derived `needsUpdate` itself, from a string
+  inequality on the firmware version — so the row, the fleet summary and the
+  device's own Updates tab were three rules free to disagree about one device.
+  One of them now owns it and a test pins that it agrees with
+  `em_netflash.update_status`, the fourth reader of the same question.
+- **Tracks are named rather than counted.** An OTA and a partition write are
+  not interchangeable, so "2 updates" tells the reader nothing they can act
+  on.
+
+**A stale claim in `controller/CLAUDE.md` was the collateral finding, and it
+is the one worth copying.** That file said the emOS version is "asked when the
+tab opens, NOT carried on the register message", and justified it partly by
+naming the single consumer. The reasoning was correct when written and expired
+the moment a second consumer appeared — *"ask where the consumer needs the
+answer" is a rule about the CONSUMERS, so it expires when one is added.*
+Nothing would have flagged it; it was findable only because the old text said
+out loud how many callers it was resting on.
+
+**And a guard that did not exist found a test nobody had run.** CI lists its
+dashboard tests explicitly rather than globbing them — deliberate, since
+`node --test tests/` picks up files that are not tests — which makes adding
+one a two-step job whose second step is invisible when missed. A pytest that
+every `controller/tests/*.test.mjs` appears in `ci.yml` went red immediately
+on `device_tools.test.mjs`, committed 2026-09-13 and never run since. It
+passes; it is in the list now.
+
+**In CI verifiziert**, all of it: 1584 controller tests, the device suite and
+`go vet`, every dashboard test individually, the i18n ratchet unchanged at
+135. **Nicht am Gerät verifiziert** — no device has yet run firmware that
+reports `emos_ver`, so on today's fleet the emOS track reads `unknown`, which
+is the correct answer and is exactly what the third state is for.

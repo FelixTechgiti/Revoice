@@ -118,6 +118,77 @@ func TestBaseIsStable(t *testing.T) {
 	}
 }
 
+// ── The emOS version (#255) ──────────────────────────────────────────────────
+
+func writeOSRelease(t *testing.T, body string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(root+"/etc", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root+"/etc/os-release", []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestVersionReadsTheStampedEmOSVersion(t *testing.T) {
+	root := writeOSRelease(t, "NAME=\"emOS\"\nID=emos\nVERSION_ID=0.7.0-fx.1\nBUILD_ID=x\n")
+	if got := Version(root); got != "0.7.0-fx.1" {
+		t.Errorf("Version = %q, want 0.7.0-fx.1", got)
+	}
+}
+
+// os-release permits quoting and emOS does not use it today for this field —
+// which is exactly the kind of thing that changes without anyone noticing that
+// a comparison downstream stopped matching.
+func TestVersionStripsQuotes(t *testing.T) {
+	root := writeOSRelease(t, "ID=emos\nVERSION_ID=\"0.7.0-fx.1\"\n")
+	if got := Version(root); got != "0.7.0-fx.1" {
+		t.Errorf("Version = %q, want the unquoted value", got)
+	}
+}
+
+// Amazon's /system is mounted under BOTH bases, so an os-release that is not
+// ours must not be reported as an emOS version — the controller would then
+// offer a reflash against a release it has nothing to do with.
+func TestVersionRefusesSomebodyElsesOSRelease(t *testing.T) {
+	root := writeOSRelease(t, "NAME=\"Fire OS\"\nID=android\nVERSION_ID=5.5.5.4\n")
+	if got := Version(root); got != "" {
+		t.Errorf("Version = %q for a non-emOS os-release, want empty", got)
+	}
+}
+
+// Empty rather than a placeholder, in all three of the ways it can fail. The
+// controller compares this against a published release, so a string it cannot
+// parse is worse than none: "unknown" would sort, compare and display as if it
+// were a version.
+func TestVersionIsEmptyRatherThanGuessed(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"no VERSION_ID at all", "ID=emos\nNAME=\"emOS\"\n"},
+		{"empty VERSION_ID", "ID=emos\nVERSION_ID=\n"},
+	} {
+		if got := Version(writeOSRelease(t, tc.body)); got != "" {
+			t.Errorf("%s: Version = %q, want empty", tc.name, got)
+		}
+	}
+	if got := Version(t.TempDir()); got != "" {
+		t.Errorf("no os-release at all: Version = %q, want empty", got)
+	}
+}
+
+// Detect and Version read the same file and must agree about it, or the
+// controller gets a version for a device it has been told is FireOS.
+func TestDetectAndVersionAgree(t *testing.T) {
+	root := writeOSRelease(t, "ID=emos\nVERSION_ID=0.7.0-fx.1\n")
+	if Detect(root) != EmOS {
+		t.Fatal("Detect did not recognise the fixture as emOS")
+	}
+	if Version(root) == "" {
+		t.Error("Detect says emOS and Version says nothing")
+	}
+}
+
 func TestKernelReportsTheHost(t *testing.T) {
 	m, r := Kernel()
 	if runtime.GOOS == "linux" && (m == "" || r == "") {
