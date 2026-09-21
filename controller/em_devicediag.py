@@ -40,11 +40,32 @@ DIAG_MARK = "_DIAGCHK"
 # question nobody has.
 DNS_PROBE_HOST = "apresolve.spotify.com"
 
+# **bionic has TWO resolver paths and they are not interchangeable.**
+# `getaddrinfo` is what Rust, Go and anything modern uses — librespot and
+# shairport-sync among them — and `gethostbyname` is the older call that
+# Amazon's own `/system/bin/ping` takes. emOS answered only the first until
+# 0.7.0-fx.1, so the obvious test of name resolution measured the one path
+# that was never implemented and reported a broken resolver on a device whose
+# resolver worked. Both are probed, separately, and the verdict prefers the
+# one the endpoints use.
+#
+# The getaddrinfo probe talks to the socket directly rather than through a
+# program, because there is no bionic binary on the device that is known to
+# take that path — so the conversation is held in the words bionic would use.
+# `busybox nc -U` is not on every build; where it is missing the probe is
+# UNTESTABLE, which is a third answer and not a failure.
+GAI_PROBE = "getaddrinfo"
+
 # The two ports pinned in `device/internal/netfilter`, plus AirPlay 2's own.
 # Mirrored rather than imported: this module stays dependency-free, and the
 # numbers are pinned against the firmware by test.
 PORT_AIRPLAY_RTSP = 5000
-PORT_AIRPLAY2 = 7000
+# shairport-sync's AirPlay 2 build defaults to 7000 and THIS firmware pins it
+# to the port above for both flavours (`netfilter.AirPlayRTSPPort`, written
+# into the config the receiver is started with). So 7000 listening is not
+# expected here, and treating its absence as a fault would accuse every
+# working AirPlay 2 device — it is reported and never judged.
+PORT_AIRPLAY2_DEFAULT = 7000
 PORT_SPOTIFY_ZEROCONF = 36000
 
 AP2_BINARY = "/data/local/bin/shairport-sync-ap2"
@@ -68,6 +89,11 @@ def diag_cmd() -> str:
     """
     return (
         f"[ -S /dev/socket/dnsproxyd ] && echo DNSSOCK:yes || echo DNSSOCK:no; "
+        # The resolver conversation ITSELF, in the words bionic uses. `ping`
+        # below takes the OTHER of bionic's two paths — see GAI_PROBE — so
+        # this is the one that answers for librespot and shairport-sync.
+        f"echo \"GAI:$(printf 'getaddrinfo {DNS_PROBE_HOST} ^ 0 0 0 0 0 0\\0' "
+        f"| busybox nc -U /dev/socket/dnsproxyd 2>&1 | head -c 4)\"; "
         f"echo \"PING:$(/system/bin/ping -c 1 -w 2 {DNS_PROBE_HOST} 2>&1 "
         f"| head -1)\"; "
         f"echo \"PORTS:$(busybox netstat -ltn 2>/dev/null "
@@ -85,6 +111,24 @@ def diag_cmd() -> str:
         f"echo \"NETLOG:$(busybox tail -n 6 {NETLOG} 2>/dev/null "
         f"| busybox tr '\\n' '|')\"; "
         f"echo {DIAG_MARK}")
+
+
+def _gai_verdict(raw: str):
+    """What the direct socket conversation said: "ok", "refused" or None.
+
+    None means the probe could not run — no `nc -U`, no socket, an error
+    message where a code was expected. That is not evidence about the
+    resolver, and the caller falls back to the other path rather than
+    reporting a failure nobody measured.
+    """
+    text = (raw or "").strip()
+    if text.startswith("222"):
+        return "ok"
+    # Any other 3-digit code is the proxy refusing, which IS an answer about
+    # the resolver: something is listening and it said no.
+    if len(text) >= 3 and text[:3].isdigit():
+        return "refused"
+    return None
 
 
 def _dns_verdict(ping_line: str, socket_present: bool):
@@ -147,22 +191,34 @@ def parse_diag(out: str):
     fields = {}
     for line in text.splitlines():
         line = line.strip()
-        for key in ("DNSSOCK", "PING", "PORTS", "AP2", "CLASSIC", "NQPTP",
-                    "NQPTPRUN", "NETLOG"):
+        for key in ("DNSSOCK", "GAI", "PING", "PORTS", "AP2", "CLASSIC",
+                    "NQPTP", "NQPTPRUN", "NETLOG"):
             if line.startswith(key + ":"):
                 fields[key] = line[len(key) + 1:].strip()
 
     socket_present = fields.get("DNSSOCK") == "yes"
     ports = _ports(fields.get("PORTS", ""))
     running = fields.get("NQPTPRUN", "")
+    gai = _gai_verdict(fields.get("GAI", ""))
+
+    # The endpoints' own path decides when it could be measured; ping only
+    # answers for Amazon's older tools, and on an emOS below 0.7.0-fx.1 it
+    # fails whatever the resolver is doing.
+    if gai == "ok":
+        dns = "ok"
+    elif gai == "refused":
+        dns = "unresolved" if socket_present else "no_socket"
+    else:
+        dns = _dns_verdict(fields.get("PING", ""), socket_present)
 
     return {
         "dnsSocket": socket_present,
-        "dns": _dns_verdict(fields.get("PING", ""), socket_present),
+        "dns": dns,
+        "dnsPath": ("getaddrinfo" if gai else "gethostbyname"),
         "dnsDetail": fields.get("PING", "").strip(),
         "ports": ports,
         "airplayListening": PORT_AIRPLAY_RTSP in ports,
-        "airplay2Listening": PORT_AIRPLAY2 in ports,
+        "airplay2Listening": PORT_AIRPLAY2_DEFAULT in ports,
         "spotifyListening": PORT_SPOTIFY_ZEROCONF in ports,
         "ap2Installed": fields.get("AP2") == "yes",
         "classicInstalled": fields.get("CLASSIC") == "yes",
@@ -230,6 +286,4 @@ def summary(diag):
         return "ap2_without_clock"
     if wanted_ap2 and diag["nqptpRunning"] is False:
         return "ap2_clock_not_running"
-    if wanted_ap2 and not diag["airplay2Listening"]:
-        return "ap2_not_listening"
     return "ok"

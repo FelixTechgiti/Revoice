@@ -1776,6 +1776,90 @@ static int gai_send_one(int fd, int flags, int socktype, int protocol,
     return 0;
 }
 
+/* ── bionic's OTHER resolver path ────────────────────────────────────────────
+ *
+ * `getaddrinfo` is not the only thing that reaches this socket. bionic also
+ * proxies `gethostbyname`, with its own request line and its own reply
+ * serialisation — and a program that uses it gets nothing from a proxy that
+ * answers only the first. The comment above said `gethostbyname` had "no
+ * caller that has been measured to need it", and on 2026-09-21 one was
+ * measured: Amazon's own `/system/bin/ping` cannot resolve a name on emOS
+ * while the socket is present and the proxy is running, which reads as a
+ * broken resolver and is a resolver that was never asked.
+ *
+ * The cost of the gap is not ping. It is that **the thing an operator reaches
+ * for to test name resolution is the thing this does not implement**, so the
+ * one measurement anybody makes says the opposite of the truth — and every
+ * older C program on the device, including whatever Amazon ships in /system,
+ * takes the same path.
+ *
+ * Transcribed from bionic's `android_gethostbyname_proxy` and
+ * `android_read_hostent` (AOSP android-5.1.1_r38, `libc/dns/gethnamaddr.c`),
+ * which is the client that has to read this — not from netd, for the reason
+ * the getaddrinfo half gives.
+ */
+struct ghbn_req {
+    char name[256];
+    int  af;
+};
+
+/* "gethostbyname <netid> <host> <af>". Note the ORDER differs from
+ * getaddrinfo's line — the netid comes first here — which is exactly the kind
+ * of thing that cannot be guessed and has to be read off the client. */
+static int ghbn_parse(const char *cmd, struct ghbn_req *r)
+{
+    unsigned netid;
+    memset(r, 0, sizeof *r);
+    if (sscanf(cmd, "gethostbyname %u %255s %d", &netid, r->name, &r->af) != 3)
+        return -1;
+    if (!strcmp(r->name, "^"))
+        r->name[0] = 0;
+    return 0;
+}
+
+/* netd's `sendLenAndData`: a big-endian length, then that many bytes. A zero
+ * length is how both lists here are terminated. */
+static int len_data(int fd, const void *data, uint32_t len)
+{
+    unsigned char l[4];
+    be32(l, len);
+    if (write(fd, l, 4) != 4)
+        return -1;
+    if (len && write(fd, data, len) != (ssize_t)len)
+        return -1;
+    return 0;
+}
+
+/* The hostent bionic reads: name, aliases, addrtype, length, addresses.
+ *
+ * The name carries its NUL (netd sends `strlen + 1`), because the client
+ * stores the bytes and uses them as a C string. The addresses are sent at
+ * h_length rather than netd's flat 16: the client reads whatever length each
+ * one announces and takes h_length for the family, so four bytes is the same
+ * answer without twelve bytes of somebody else's padding.
+ */
+static void hostent_send(int fd, const char *name, const uint32_t *addrs,
+                         int count)
+{
+    unsigned char b[4];
+    if (write(fd, "222 ", 4) != 4)
+        return;
+    if (len_data(fd, name, (uint32_t)strlen(name) + 1) < 0)
+        return;
+    if (len_data(fd, "", 0) < 0)        /* no aliases */
+        return;
+    be32(b, AF_INET);
+    if (write(fd, b, 4) != 4)
+        return;
+    be32(b, 4);                         /* h_length */
+    if (write(fd, b, 4) != 4)
+        return;
+    for (int i = 0; i < count; i++)
+        if (len_data(fd, &addrs[i], 4) < 0)
+            return;
+    len_data(fd, "", 0);                /* end of the address list */
+}
+
 /* Answer one request on an accepted connection.
  *
  * The failure reply is a code that is not 222 followed by four more bytes,
@@ -1797,9 +1881,35 @@ static void dnsproxy_serve(int fd)
     }
     cmd[n] = 0;
 
-    struct gai_req r;
     uint32_t addrs[8];
     int count = -1;
+
+    /* gethostbyname first: it is the older call and the one whose absence
+     * looked like a broken resolver. A literal address must be answered here
+     * too — unlike getaddrinfo, bionic does NOT try one itself before asking,
+     * so `gethostbyname("1.2.3.4")` arrives as an ordinary request. */
+    if (!strncmp(cmd, "gethostbyname ", 14)) {
+        struct ghbn_req g;
+        if (ghbn_parse(cmd, &g) == 0 && g.name[0]
+            && (g.af == AF_INET || g.af == AF_UNSPEC || g.af <= 0)) {
+            struct in_addr lit;
+            if (inet_pton(AF_INET, g.name, &lit) == 1) {
+                memcpy(&addrs[0], &lit, 4);
+                count = 1;
+            } else {
+                count = dns_lookup_a(g.name, addrs, 8);
+            }
+        }
+        if (count <= 0) {
+            write(fd, "501 ", 4);
+            write(fd, "0\0\0\0", 4);
+            return;
+        }
+        hostent_send(fd, g.name, addrs, count);
+        return;
+    }
+
+    struct gai_req r;
 
     if (gai_parse(cmd, &r) == 0 && r.host[0] &&
         (r.family == AF_INET || r.family == AF_UNSPEC || r.family <= 0)) {
