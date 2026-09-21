@@ -3792,3 +3792,47 @@ die Go-Tests.
 
 #263 bleibt offen für die Disassemblierung. Die Endpunkte müssen nicht darauf
 warten.
+
+## 2026-09-21 — Derselbe Filter stand zweimal da, und die zweite Fassung kannte die neue Regel nicht
+
+**Der Shim wurde geholt, gespeichert und nie aufs Gerät geschoben.** Gemessen
+am Abend des 2026-09-21 auf G090L91180250AN1, gleich nach dem Release: Der
+Store holte `gaishim.so` aus `endpoints-v1.13.0` (4.840 Bytes, 20:25:10), das
+Gerät schrieb eine Minute später
+
+    resolver: emOS needs gaishim.so and it is not_installed at
+    /data/local/bin/gaishim.so — Spotify and AirPlay cannot resolve any name
+    until it is installed (see #263)
+
+und dazwischen passierte nichts. librespot wurde im selben Durchlauf
+automatisch nachgezogen, der Abruf funktionierte also.
+
+**Die Ursache ist eine zweite Kopie derselben Regel.**
+`em_api._sync_endpoint_bins` filtert die Liste der Arten, bevor es pro Art eine
+Shell-Runde ausgibt — und dieser Filter war dort ausgeschrieben als
+`effective.get(k.config_key)`. Für eine Art ohne Schalter ist das
+`effective.get(None)`, also falsch, und der Shim fiel heraus, **bevor**
+`install_needed` gefragt wurde. Genau die Funktion, die den schalterlosen Fall
+kennt, wurde nie erreicht.
+
+Beide Stellen hatten recht, danach zu fragen. Nur eine darf es definieren.
+`wants_install` ist jetzt die eine, beide rufen sie.
+
+**Was daran verallgemeinert.** Die Regel „keine zweite Liste daneben" aus §8
+stand bisher für Dateien — Issues gegen eine Liste im Repo. Dies ist dieselbe
+Form eine Ebene tiefer: zwei Bedingungen in zwei Modulen, die dasselbe meinen.
+Die neue Regel wurde an der einen Stelle eingetragen, an der sie sichtbar war,
+und die andere blieb stehen. Nichts wurde rot — die Tests der einen Fassung
+waren vollständig und grün, und die andere hat keine.
+
+Der Test dagegen liest `em_api.py` als Quelltext, wie
+`test_installing_either_receiver_restarts_the_one_process` `server.go` liest:
+Die Suite kann `em_api` nicht importieren, und eine abgedriftete Kopie sieht
+aus wie nichts. Gegengeprüft, indem der Filter wieder ausgeschrieben wurde —
+der Test wird rot.
+
+**Der manuelle Weg war die ganze Zeit in Ordnung.** Der Knopf im
+Updates-Reiter ruft `install_needed` direkt und hätte die Datei installiert;
+kaputt war nur der automatische Pfad. Das ist der Grund, warum es eine
+Fehlfunktion war und kein Ausfall — und auch der Grund, warum es ohne einen
+Blick ins Log niemandem aufgefallen wäre.

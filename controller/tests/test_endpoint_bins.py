@@ -818,3 +818,51 @@ def test_a_device_that_does_not_need_the_shim_is_not_told_it_is_missing():
     state = ebins.device_state(ebins.KINDS["gaishim"], Live())
     assert state["status"] == "not_needed"
     assert state["installable"] is False
+
+
+# ─── The gate that existed twice ─────────────────────────────────────────────
+
+def test_a_kind_without_a_toggle_passes_the_cheap_gate():
+    """The bug this function was extracted for, pinned.
+
+    `em_api._sync_endpoint_bins` filters the kind list before spending a shell
+    round trip per kind. That filter used to be written out there as
+    `effective.get(k.config_key)`, which for a toggle-less kind reads
+    `effective.get(None)` — falsy — so the resolver shim was dropped before
+    `install_needed` was ever asked.
+
+    Measured on a live device on 2026-09-21: the store had fetched and held
+    `gaishim.so`, the device logged that it needed the file and could not
+    resolve a name, and nothing connected the two. Every panel was correct.
+    """
+    caps = ["gai_shim", "spotify"]
+    assert ebins.wants_install(ebins.KINDS["gaishim"], caps, {}) is True, \
+        "a kind with no config_key must not be filtered out by an empty config"
+
+
+def test_the_cheap_gate_still_honours_a_toggle_and_a_capability():
+    """It is a gate, not a bypass — the toggle-less case is the only exception."""
+    spotify = ebins.KINDS["spotify"]
+    assert ebins.wants_install(spotify, ["spotify"], {"spotifyEnabled": True})
+    assert not ebins.wants_install(spotify, ["spotify"], {"spotifyEnabled": False})
+    assert not ebins.wants_install(spotify, ["spotify"], {})
+    assert not ebins.wants_install(spotify, [], {"spotifyEnabled": True})
+    # And the toggle-less kind still needs the firmware to announce it.
+    assert not ebins.wants_install(ebins.KINDS["gaishim"], ["spotify"], {})
+
+
+def test_em_api_does_not_spell_the_gate_out_again():
+    """One definition, because two of them is what broke it.
+
+    Read off the source: the suite cannot import em_api (it needs aiohttp),
+    and this coupling is exactly the kind nothing else would notice — a
+    second copy drifts silently and the symptom is an endpoint that stays
+    dead while every panel reports correctly.
+    """
+    src = (REPO / "controller/em_api.py").read_text()
+    body = src[src.index("async def _sync_endpoint_bins"):]
+    body = body[:body.index("\n    for k in wanted:")]
+    assert "wants_install" in body, \
+        "_sync_endpoint_bins must use em_endpoint_bins.wants_install"
+    assert "effective.get(k.config_key)" not in body, \
+        "the toggle gate is spelled out in em_api again — it drifted once"

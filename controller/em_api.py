@@ -6082,9 +6082,14 @@ async def _sync_endpoint_bins(live, device_id: str) -> None:
     loop = asyncio.get_event_loop()
     effective = await loop.run_in_executor(
         None, db.get_effective_device_config, device_id)
+    # The toggle-and-capability gate lives in em_endpoint_bins and is shared
+    # with install_needed. It used to be spelled out here too, and the two
+    # disagreed about a kind with no toggle: `effective.get(None)` is falsy,
+    # so the resolver shim was dropped before install_needed — which knows
+    # about toggle-less kinds — was ever asked.
     wanted = [k for k in em_endpoint_bins.KINDS.values()
-              if effective.get(k.config_key)
-              and k.capability in (getattr(live, "capabilities", None) or [])]
+              if em_endpoint_bins.wants_install(
+                  k, getattr(live, "capabilities", None), effective)]
     if not wanted:
         return
 
