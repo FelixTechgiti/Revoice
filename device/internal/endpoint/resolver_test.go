@@ -212,7 +212,7 @@ func stubProbe(t *testing.T, answer string) *int {
 	t.Helper()
 	calls := 0
 	old := resolverProbe
-	resolverProbe = func(string, string) string { calls++; return answer }
+	resolverProbe = func(string, string) (string, string) { calls++; return answer, "" }
 	t.Cleanup(func() {
 		resolverProbe = old
 		logMu.Lock()
@@ -288,30 +288,93 @@ func TestTheProbeIsNotRunWhenTheFileIsAbsent(t *testing.T) {
 // which is aarch64 on this board and rejected a perfectly good 32-bit
 // library.
 func TestNoBinaryMeansNoVerdict(t *testing.T) {
-	if got := PreloadProbe("/data/local/bin/gaishim.so", ""); got != "" {
-		t.Errorf("with no binary to probe the answer must be empty, got %q", got)
+	le, st := PreloadProbe("/data/local/bin/gaishim.so", "")
+	if le != "" || st != "" {
+		t.Errorf("with no binary to probe both answers must be empty, got %q / %q", le, st)
 	}
 }
 
-// Only the LINKER's lines are a verdict about linking. A program that writes
-// its own warnings to stderr must not be read as a refused preload.
-func TestOnlyTheLinkersOwnLinesCount(t *testing.T) {
+// A linker LINE is not a linker FAILURE, and reading one as the other
+// reported a perfectly loaded library as REFUSED on 2026-09-21. Android 5.1
+// prints "unused DT entry" for almost everything it loads, librespot
+// included.
+func TestOnlyARealFailureCountsAsARefusal(t *testing.T) {
+	const noise = "WARNING: linker: /data/local/bin/librespot: unused DT entry: " +
+		"type 0x6ffffef5 arg 0x1554\n" +
+		"WARNING: linker: gaishim.so: unused DT entry: type 0x6fffffff arg 0x1\n"
+
 	for _, tc := range []struct {
 		name, stderr, want string
 	}{
 		{"nothing at all", "", ""},
 		{"the program's own noise",
 			"warning: config file missing\nusing defaults\n", ""},
+		{"the linker's routine chatter — measured on a device", noise, ""},
 		{"a hard refusal",
 			`CANNOT LINK EXECUTABLE DEPENDENCIES: "/x/gaishim.so" is 32-bit instead of 64-bit`,
 			`CANNOT LINK EXECUTABLE DEPENDENCIES: "/x/gaishim.so" is 32-bit instead of 64-bit`},
-		{"a soft refusal beside the program's noise",
-			"librespot: starting\nWARNING: linker: could not load library \"gaishim.so\"\n",
+		{"a soft refusal buried in the chatter",
+			noise + `WARNING: linker: could not load library "gaishim.so"` + "\n",
 			`WARNING: linker: could not load library "gaishim.so"`},
+		{"a missing symbol",
+			"WARNING: linker: gaishim.so: cannot locate symbol \"getservbyname\"\n",
+			`WARNING: linker: gaishim.so: cannot locate symbol "getservbyname"`},
 	} {
-		if got := linkerLines(tc.stderr); got != tc.want {
-			t.Errorf("%s: linkerLines = %q, want %q", tc.name, got, tc.want)
+		if got := linkerFailure(tc.stderr); got != tc.want {
+			t.Errorf("%s: linkerFailure = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// The shim's own answer, lifted out of whatever else the endpoint printed.
+func TestTheSelfTestLineIsFoundAmongTheNoise(t *testing.T) {
+	for _, tc := range []struct{ name, stderr, want string }{
+		{"absent", "WARNING: linker: unused DT entry\n", ""},
+		{"a success",
+			"noise\ngaishim-selftest: clienttoken.spotify.com rc=0 ip=35.186.224.24 entries=1\nmore\n",
+			"clienttoken.spotify.com rc=0 ip=35.186.224.24 entries=1"},
+		{"a failure is still an answer",
+			"gaishim-selftest: clienttoken.spotify.com rc=7 entries=0\n",
+			"clienttoken.spotify.com rc=7 entries=0"},
+	} {
+		if got := selfTestLine(tc.stderr); got != tc.want {
+			t.Errorf("%s: selfTestLine = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Loaded, and silent. That is its own state and must not read as success —
+// it is what a library that is present but NOT the one being interposed
+// looks like.
+func TestALoadedButSilentShimIsItsOwnState(t *testing.T) {
+	stub(t, platform.EmOS, present(), nil)
+	old := resolverProbe
+	resolverProbe = func(string, string) (string, string) { return "", "" }
+	t.Cleanup(func() { resolverProbe = old })
+
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
+	if PreloadRefusal() != "" || SelfTest() != "" {
+		t.Error("a silent probe must record neither a refusal nor an answer")
+	}
+	rep := ResolverStatus().Report()
+	if _, ok := rep["selftest"]; ok {
+		t.Error("no self-test line means no selftest key")
+	}
+}
+
+// What the device will actually report when it works.
+func TestASuccessfulSelfTestReachesTheReport(t *testing.T) {
+	stub(t, platform.EmOS, present(), nil)
+	old := resolverProbe
+	resolverProbe = func(string, string) (string, string) {
+		return "", "clienttoken.spotify.com rc=0 ip=35.186.224.24 entries=1"
+	}
+	t.Cleanup(func() { resolverProbe = old })
+
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
+	rep := ResolverStatus().Report()
+	if rep["selftest"] == nil || rep["preload_error"] != nil {
+		t.Errorf("a clean resolve must carry selftest and no preload_error: %v", rep)
 	}
 }
 
@@ -322,7 +385,7 @@ func TestATimedOutProbeIsNotSilence(t *testing.T) {
 	probeTimeout = time.Nanosecond
 	t.Cleanup(func() { probeTimeout = old })
 
-	if got := PreloadProbe("/x/gaishim.so", "/bin/sh"); got == "" {
+	if le, _ := PreloadProbe("/x/gaishim.so", "/bin/sh"); le == "" {
 		t.Error("a timed-out probe returned empty, which reads as a clean load")
 	}
 }

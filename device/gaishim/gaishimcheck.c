@@ -41,6 +41,12 @@ static struct hostent *stub_gethostbyname(const char *);
 static struct servent *stub_getservbyname(const char *, const char *);
 static int              stub_pton(int, const char *, void *);
 
+/* The constructor is the one thing this file must NOT get: it would run at
+ * process start on the host and resolve a name through the stubs before any
+ * test has set them up. `gaishim_selftest` itself is still driven below, by
+ * hand, which is the part worth checking. */
+#define GAISHIM_TEST
+
 #define malloc           chk_malloc
 #define free             chk_free
 #define GAISHIM_RESOLVER stub_gethostbyname
@@ -393,6 +399,25 @@ int main(void)
 		freeaddrinfo(res2);
 	}
 	freeaddrinfo(res);
+
+	/* ── the self-test, which is what the device will report ─────────── */
+	//
+	// It writes to stderr rather than returning a value, because it runs
+	// inside somebody else's process and has nowhere else to put an answer.
+	// Checked here for the two things the firmware parses: that a resolvable
+	// name produces the marker with rc=0 and an address, and that an
+	// unresolvable one still produces the marker — a self-test that stays
+	// silent on failure is the silence this whole mechanism exists to end.
+	reset();
+	stub_naddr = 1;
+	gaishim_selftest("host.example.test");
+	reset();
+	stub_naddr = 0;
+	gaishim_selftest("nothing.example.test");
+	gaishim_selftest("");                 /* must write nothing at all */
+	gaishim_selftest(0);
+	printf("(the three lines above stderr: one rc=0 with an ip, one rc!=0, "
+	       "and nothing for the empty host)\n");
 
 	/* ── nothing leaked, nothing freed twice ─────────────────────────── */
 	ok(live_blocks == 0, "every allocation was freed");

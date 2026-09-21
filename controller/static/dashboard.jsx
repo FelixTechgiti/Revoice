@@ -3405,8 +3405,17 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     // and the endpoints are running without it. Saying only
                     // "Installed" here is how that stayed invisible for four
                     // restarts on 2026-09-21.
+                    // Three states where there used to be one, and the
+                    // middle one is the whole point: loaded IS NOT working.
+                    // A self-test line says what the library returned for a
+                    // real name inside the endpoint's own process.
+                    const selfOK = ep.selftest && / rc=0 /.test(` ${ep.selftest} `);
                     const label = ep.preload_error
                                 ? `Installed, but the device could not load it`
+                                : ep.selftest
+                                  ? (selfOK
+                                      ? 'Installed and resolving names'
+                                      : `Installed and loaded, but it resolves nothing (${ep.selftest})`)
                                 : ep.status === 'installed' ? 'Installed'
                                 : ep.status === 'missing'
                                   ? `Not installed${ep.reason_text && ep.reason_text !== 'not installed'

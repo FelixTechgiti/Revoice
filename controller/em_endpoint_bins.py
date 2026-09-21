@@ -511,6 +511,11 @@ def device_state(k: Kind, live, db_path: str | None = None) -> dict:
         # side: the file is there, the md5 matches, and the endpoints run
         # without it. Only the device can know; it rides `resolver_status`.
         "preload_error": (st or {}).get("preload_error"),
+        # What the shim answered for a real name from inside the endpoint's
+        # own process. The only field here that reports the library WORKING
+        # rather than merely existing — everything else above says where a
+        # file is.
+        "selftest":      (st or {}).get("selftest"),
         "stored":        have,
         "matches_store": matches,
         # A sub-kind must stay installable while its own state is unknown or

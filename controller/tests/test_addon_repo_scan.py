@@ -38,7 +38,13 @@ PARSED_SUFFIXES = {".yaml", ".yml", ".json"}
 
 def _candidates():
     for p in ROOT.glob("**/config.*"):
-        if ".git" in p.parts or not p.is_file():
+        # `.git` and `.claude` are tool directories, not repository content:
+        # Supervisor clones the repo and never sees either. `.claude` holds
+        # git worktrees, and a worktree is a second checkout of this very
+        # tree — so without this the test fails against copies of the add-on
+        # configs it is itself asserting about, which reads as a repository
+        # fault and is a working copy.
+        if ".git" in p.parts or ".claude" in p.parts or not p.is_file():
             continue
         if p.suffix not in PARSED_SUFFIXES:
             continue          # config.go and friends are never parsed

@@ -154,6 +154,9 @@ func (r Resolver) Report() map[string]any {
 	if refusal := PreloadRefusal(); refusal != "" {
 		rep["preload_error"] = refusal
 	}
+	if st := SelfTest(); st != "" {
+		rep["selftest"] = st
+	}
 	return rep
 }
 
@@ -192,56 +195,95 @@ func (r Resolver) Report() map[string]any {
 // because the caller is the one that knows which file it is about to run —
 // a device may have the classic receiver or the AirPlay 2 one, at different
 // paths.
-func PreloadProbe(shim, binary string) string {
+func PreloadProbe(shim, binary string) (linkerErr, selfTest string) {
 	if binary == "" {
-		return ""
+		return "", ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, binary, "--version")
-	cmd.Env = append(os.Environ(), PreloadVar+"="+shim)
+	// SELFTEST makes the shim resolve a name through its own getaddrinfo at
+	// load time and write the answer to stderr — from inside the endpoint's
+	// own process, under the real bionic. Unset everywhere else, so the
+	// library is inert in normal operation.
+	cmd.Env = append(os.Environ(),
+		PreloadVar+"="+shim,
+		"GAISHIM_SELFTEST="+SelfTestHost)
 	var errbuf bytes.Buffer
 	cmd.Stderr = &errbuf
 	// stdout is discarded on purpose: `--version` prints there and says
-	// nothing about linking, while every linker message goes to stderr.
+	// nothing about linking.
 	err := cmd.Run()
 
-	msg := linkerLines(errbuf.String())
-	if msg == "" && err != nil && ctx.Err() != nil {
-		// A probe that timed out has not answered. Reported rather than
-		// swallowed: failure to LOOK is not evidence of success.
-		return "probe timed out running " + binary
+	linkerErr = linkerFailure(errbuf.String())
+	selfTest = selfTestLine(errbuf.String())
+	if linkerErr == "" && selfTest == "" && err != nil && ctx.Err() != nil {
+		linkerErr = "probe timed out running " + binary
 	}
-	return msg
+	return linkerErr, selfTest
 }
+
+// SelfTestHost is deliberately the name librespot dies on. A device that
+// resolves it through the shim and still cannot reach Spotify has separated
+// the resolver from everything downstream of it, which no other single
+// measurement does.
+const SelfTestHost = "clienttoken.spotify.com"
 
 var probeTimeout = 10 * time.Second
 
-// The linker's own lines and nothing else. A program that prints its own
-// warnings to stderr must not read as a refused preload — the question is
-// what the LINKER said, and it announces itself.
-func linkerLines(stderr string) string {
+// A linker FAILURE, not merely a linker line — and the difference cost a
+// wrong verdict on 2026-09-21.
+//
+// Android 5.1 prints `WARNING: linker: <file>: unused DT entry: type 0x...`
+// for almost everything it loads, including librespot itself and every
+// library beside it. Treating any line containing "linker:" as a refusal
+// reported a library that had loaded perfectly well as REFUSED, which is
+// worse than saying nothing: it sent the search away from the real fault.
+//
+// So this matches what the linker says when it actually gives up. The
+// alternative — listing the benign messages — is a list that grows with
+// somebody else's code.
+func linkerFailure(stderr string) string {
 	var keep []string
 	for _, line := range strings.Split(stderr, "\n") {
 		l := strings.TrimSpace(line)
 		if l == "" {
 			continue
 		}
-		if strings.Contains(l, "linker:") || strings.Contains(l, "CANNOT LINK") {
+		switch {
+		case strings.Contains(l, "CANNOT LINK"),
+			strings.Contains(l, "could not load library"),
+			strings.Contains(l, "cannot locate symbol"),
+			strings.Contains(l, "cannot find "),
+			strings.Contains(l, "is 32-bit instead of 64-bit"),
+			strings.Contains(l, "is 64-bit instead of 32-bit"):
 			keep = append(keep, l)
 		}
 	}
 	return strings.Join(keep, "; ")
 }
 
+// The shim's own answer, if it ran. The marker is the shim's and must not
+// drift from SELFTEST_MARK in gaishim.c.
+func selfTestLine(stderr string) string {
+	const mark = "gaishim-selftest: "
+	for _, line := range strings.Split(stderr, "\n") {
+		if i := strings.Index(line, mark); i >= 0 {
+			return strings.TrimSpace(line[i+len(mark):])
+		}
+	}
+	return ""
+}
+
 // ── saying so, once ─────────────────────────────────────────────────────────
 
 var (
-	logMu       sync.Mutex
-	logLast     string
-	logAny      bool
-	lastRefusal string
+	logMu        sync.Mutex
+	logLast      string
+	logAny       bool
+	lastRefusal  string
+	lastSelfTest string
 )
 
 // Swapped by tests; the real linker on a device.
@@ -253,6 +295,14 @@ func PreloadRefusal() string {
 	logMu.Lock()
 	defer logMu.Unlock()
 	return lastRefusal
+}
+
+// SelfTest is what the shim answered when it last resolved a name from inside
+// an endpoint's process, or empty when it has not been asked.
+func SelfTest() string {
+	logMu.Lock()
+	defer logMu.Unlock()
+	return lastSelfTest
 }
 
 // LogResolver writes one line when the shim's state CHANGES, and nothing on
@@ -298,17 +348,27 @@ func LogResolver(r Resolver, binary string) {
 	// transition, rather than left to be inferred from an endpoint that keeps
 	// failing. One process spawn per state change, not per restart.
 	if state == "active" {
-		refusal := resolverProbe(r.Path, binary)
+		refusal, selftest := resolverProbe(r.Path, binary)
 		logMu.Lock()
-		lastRefusal = refusal
+		lastRefusal, lastSelfTest = refusal, selftest
 		logMu.Unlock()
-		if refusal != "" {
+		switch {
+		case refusal != "":
 			msg = "resolver: the linker REFUSED " + r.Path +
 				" — the endpoints are running without it and cannot " +
 				"resolve any name: " + refusal
-		} else {
-			msg = "resolver: gaishim.so preloaded into the endpoints (" +
-				r.Path + "), linker accepted it"
+		case selftest != "":
+			// The whole answer in one line: the library loaded, and this
+			// is what it returned for a real name inside the endpoint's
+			// own process.
+			msg = "resolver: gaishim.so loaded into " + binary +
+				" — self-test " + selftest
+		default:
+			// Loaded, and it did not answer. Said plainly rather than
+			// reported as success: not looking is not evidence.
+			msg = "resolver: gaishim.so loaded into " + binary +
+				" but the self-test produced no line — the library may not " +
+				"be the one being interposed"
 		}
 	}
 	log.Print(msg)
