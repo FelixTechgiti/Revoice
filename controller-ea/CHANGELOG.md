@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.66.0-fx.1
+
+### „Installiert" reicht nicht mehr als Auskunft über die Namensauflösung
+
+Gehört zu Firmware **2.55.0-fx.1**. Ohne sie ändert sich nichts.
+
+Der Updates-Reiter meldete bisher „Installiert", sobald die Datei für die
+Namensauflösung auf dem Gerät lag — auch dann, wenn das Gerät sie gar nicht
+laden konnte. Beides sah identisch aus, und der zweite Fall ist genau der, bei
+dem Spotify und AirPlay trotzdem nicht funktionieren.
+
+Meldet das Gerät jetzt, dass der Programmlader die Datei abgelehnt hat, steht
+dort *Installiert, aber das Gerät konnte sie nicht laden* samt der Begründung
+des Laders. Ältere Firmware sagt dazu nichts und wird unverändert angezeigt.
+
 ## 2.65.0-fx.1
 
 ### Die Namensauflösung wurde geholt und nicht installiert
