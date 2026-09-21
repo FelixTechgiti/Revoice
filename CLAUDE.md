@@ -253,9 +253,23 @@ am 2026-09-12 an den Dateien selbst nachgesehen:
 | Chat | Issues, PR-Titel und -Kommentare |
 | Commit-Nachrichten und PR-Beschreibungen | dieser Abschnitt ausgenommen: der Rest dieser Datei, `device/CLAUDE.md`, `controller/CLAUDE.md` |
 | `README.md`, `docs/` | `SETUP.md`, `EM_CONTROLLER_SPEC.md` — Referenz, keine Anleitung |
-| `controller/CHANGELOG.md` — wer ihn liest, entscheidet über ein Update | `device/CHANGELOG.md` — Firmware-Notizen, und `cut-release.yml` baut die Tag-Annotation daraus |
+| **beide** `CHANGELOG.md` — wer sie liest, entscheidet über ein Update | |
 | dieser Abschnitt | Code, Kommentare, Log-Zeilen |
 | | **jeder PR gegen `wilbowes/EchoMuse`** |
+
+**Die Zeile darüber stand hier bis zum 2026-09-21 andersherum** — sie trennte
+die beiden `CHANGELOG.md` und begründete das damit, dass der eine
+Firmware-Notizen seien. An der Datei nachgesehen stimmte das nicht: seit
+2.38.0-fx.1 ist jeder Eintrag in `device/CHANGELOG.md` deutsch, und das ist
+richtig so, weil beide denselben Leser haben — jemanden, der entscheidet, ob
+er ein Update auf sein eigenes Gerät schiebt. Die alte Begründung nannte, wo
+die Datei erzeugt wird, nicht wer sie liest.
+
+**Rückwirkend bleibt sie gemischt**, englisch bis 2.37.0-fx.1 und deutsch ab
+2.38.0-fx.1, und das bleibt so: ein Changelog ist der Record und wird nicht
+umgeschrieben. Das ist genau der Zustand, den der Absatz unten „schlechter als
+eine Datei in der falschen Sprache" nennt — hier ist es der Preis dafür, dass
+der Record steht, und nicht das Ergebnis einer halben Übersetzung.
 
 **Wo der Bestand schon eine Sprache hat, gewinnt der Bestand.** Die offenen
 Issues sind englisch; eine deutsche Hälfte dazu macht die Liste unsuchbar, und
