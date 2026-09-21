@@ -1956,7 +1956,7 @@ reads healthy.
 
 **The proxy is not at fault, and this is the rare case where matching netd
 harder is provably the wrong move.** Measured 2026-09-21 with
-`device/tools/dnsprobe`: the reply is netd's serialisation byte for byte with
+`device/tools/dnsprobe` (#264): the reply is netd's serialisation byte for byte with
 the right address, and Amazon's bionic rejects it — along with every other
 shape netd could send, eight of which were tried. Held open rather than closed,
 bionic **blocks**, so it wants more per entry than AOSP android-5.1.1_r38 does.

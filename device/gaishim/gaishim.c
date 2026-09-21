@@ -10,7 +10,7 @@
  * (#263).
  *
  * The proxy is not at fault and cannot be fixed from our side. Measured with
- * `device/tools/dnsprobe` on 2026-09-21: the proxy's reply is netd's
+ * `device/tools/dnsprobe` (#264) on 2026-09-21: the proxy's reply is netd's
  * serialisation byte for byte, with the right address, and Amazon's bionic
  * rejects it — along with every other shape netd could have sent (eight were
  * tried; with the connection held open bionic BLOCKS, so it wants more per
