@@ -1870,6 +1870,26 @@ signal that section was built for — and the thing that named the cause was
 Neither existed a fortnight ago, and without the second this is a binary that
 does not work for a reason nobody can see.
 
+**And bionic has TWO of those resolver paths, which is the trap one layer
+down.** `getaddrinfo` is what Rust, Go and anything modern uses — librespot
+and shairport-sync among them — while `gethostbyname` is the older call, and
+each has its own request line and its own reply serialisation on
+`/dev/socket/dnsproxyd`. emOS implemented the first only, with the comment
+that the second had "no caller that has been measured to need it".
+
+**The caller that needed it was the test.** Amazon's `/system/bin/ping` takes
+the old path, so the one command anybody runs to check name resolution failed
+on a device whose resolver was working — `unknown host` from a proxy that was
+up, answering, and never asked (measured 2026-09-21, and it cost a wrong
+diagnosis in the controller's own panel). emOS 0.7.0-fx.1 answers both.
+
+The general shape is worth more than the fix: **when a platform offers two
+entry points to the same service, implementing one leaves an instrument that
+lies rather than a feature that is missing** — and the instrument is what
+everything else is judged by. The controller's probe now names which of the
+two it measured (`em_devicediag`), because on an older emOS the answer means
+nothing.
+
 ### One helper for two limits: a TXT string is 255 bytes, a name label is 63
 
 **The third wall behind the two above, and the one that had actually never

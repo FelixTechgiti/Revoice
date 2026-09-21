@@ -277,14 +277,15 @@
       diag_dns_unresolved: 'The resolver is running and the lookup still '
         + 'failed. That is the resolver, not the network — the controller was '
         + 'reached over the same link.',
+      diagDnsVia: 'measured through',
+      diagDnsOld: 'the older call Amazon\'s tools use — an emOS below '
+        + '0.7.0-fx.1 never answered it, whatever its resolver was doing',
       diag_dns_unknown: 'Whether names resolve could not be measured.',
       diag_endpoints_silent: 'Names resolve, but neither receiver is '
         + 'listening — so nothing can find this device to play to it.',
       diag_ap2_not_installed: 'AirPlay 2 is switched on and its binary is '
         + 'not on this device, so it is serving classic AirPlay. Install '
         + 'shairport-sync-ap2 and nqptp under Streaming endpoints.',
-      diag_ap2_not_listening: 'AirPlay 2 is switched on and nothing is '
-        + 'listening on its port — the receiver is not running as AirPlay 2.',
       diag_ap2_without_clock: 'AirPlay 2 is installed without its clock '
         + 'daemon, so it serves classic AirPlay only. Install nqptp under '
         + 'Streaming endpoints.',
@@ -844,6 +845,9 @@
       diag_dns_unresolved: 'Die Auflösung läuft, und die Abfrage ist trotzdem '
         + 'gescheitert. Das ist der Resolver, nicht das Netz — der Controller '
         + 'wurde über dieselbe Verbindung erreicht.',
+      diagDnsVia: 'gemessen über',
+      diagDnsOld: 'den älteren Aufruf, den Amazons Werkzeuge nehmen — ein emOS '
+        + 'vor 0.7.0-fx.1 hat ihn nie beantwortet, egal was sein Resolver tat',
       diag_dns_unknown: 'Ob Namen aufgelöst werden, war nicht messbar.',
       diag_endpoints_silent: 'Namen lassen sich auflösen, aber keiner der '
         + 'Empfänger horcht — es kann also niemand dieses Gerät finden, um '
@@ -852,8 +856,6 @@
         + 'Datei liegt aber nicht auf dem Gerät — es bedient also klassisches '
         + 'AirPlay. shairport-sync-ap2 und nqptp unter Streaming-Endpunkte '
         + 'installieren.',
-      diag_ap2_not_listening: 'AirPlay 2 ist eingeschaltet, und auf seinem '
-        + 'Port horcht nichts — der Empfänger läuft nicht als AirPlay 2.',
       diag_ap2_without_clock: 'AirPlay 2 ist installiert, sein Uhren-Dienst '
         + 'aber nicht: Damit läuft nur klassisches AirPlay. nqptp unter '
         + 'Streaming-Endpunkte installieren.',

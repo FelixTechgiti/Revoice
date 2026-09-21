@@ -13,6 +13,7 @@ import em_devicediag as diag
 def _answer(**over):
     base = {
         "DNSSOCK": "yes",
+        "GAI": "222 ",
         "PING": "PING apresolve.spotify.com (35.186.224.47) 56(84) bytes of data.",
         "PORTS": "0.0.0.0:5000 :::7000 0.0.0.0:36000",
         "AP2": "yes",
@@ -42,6 +43,19 @@ def test_the_probe_asks_for_the_name_that_actually_failed():
     assert diag.DNS_PROBE_HOST in diag.diag_cmd()
 
 
+def test_the_path_the_endpoints_use_is_probed_directly():
+    """bionic has two resolver paths and `ping` takes the OTHER one.
+
+    emOS answered only `getaddrinfo` until 0.7.0-fx.1, so a ping-only probe
+    reported a broken resolver on a device whose resolver worked — measured
+    2026-09-21. There is no binary on the device known to take the endpoints'
+    path, so the conversation is held directly, in the words bionic uses.
+    """
+    cmd = diag.diag_cmd()
+    assert "nc -U /dev/socket/dnsproxyd" in cmd
+    assert "getaddrinfo " in cmd
+
+
 def test_the_probe_is_read_only():
     """It runs on somebody's only-reachable-over-the-network device while
     they are asleep. Stderr redirections are allowed and are the only `>`
@@ -59,13 +73,15 @@ def test_a_resolved_name_is_ok_even_when_every_packet_is_lost():
     """The address in the first line IS the resolution. A router that drops
     ICMP would otherwise read as a device that cannot resolve — which is the
     fault being hunted, reported about a working resolver."""
-    out = _answer(PING="PING apresolve.spotify.com (35.186.224.47) 56(84) "
-                       "bytes of data.")
+    out = _answer(GAI="", PING="PING apresolve.spotify.com (35.186.224.47) "
+                              "56(84) bytes of data.")
     assert diag.parse_diag(out)["dns"] == "ok"
 
 
 def test_an_unresolvable_name_with_a_socket_is_the_resolver_not_the_network():
-    out = _answer(PING="ping: unknown host apresolve.spotify.com")
+    # GAI empty: no `nc -U`, so ping is what is left — the case this test is
+    # about.
+    out = _answer(GAI="", PING="ping: unknown host apresolve.spotify.com")
     d = diag.parse_diag(out)
     assert d["dns"] == "unresolved"
     assert diag.summary(d) == "dns_unresolved"
@@ -74,21 +90,22 @@ def test_an_unresolvable_name_with_a_socket_is_the_resolver_not_the_network():
 def test_an_unresolvable_name_with_no_socket_names_the_missing_proxy():
     """The emOS half is simply not answering — an init below 0.6.0-fx.1, or
     one that could not bind. Different repair entirely."""
-    out = _answer(DNSSOCK="no", PING="ping: bad address 'apresolve.spotify.com'")
+    out = _answer(DNSSOCK="no", GAI="",
+                  PING="ping: bad address 'apresolve.spotify.com'")
     d = diag.parse_diag(out)
     assert d["dns"] == "no_socket"
     assert diag.summary(d) == "dns_no_socket"
 
 
 def test_a_missing_probe_binary_is_not_a_verdict_about_the_device():
-    out = _answer(PING="sh: /system/bin/ping: not found")
+    out = _answer(GAI="", PING="sh: /system/bin/ping: not found")
     d = diag.parse_diag(out)
     assert d["dns"] == "no_tool"
     assert diag.summary(d) == "dns_unknown"
 
 
 def test_silence_from_the_probe_is_unknown():
-    assert diag.parse_diag(_answer(PING=""))["dns"] == "unknown"
+    assert diag.parse_diag(_answer(GAI="", PING=""))["dns"] == "unknown"
 
 
 # ── Ports and binaries ───────────────────────────────────────────────────────
@@ -171,8 +188,7 @@ def test_the_panel_renders_the_servers_verdict_rather_than_its_own():
                / "static" / "strings.js").read_text()
     for key in ("ok", "not_asked", "dns_no_socket", "dns_unresolved",
                 "dns_unknown", "endpoints_silent", "ap2_not_installed",
-                "ap2_without_clock", "ap2_clock_not_running",
-                "ap2_not_listening"):
+                "ap2_without_clock", "ap2_clock_not_running"):
         assert strings.count(f"diag_{key}:") == 2, key
     for key in ("ok", "no_socket", "unresolved", "no_tool", "unknown"):
         assert strings.count(f"diagDns_{key}:") == 2, key
@@ -233,3 +249,37 @@ def test_the_log_tail_is_bounded():
     """It rides a shell round trip somebody is waiting on, and a 128KB file
     behind it."""
     assert "tail -n 6" in diag.diag_cmd()
+
+
+# ── The two resolver paths ───────────────────────────────────────────────────
+
+def test_the_endpoints_path_decides_when_it_can_be_measured():
+    # It answered: ping's verdict does not matter, whichever way it went.
+    d = diag.parse_diag(_answer(GAI="222 ", PING="ping: unknown host x"))
+    assert d["dns"] == "ok"
+    assert d["dnsPath"] == "getaddrinfo"
+
+
+def test_a_refusal_on_that_path_is_the_resolver():
+    d = diag.parse_diag(_answer(GAI="501 ", PING="ping: unknown host x"))
+    assert d["dns"] == "unresolved"
+    d = diag.parse_diag(_answer(DNSSOCK="no", GAI="501 "))
+    assert d["dns"] == "no_socket"
+
+
+def test_an_unmeasurable_path_falls_back_and_says_so():
+    """No `nc -U` on this busybox: the reading is ping's, and the panel has to
+    name that, because on an old emOS ping fails whatever the resolver does."""
+    for raw in ("", "nc: unrecognized option -U", "   "):
+        d = diag.parse_diag(_answer(GAI=raw, PING="ping: unknown host x"))
+        assert d["dnsPath"] == "gethostbyname", raw
+        assert d["dns"] == "unresolved", raw
+
+
+def test_airplay2_is_not_judged_on_a_port_this_firmware_does_not_use():
+    """shairport-sync's AP2 build defaults to 7000; this firmware pins both
+    flavours to 5000. Judging 7000 would accuse every working device."""
+    d = diag.with_intent(diag.parse_diag(_answer(PORTS="0.0.0.0:5000 0.0.0.0:36000")),
+                         airplay_on=True, airplay2_on=True, spotify_on=True)
+    assert d["airplay2Listening"] is False
+    assert diag.summary(d) == "ok"

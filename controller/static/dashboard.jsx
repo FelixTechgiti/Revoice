@@ -3230,6 +3230,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                       </div>
                       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:8, lineHeight:1.7 }}>
                         {t('diagDns')}: {t('diagDns_' + emos.diag.dns)}
+                        {' ('}{t('diagDnsVia')} {emos.diag.dnsPath}{')'}
                         {/* Defensive on a field the server always sends:
                             this panel renders inside the device window, and
                             anything that throws here takes the WHOLE
@@ -3239,6 +3240,11 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                           : t('diagNone')}
                         {' · '}{diagAirplayLine(emos.diag)}
                       </div>
+                      {emos.diag.dnsPath === 'gethostbyname' && emos.diag.dns !== 'ok' && (
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:6, lineHeight:1.6, textWrap:'pretty' }}>
+                          {t('diagDnsOld')}
+                        </div>
+                      )}
                       {emos.diag.dnsDetail && (
                         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--empty)', marginTop:6, wordBreak:'break-word' }}>
                           {emos.diag.dnsDetail}

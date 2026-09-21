@@ -1,5 +1,33 @@
 # emOS changelog
 
+## 0.7.0-fx.1
+
+### Der zweite Weg, auf dem Programme Namen nachschlagen
+
+**0.6.0 hat die Namensauflösung gebracht — aber nur eine von zwei.** bionic,
+die C-Bibliothek des Geräts, kennt zwei Aufrufe dafür: den moderneren, den
+librespot und shairport-sync nehmen, und einen älteren, den Amazons eigene
+Werkzeuge benutzen. emOS hat bisher nur den ersten beantwortet.
+
+Das ist ärgerlicher, als es klingt, und zwar aus einem Grund, der nichts mit
+Amazons Werkzeugen zu tun hat: **Womit prüft man, ob Namensauflösung geht?
+Mit `ping`. Und `ping` nimmt genau den Weg, den es nicht gab.** Am 21.09.2026
+gemessen: Auf einem Gerät, dessen Auflösungsdienst lief, meldete `ping`
+„unknown host" — also genau das Gegenteil der Wahrheit, und es sah aus wie ein
+kaputtes System.
+
+Ab dieser Fassung werden beide Wege beantwortet. Damit stimmt auch wieder,
+was `ping` sagt.
+
+### Was du merkst
+
+- **Nichts, wenn bei dir alles läuft** — Programme, die vorher aufgelöst
+  haben, tun es weiter.
+- Eine Prüfung mit `ping <name>` auf dem Gerät liefert jetzt ein Ergebnis, dem
+  man glauben kann.
+- Die Diagnose im Updates-Reiter des Controllers sagt ab 2.60.0-fx.1 dazu,
+  welchen der beiden Wege sie gemessen hat.
+
 ## 0.6.0-fx.1
 
 ### Namen lassen sich jetzt auflösen

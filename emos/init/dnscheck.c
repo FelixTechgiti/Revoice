@@ -328,6 +328,132 @@ static void check_serve_failure(void)
     ok("and eight bytes in total, or the caller blocks in fread", n == 8, NULL);
 }
 
+/* ── gethostbyname, the other half of the same socket ────────────────────── */
+
+static void check_ghbn_parse(void)
+{
+    struct ghbn_req g;
+    ok("a gethostbyname line parses",
+       ghbn_parse("gethostbyname 0 apresolve.spotify.com 2", &g) == 0
+       && !strcmp(g.name, "apresolve.spotify.com") && g.af == AF_INET, NULL);
+
+    /* The netid comes FIRST here and second nowhere — the order differs from
+     * getaddrinfo's line, and getting it the other way round would read the
+     * netid as the hostname and resolve "0". */
+    ok("the netid is the first field, not the host",
+       ghbn_parse("gethostbyname 12 spotify.com 2", &g) == 0
+       && !strcmp(g.name, "spotify.com"), g.name);
+
+    ok("a caret is no host", ghbn_parse("gethostbyname 0 ^ 2", &g) == 0
+       && g.name[0] == 0, NULL);
+    ok("a getaddrinfo line is refused",
+       ghbn_parse("getaddrinfo spotify.com ^ 0 0 0 0 0", &g) < 0, NULL);
+    ok("a short line is refused", ghbn_parse("gethostbyname 0", &g) < 0, NULL);
+}
+
+/* The hostent framing, read back exactly as `android_read_hostent` does:
+ * name, aliases until a zero length, addrtype, length, addresses until a zero
+ * length. A literal is used so this needs no nameserver. */
+static void check_serve_hostent(void)
+{
+    int sv[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+        ok("socketpair", 0, strerror(errno));
+        return;
+    }
+
+    pid_t p = fork();
+    if (p == 0) {
+        close(sv[0]);
+        dnsproxy_serve(sv[1]);
+        close(sv[1]);
+        _exit(0);
+    }
+    close(sv[1]);
+
+    const char *req = "gethostbyname 0 1.2.3.4 2";
+    write(sv[0], req, strlen(req) + 1);
+
+    unsigned char r[512];
+    int n = 0, got;
+    while ((got = (int)read(sv[0], r + n, sizeof r - (size_t)n)) > 0)
+        n += got;
+    close(sv[0]);
+    waitpid(p, NULL, 0);
+
+    ok("the hostent reply opens with 222", n >= 4 && !memcmp(r, "222 ", 4),
+       n >= 4 ? (char[]){ r[0], r[1], r[2], r[3], 0 } : "nothing");
+    if (n < 4)
+        return;
+
+    int off = 4;
+    unsigned nlen = rd32be(r + off);
+    off += 4;
+    /* The client uses these bytes as a C string, so the NUL has to be IN the
+     * length — netd sends strlen+1 and this must match. */
+    ok("the name carries its NUL", nlen == strlen("1.2.3.4") + 1, NULL);
+    ok("the name is the one asked for",
+       nlen && !memcmp(r + off, "1.2.3.4", nlen - 1) && r[off + nlen - 1] == 0,
+       NULL);
+    off += (int)nlen;
+
+    ok("the alias list is empty and terminated", rd32be(r + off) == 0, NULL);
+    off += 4;
+
+    ok("the family is AF_INET", (int)rd32be(r + off) == AF_INET, NULL);
+    off += 4;
+    ok("h_length is 4", rd32be(r + off) == 4, NULL);
+    off += 4;
+
+    ok("one address, announced at h_length", rd32be(r + off) == 4, NULL);
+    off += 4;
+    ok("a literal address is NOT sent to a nameserver",
+       r[off] == 1 && r[off + 1] == 2 && r[off + 2] == 3 && r[off + 3] == 4,
+       NULL);
+    off += 4;
+
+    ok("the address list is terminated by a zero length",
+       rd32be(r + off) == 0, NULL);
+    off += 4;
+    ok("and nothing follows it", off == n, NULL);
+}
+
+/* Failure has the same shape as getaddrinfo's, because the client reads it
+ * with the same four-then-four dance. */
+static void check_serve_hostent_failure(void)
+{
+    const char *cases[] = {
+        "gethostbyname 0 ^ 2",          /* no host */
+        "gethostbyname 0 spotify.com 10", /* AF_INET6: no AAAA here */
+    };
+    for (unsigned c = 0; c < sizeof cases / sizeof *cases; c++) {
+        int sv[2];
+        if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
+            return;
+        pid_t p = fork();
+        if (p == 0) {
+            close(sv[0]);
+            dnsproxy_serve(sv[1]);
+            close(sv[1]);
+            _exit(0);
+        }
+        close(sv[1]);
+        write(sv[0], cases[c], strlen(cases[c]) + 1);
+
+        unsigned char r[64];
+        int n = 0, got;
+        while ((got = (int)read(sv[0], r + n, sizeof r - (size_t)n)) > 0)
+            n += got;
+        close(sv[0]);
+        waitpid(p, NULL, 0);
+
+        ok("a refused gethostbyname answers a code that is not 222",
+           n >= 4 && memcmp(r, "222 ", 4), cases[c]);
+        ok("and eight bytes in total, or the caller blocks in fread",
+           n == 8, cases[c]);
+    }
+}
+
 int main(void)
 {
     check_ai_wire();
@@ -337,6 +463,9 @@ int main(void)
     check_gai_parse();
     check_serve_literal();
     check_serve_failure();
+    check_ghbn_parse();
+    check_serve_hostent();
+    check_serve_hostent_failure();
 
     printf("\n%s\n", failures ? "FAILURES" : "all good");
     return failures ? 1 : 0;
