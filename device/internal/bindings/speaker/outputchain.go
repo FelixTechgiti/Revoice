@@ -24,6 +24,14 @@ type chainState struct {
 	mu    sync.Mutex
 	chain *outchain.Chain
 
+	// cfg is the last parameter set the controller pushed, held UNRESOLVED.
+	//
+	// The chain runs cfg.ForJack(plug position), and the plug position moves
+	// on its own — so the pushed set has to be kept to re-resolve against,
+	// and holding only the resolved one would make an unplug irreversible.
+	cfg     outchain.Params
+	haveCfg bool
+
 	// mono is the de-interleaved working buffer, and stereoOut is where a
 	// processed period is assembled. Both are owned by the ALSA goroutine.
 	mono      []float64
@@ -48,9 +56,46 @@ type chainState struct {
 // Safe to call from the control plane at any time: parameter changes are
 // crossfaded by outchain.Chain rather than applied at a period boundary, so
 // this cannot click however often the controller pushes.
+//
+// Takes the pushed set UNRESOLVED and resolves it here, because half the
+// inputs are not the controller's: the plug position is read off the jack and
+// changes without any config push (#231).
 func (p *PcmSpeaker) SetOutputChain(params outchain.Params) {
 	p.oc.mu.Lock()
+	p.oc.cfg = params
+	p.oc.haveCfg = true
+	p.oc.mu.Unlock()
+	p.applyOutputChainParams()
+}
+
+// applyOutputChainParams resolves the pushed parameters against the current
+// plug position and hands the result to the chain. The single place the chain
+// is given parameters, so resolution cannot be skipped on one path and applied
+// on the other.
+//
+// Reached from two directions — SetOutputChain when the controller pushes, and
+// SetJackRouting when a plug moves. A no-op until the controller has pushed
+// once, and cheap when the resolved set has not moved: outchain.Chain compares
+// before it crossfades, so a jack transition on a device with the bypass off
+// costs one comparison.
+//
+// SetJackRouting is also what covers a device BOOTED with a cable in, because
+// jack.Watch dispatches the state it starts in rather than only transitions.
+func (p *PcmSpeaker) applyOutputChainParams() {
+	// Read the plug position OUTSIDE the chain lock: SetJackRouting holds
+	// jackMu around its own write and calls in here afterwards, and taking
+	// the two in different orders on different paths is how a deadlock gets
+	// built.
+	p.jackMu.Lock()
+	inserted := p.jackKnown && p.jackInserted
+	p.jackMu.Unlock()
+
+	p.oc.mu.Lock()
 	defer p.oc.mu.Unlock()
+	if !p.oc.haveCfg {
+		return
+	}
+	params := p.oc.cfg.ForJack(inserted)
 	if p.oc.chain == nil {
 		p.oc.chain = outchain.NewChain(sampleRate, params)
 		return

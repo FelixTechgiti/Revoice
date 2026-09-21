@@ -21,6 +21,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/wilbowes/EchoMuse/internal/airplay"
 	"github.com/wilbowes/EchoMuse/internal/bindings/als"
+	"github.com/wilbowes/EchoMuse/internal/bindings/jack"
 	"github.com/wilbowes/EchoMuse/internal/bootlog"
 	"github.com/wilbowes/EchoMuse/internal/clock"
 	"github.com/wilbowes/EchoMuse/internal/config"
@@ -1416,6 +1417,22 @@ func capabilities() []string {
 		"endpoint_restart"}
 	if als.Present() {
 		caps = append(caps, "ambient_light")
+	}
+	// "jack_detect": this device can tell whether something is plugged into
+	// the headphone jack. Conditional like ambient_light and for the same
+	// reason — it is a property of the BOARD, not of the firmware, and
+	// jack.Inserted() answers "not inserted" for hardware that is simply
+	// absent, so nothing downstream can tell the two apart from the value.
+	//
+	// It is what gates the bass-guard-on-jack bypass (#231), which needs
+	// BOTH this and output_chain: knowing the plug position is useless
+	// without running the chain, and running the chain is useless without
+	// knowing the plug position. The controller can never supply the second
+	// half itself — no device reports the plug position to it — so on
+	// firmware missing either, the setting is offered disabled rather than
+	// saved into a key nothing reads.
+	if jack.Present() {
+		caps = append(caps, "jack_detect")
 	}
 	return caps
 }
