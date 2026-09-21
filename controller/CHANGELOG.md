@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.59.1-fx.1
+
+### Der Updates-Reiter hat das ganze Dashboard mitgenommen
+
+**Mein Fehler in 2.59.0-fx.1, und ein ganz dummer.** Die Diagnose-Überschrift
+im emOS-Abschnitt griff auf eine Formatvorlage zu, die es an dieser Stelle
+nicht gibt. Das ist kein falsch aussehender Kasten, sondern ein Absturz beim
+Zeichnen — und React nimmt dabei die gesamte Seite mit, nicht nur den einen
+Abschnitt. Wer auf „Updates" getippt hat, sah nichts mehr.
+
+Behoben, und zwei Dinge dazu, damit es nicht noch einmal auf diesem Weg
+passiert:
+
+- **Eine Prüfung fängt diese Fehlerart jetzt ab.** Sie geht die Datei nach
+  Namen durch, die an der Stelle, an der sie benutzt werden, gar nicht
+  existieren — genau das war hier der Fall, und keine der bestehenden
+  Prüfungen konnte es sehen, weil derselbe Name in drei anderen Bereichen
+  sehr wohl existiert.
+- **Der Updates-Reiter wird beim Ansehen der Oberfläche jetzt mitfotografiert.**
+  Bisher hat das Werkzeug dafür diesen Reiter nie geöffnet.
+
 ## 2.59.0-fx.1
 
 ### Der emOS-Abschnitt sagt jetzt, warum Spotify oder AirPlay nicht geht
