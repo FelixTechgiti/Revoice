@@ -12,6 +12,42 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.53.0-fx.1
+
+### Das Gerät sagt jetzt, welches emOS es gebootet hat
+
+**Wenn du noch auf 2.51.0-fx.1 oder älter bist, hol dir diese Fassung statt
+2.52.0-fx.1** — sie enthält alles aus 2.52.0 und spart dir einen zweiten
+Durchlauf.
+
+Bisher stand die emOS-Version des Geräts nur im Updates-Reiter, und der
+Controller musste sie über eine Shell-Runde von etwa 26 Sekunden erfragen.
+Für einen Reiter, den du absichtlich öffnest, ist das in Ordnung; für eine
+Liste von Geräten ist es unmöglich. Also konnte an keiner Stelle stehen,
+dass ein emOS-Update offen ist, und ein Bestand mit veralteten Geräten sah
+aus wie einer ohne offene Updates.
+
+Die Firmware meldet die Version jetzt beim Anmelden mit. Sie steht in
+`/etc/os-release`, die das Gerät ohnehin schon liest, um zu bestimmen, ob es
+unter emOS oder FireOS läuft — es kostet also eine Zeile mehr und keinen
+zusätzlichen Zugriff.
+
+Unter FireOS wird nichts gemeldet, weil es dort nichts zu melden gibt.
+
+### Was du tun musst
+
+Nichts über das Update hinaus. Der Controller braucht 2.62.0-fx.1 oder neuer,
+um etwas damit anzufangen; mit einem älteren Controller schadet das Feld
+nichts, es wird schlicht ignoriert.
+
+### Ausserdem: alles aus 2.52.0-fx.1
+
+Der Lautsprecherschutz lässt sich für die Klinkenbuchse abschalten — der
+vollständige Text steht unten unter 2.52.0-fx.1. Kurz: praktisch alles unter
+160 Hz wird weggefiltert, und mit einem Stecker in der Buchse liegt der
+Treiber, den das schützt, gar nicht mehr im Signalweg. Die Einstellung ist
+ab Werk aus, und warum sie kein Automatismus ist, steht dort.
+
 ## 2.52.0-fx.1
 
 ### Der Lautsprecherschutz lässt sich für die Klinkenbuchse abschalten

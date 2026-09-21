@@ -1,5 +1,50 @@
 # Changelog
 
+## 2.62.0-fx.1
+
+### Eine Stelle, an der steht, ob etwas ansteht
+
+**Vier Dinge aktualisieren sich unabhängig voneinander — emOS, Firmware, die
+Streaming-Endpunkte und der Controller —, und bis jetzt waren nur zwei davon
+sichtbar.** Das war keine Wertung: sichtbar war, was der Controller ohnehin
+billig wusste. Die emOS-Version kostete eine Shell-Abfrage von etwa 26
+Sekunden pro Gerät, also konnte sie in keiner Liste stehen.
+
+In der Gerätezeile steht jetzt ein Zeichen für alle Spuren zusammen, und der
+Tooltip sagt, welche gemeint ist. In der Seitenleiste steht, wie viele Geräte
+etwas offen haben.
+
+**Drei Zustände, nicht zwei**, und das ist der Teil, auf den es ankommt: neben
+„Update verfügbar" und „aktuell" gibt es „konnte nicht geprüft werden", mit
+einem eigenen Zeichen. Eine Zählung, die das Unbekannte zum Aktuellen schlägt,
+sagt dir, dass nichts ansteht, obwohl niemand nachgesehen hat — und genau so
+lief ein Gerät hier tagelang auf einem emOS, das keine Namen auflösen konnte.
+
+Für die emOS-Spur brauchst du Firmware 2.53.0-fx.1. Ohne sie steht dort
+„unbekannt" — die richtige Antwort, und keine beruhigende.
+
+### Der wöchentliche Upstream-Abgleich
+
+Diese Fassung bringt ausserdem 61 Commits aus dem Upstream-Projekt mit. Zwei
+davon merkst du unmittelbar:
+
+- **Die Wake-Empfindlichkeit hatte ein Ende, das nie auslösen konnte.** Der
+  strengste Wert des Reglers ist jetzt bei 0,975 gedeckelt, und ein höherer
+  gespeicherter Wert wird beim Update einmalig darauf gesenkt. Wenn dein Gerät
+  auf das Weckwort nicht reagiert hat, kann das der Grund gewesen sein.
+- **Der Barge-Regler läuft jetzt in dieselbe Richtung wie die
+  Empfindlichkeit** — links genau, rechts bereitwillig.
+
+Dazu Verbesserungen am Einrichtungsassistenten (ein emOS-Boot-Image wird nicht
+mehr mit Magisk gepatcht, ein bekanntes Gerät lässt sich ohne Löschen neu
+einrichten), an der WiFi-Konfiguration und an der Anzeige des Kernels pro
+Gerät. Die vollständige Liste steht im Vergleich zwischen den beiden Tags.
+
+### Was du tun musst
+
+Nichts ausser dem Update. Die Datenbank wird beim Start auf Schema 25
+gehoben; das passiert von selbst.
+
 ## 2.61.0-fx.1
 
 ### Der Schalter für den Lautsprecherschutz an der Klinkenbuchse
