@@ -63,6 +63,12 @@ type Device struct {
 	LimiterRelease   float64
 	BassGuardEnabled bool
 	BassGuardDb      float64
+	// BassGuardJackBypass turns the bass guard off while a plug is in the
+	// headphone jack — see outchain.Params.GuardBypassOnJack for why it is a
+	// setting rather than automatic behaviour. Device-only: the controller
+	// is never told the plug position, so its own copy of the chain cannot
+	// implement this and does not read the key.
+	BassGuardJackBypass bool
 
 	// OwwOnDevice selects on-device wake word scoring: "off", "shadow" or
 	// "on".
@@ -260,6 +266,10 @@ func (d *Device) loadDefaults() {
 	d.LimiterRelease = envFloat("LIMITER_RELEASE", 150)
 	d.BassGuardEnabled = envBool("BASS_GUARD_ENABLED", true)
 	d.BassGuardDb = envFloat("BASS_GUARD_DB", -30)
+	// Default OFF, and deliberately not mirrored from anything: the
+	// controller's DEFAULT_DEVICE_CONFIG has it false too, for the reason at
+	// outchain.Params.GuardBypassOnJack.
+	d.BassGuardJackBypass = envBool("BASS_GUARD_JACK_BYPASS", false)
 	d.AdcDigitalGain = envInt("ADC_DIGITAL_GAIN", 88)
 	d.AdcMicpga = envInt("ADC_MICPGA", 40)
 	d.MicGainDb = clampMicGainDb(envInt("MIC_GAIN_DB", 24))
@@ -361,6 +371,9 @@ func (d *Device) Apply(msg ConfigMessage) {
 	if msg.BassGuardDb != nil {
 		d.BassGuardDb = *msg.BassGuardDb
 	}
+	if msg.BassGuardJackBypass != nil {
+		d.BassGuardJackBypass = *msg.BassGuardJackBypass
+	}
 	if msg.StartupVolume > 0 {
 		d.StartupVolume = msg.StartupVolume
 	}
@@ -443,6 +456,9 @@ type OutputChainConfig struct {
 	LimiterRelease   float64
 	BassGuardEnabled bool
 	BassGuardDb      float64
+	// Resolved against the plug position by the speaker, not here — this
+	// struct is what the controller pushed, and the jack is not its business.
+	BassGuardJackBypass bool
 }
 
 // OutputChain returns the current output-chain settings.
@@ -455,13 +471,14 @@ func (d *Device) OutputChain() OutputChainConfig {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return OutputChainConfig{
-		EqBands:          append([]float64(nil), d.EqBands...),
-		EqLoudness:       d.EqLoudness,
-		LimiterEnabled:   d.LimiterEnabled,
-		LimiterThreshold: d.LimiterThreshold,
-		LimiterRelease:   d.LimiterRelease,
-		BassGuardEnabled: d.BassGuardEnabled,
-		BassGuardDb:      d.BassGuardDb,
+		EqBands:             append([]float64(nil), d.EqBands...),
+		EqLoudness:          d.EqLoudness,
+		LimiterEnabled:      d.LimiterEnabled,
+		LimiterThreshold:    d.LimiterThreshold,
+		LimiterRelease:      d.LimiterRelease,
+		BassGuardEnabled:    d.BassGuardEnabled,
+		BassGuardDb:         d.BassGuardDb,
+		BassGuardJackBypass: d.BassGuardJackBypass,
 	}
 }
 
@@ -613,28 +630,32 @@ type ConfigMessage struct {
 	// every band and for the limiter threshold, and false is legitimate
 	// for both toggles, so the usual "non-zero means set" rule cannot
 	// distinguish "set to zero" from "absent" for any of them.
-	EqBands            []float64 `json:"eqBands,omitempty"`
-	EqLoudness         *bool     `json:"eqLoudness,omitempty"`
-	LimiterEnabled     *bool     `json:"limiterEnabled,omitempty"`
-	LimiterThreshold   *float64  `json:"limiterThreshold,omitempty"`
-	LimiterRelease     *float64  `json:"limiterRelease,omitempty"`
-	BassGuardEnabled   *bool     `json:"bassGuardEnabled,omitempty"`
-	BassGuardDb        *float64  `json:"bassGuardDb,omitempty"`
-	BeamAngle          *float64  `json:"beamAngle,omitempty"`
-	BeamformingEnabled *bool     `json:"beamformingEnabled,omitempty"`
-	HasBeamforming     bool      `json:"hasBeamforming,omitempty"`
-	AgcEnabled         *bool     `json:"agcEnabled,omitempty"`
-	AecEnabled         *bool     `json:"aecEnabled,omitempty"`
-	AecDelayMs         *int      `json:"aecDelayMs,omitempty"`
-	AecTailMs          int       `json:"aecTailMs,omitempty"`
-	AecRefSource       string    `json:"aecRefSource,omitempty"`
-	BleProxyEnabled    *bool     `json:"bleProxyEnabled,omitempty"`
-	SendspinEnabled    *bool     `json:"sendspinEnabled,omitempty"`
-	SpotifyEnabled     *bool     `json:"spotifyEnabled,omitempty"`
-	SpotifyName        string    `json:"spotifyName,omitempty"`
-	AirplayEnabled     *bool     `json:"airplayEnabled,omitempty"`
-	Airplay2Enabled    *bool     `json:"airplay2Enabled,omitempty"`
-	AirplayName        string    `json:"airplayName,omitempty"`
+	EqBands          []float64 `json:"eqBands,omitempty"`
+	EqLoudness       *bool     `json:"eqLoudness,omitempty"`
+	LimiterEnabled   *bool     `json:"limiterEnabled,omitempty"`
+	LimiterThreshold *float64  `json:"limiterThreshold,omitempty"`
+	LimiterRelease   *float64  `json:"limiterRelease,omitempty"`
+	BassGuardEnabled *bool     `json:"bassGuardEnabled,omitempty"`
+	BassGuardDb      *float64  `json:"bassGuardDb,omitempty"`
+	// A pointer like every other bool here: false is the DEFAULT and the
+	// meaningful value to be able to send back, so `omitempty` on a plain
+	// bool would make turning it off indistinguishable from not sending it.
+	BassGuardJackBypass *bool    `json:"bassGuardJackBypass,omitempty"`
+	BeamAngle           *float64 `json:"beamAngle,omitempty"`
+	BeamformingEnabled  *bool    `json:"beamformingEnabled,omitempty"`
+	HasBeamforming      bool     `json:"hasBeamforming,omitempty"`
+	AgcEnabled          *bool    `json:"agcEnabled,omitempty"`
+	AecEnabled          *bool    `json:"aecEnabled,omitempty"`
+	AecDelayMs          *int     `json:"aecDelayMs,omitempty"`
+	AecTailMs           int      `json:"aecTailMs,omitempty"`
+	AecRefSource        string   `json:"aecRefSource,omitempty"`
+	BleProxyEnabled     *bool    `json:"bleProxyEnabled,omitempty"`
+	SendspinEnabled     *bool    `json:"sendspinEnabled,omitempty"`
+	SpotifyEnabled      *bool    `json:"spotifyEnabled,omitempty"`
+	SpotifyName         string   `json:"spotifyName,omitempty"`
+	AirplayEnabled      *bool    `json:"airplayEnabled,omitempty"`
+	Airplay2Enabled     *bool    `json:"airplay2Enabled,omitempty"`
+	AirplayName         string   `json:"airplayName,omitempty"`
 	// Pointer, no omitempty: false is a meaningful value here and a plain
 	// bool would make "turn it off" indistinguishable from "not mentioned".
 	AirplayVolumeControl *bool `json:"airplayVolumeControl"`

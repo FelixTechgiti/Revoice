@@ -1321,6 +1321,7 @@ func applyOutputChainConfig(pcmSpeaker *speaker.PcmSpeaker) {
 		LimiterReleaseMS:   c.LimiterRelease,
 		GuardEnabled:       c.BassGuardEnabled,
 		GuardDB:            c.BassGuardDb,
+		GuardBypassOnJack:  c.BassGuardJackBypass,
 	})
 }
 

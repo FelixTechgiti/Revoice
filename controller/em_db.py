@@ -347,6 +347,20 @@ DEFAULT_DEVICE_CONFIG = {
     # deliver, which is what makes the midrange clean — see em_mbc.
     "bassGuardEnabled": True,
     "bassGuardDb":      -30.0,
+    # Turn the bass guard off while a plug is in the headphone jack (#231).
+    # Device-side only: the controller is never told the plug position, so
+    # its own copy of the chain cannot implement this and does not read the
+    # key — the dashboard offers it only for firmware announcing BOTH
+    # output_chain and jack_detect.
+    #
+    # DEFAULT FALSE, which is the whole of the caution. The guard is Amazon's
+    # voicing for the 1.5" internal driver and a plug takes that driver out of
+    # the path physically — but device/CLAUDE.md records Ext_Speaker_Amp_Switch
+    # observed Off while the internal speaker was audibly playing, untested
+    # since the jack gain fix. If it does not gate the internal driver, an
+    # automatic bypass would feed unguarded bass to a 1.5" driver on every
+    # device in the fleet on the strength of an untested assumption.
+    "bassGuardJackBypass": False,
     "limiterEnabled":   True,
     "limiterThreshold": -1.0,
     "limiterRelease":   150,

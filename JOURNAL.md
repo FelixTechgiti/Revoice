@@ -2785,59 +2785,6 @@ transcripts; `{msg.text!r}` is quoted and `_QUOTED` already covers it.
 
 ---
 
-## 2026-09-20 — The first emOS reflash over the network, and the three walls in front of it
-
-**It worked, on hardware: `G090L91180250AN1` went from emOS 0.5.0-fx.1 to
-0.6.0-fx.1 with nobody in the room, no cable and no TWRP.** The write verified
-against the image's own md5 at 23:13:08, the device rebooted and registered
-again 53 seconds later, still on firmware v2.51.0-fx.1 and with every
-capability it had before. That is the first time the path built for #156 has
-run end to end.
-
-It took three attempts and two fixes to get there, and **all three walls were
-the same shape**: a tool whose NAME resolves, answering as something other
-than what the command was written for. emOS mounts Amazon's `/system`, so
-every bare `dd`, `md5sum`, `base64` and `reboot` on the PATH is Amazon's
-toolbox binary. The tool is present, it answers, and it refuses in its own
-way.
-
-| attempt | where it stopped | what it actually was |
-|---|---|---|
-| 20:55, 21:18 | read, at offset 0 | `printf %s "$__R"` with 1.37MB of base64 in it — past `MAX_ARG_STRLEN` for a `printf` that is a binary, so md5sum weighed an empty pipe (#238) |
-| 22:07 | write, "does not read back as what was written" | toolbox `dd` rejecting `conv=fsync`, in **13 milliseconds** for 6.9MB (#241) |
-| 23:13 | — | verified, rebooted, back in 53s |
-
-**The measurement that named the second one was a pair of timestamps, not a
-log line.** Nothing in the output said anything was wrong; the shell session
-opened at 22:07:01.922 and closed at .935, and 6.9MB does not move in thirteen
-milliseconds. The read-back next to it took 369ms, which is exactly what
-reading and digesting 6.9MB off this eMMC costs — so that half was working and
-honestly reporting a partition that had not changed. **Two durations, one of
-them plausible, is what separated "the write is broken" from "the check is
-broken".**
-
-Three things came out of it that outlive the flag, and they are in
-`controller/CLAUDE.md` in full:
-
-- **The device said what was wrong and nobody read it.** `flash_cmd` ends
-  `2>&1` precisely so dd's account comes back, and the call site discarded the
-  return value.
-- **`_shell_run` ends a command after five seconds of SILENCE**, whatever
-  timeout it was given. Right for everything else here; wrong for a `dd` that
-  speaks only when it is finished. The first write that actually ran would
-  have returned an empty string mid-write.
-- **A failed verification now puts `boot-good.img` back.** emOS's rollback
-  runs from the init INSIDE the image being replaced, so a partition holding
-  half of something never reaches the code that would undo it — and at the
-  moment the check fails, the device is still up, still reachable and still
-  holding the good image.
-
-**What is still not answered:** librespot on that device goes on failing with
-`could not initialize spirc: Service unavailable { client error (Connect) }`
-every minute, which is the fault 0.6.0's DNS proxy exists to end. Either the
-running image is not what it should be or the proxy does not cover this case,
-and the two want different next steps — see the follow-up.
-
 ## 2026-09-14 — we ship busybox, and stop overwriting the stock boot image
 
 Two dependencies emOS should never have had, and both were invisible because
@@ -3464,3 +3411,136 @@ their `ci.yml` clashes on their branches; #565 and #552 have change requests
 out; every open issue now carries labels (new `area:emos`, `area:porting`); and
 all six release pages were stripped of the generated PR list that credited
 unrelated work.
+
+## 2026-09-20 — The first emOS reflash over the network, and the three walls in front of it
+
+**It worked, on hardware: `G090L91180250AN1` went from emOS 0.5.0-fx.1 to
+0.6.0-fx.1 with nobody in the room, no cable and no TWRP.** The write verified
+against the image's own md5 at 23:13:08, the device rebooted and registered
+again 53 seconds later, still on firmware v2.51.0-fx.1 and with every
+capability it had before. That is the first time the path built for #156 has
+run end to end.
+
+It took three attempts and two fixes to get there, and **all three walls were
+the same shape**: a tool whose NAME resolves, answering as something other
+than what the command was written for. emOS mounts Amazon's `/system`, so
+every bare `dd`, `md5sum`, `base64` and `reboot` on the PATH is Amazon's
+toolbox binary. The tool is present, it answers, and it refuses in its own
+way.
+
+| attempt | where it stopped | what it actually was |
+|---|---|---|
+| 20:55, 21:18 | read, at offset 0 | `printf %s "$__R"` with 1.37MB of base64 in it — past `MAX_ARG_STRLEN` for a `printf` that is a binary, so md5sum weighed an empty pipe (#238) |
+| 22:07 | write, "does not read back as what was written" | toolbox `dd` rejecting `conv=fsync`, in **13 milliseconds** for 6.9MB (#241) |
+| 23:13 | — | verified, rebooted, back in 53s |
+
+**The measurement that named the second one was a pair of timestamps, not a
+log line.** Nothing in the output said anything was wrong; the shell session
+opened at 22:07:01.922 and closed at .935, and 6.9MB does not move in thirteen
+milliseconds. The read-back next to it took 369ms, which is exactly what
+reading and digesting 6.9MB off this eMMC costs — so that half was working and
+honestly reporting a partition that had not changed. **Two durations, one of
+them plausible, is what separated "the write is broken" from "the check is
+broken".**
+
+Three things came out of it that outlive the flag, and they are in
+`controller/CLAUDE.md` in full:
+
+- **The device said what was wrong and nobody read it.** `flash_cmd` ends
+  `2>&1` precisely so dd's account comes back, and the call site discarded the
+  return value.
+- **`_shell_run` ends a command after five seconds of SILENCE**, whatever
+  timeout it was given. Right for everything else here; wrong for a `dd` that
+  speaks only when it is finished. The first write that actually ran would
+  have returned an empty string mid-write.
+- **A failed verification now puts `boot-good.img` back.** emOS's rollback
+  runs from the init INSIDE the image being replaced, so a partition holding
+  half of something never reaches the code that would undo it — and at the
+  moment the check fails, the device is still up, still reachable and still
+  holding the good image.
+
+**What is still not answered:** librespot on that device goes on failing with
+`could not initialize spirc: Service unavailable { client error (Connect) }`
+every minute, which is the fault 0.6.0's DNS proxy exists to end. Either the
+running image is not what it should be or the proxy does not cover this case,
+and the two want different next steps — see the follow-up.
+
+
+## 2026-09-21 — The output chain never knew about the jack, and the fix is a setting because of one untested observation
+
+**"Irgendwie hört sich der Sound nicht so geil an — er hat keinen dynamischen
+Umfang"**, said of a good amplifier fed from the Echo's headphone jack. It was
+accurate to within a decibel, and `grep -rni jack` over
+`device/internal/outchain/`, `em_outchain.py`, `em_mbc.py` and `em_eq.py`
+returned nothing: the chain had never known whether a plug was in.
+
+The measurements are on #231 and the summary is that the bass guard accounts
+for the whole of it. Driven on a host with the reporting device's live config —
+flat EQ, loudness on, guard at −30dB, limiter at −1dB — against the same chain
+with everything off, at a settled −12dBFS sine:
+
+| Hz | whole chain | bass guard alone |
+|---:|---:|---:|
+| 31.5 | −28.62 dB | −28.63 |
+| 63 | −19.04 | −19.04 |
+| 160 | −1.86 | −1.90 |
+| 4000 | +2.87 | +0.00 (loudness) |
+
+Everything below ~160Hz gone, the limiter contributing nothing at that level,
+and loudness tilting ~3dB into the presence region. "Nur Mitteltöne" is an
+accurate description of that curve rather than a vague complaint.
+
+**It is a purpose bug rather than a taste one.** `em_mbc.py` says the law is
+"from stock" and `bassguard.go` calls the crossover "a measured value off the
+hardware": it is protection and voicing for a specific 1.5" driver. With a plug
+in the jack, that driver is not in the signal path — the jack's own switch
+contacts divert the signal, which this project has recorded as physical rather
+than mixer-controlled since 2026-08-09. A guard protecting a load that is not
+connected is not conservative, it is a low-cut.
+
+**So why is the fix a setting rather than automatic behaviour?** Because
+`device/CLAUDE.md` records `Ext_Speaker_Amp_Switch` observed `Off` while the
+internal speaker was audibly playing, and that observation has not been
+retested since the jack gain was fixed. If the control does not gate the
+internal driver, then with a plug in the Dot is still driving its own 1.5"
+speaker — and an automatic bypass would remove that speaker's bass protection
+on every device in the fleet, on the strength of an assumption nobody has
+checked. A default-off key changes nothing for anybody who does not turn it on,
+and hands the lever to the one person whose measurements say they need it.
+
+**Turning it on is also most of the retest**, which is the part worth
+remembering: with the setting on, a plug in, the external speakers switched
+OFF and music playing, bass audible from the Dot's own driver is the answer.
+The dashboard's own note says so, so the experiment is in the hands of somebody
+standing next to the hardware rather than in an issue.
+
+Three things in the implementation that are not obvious:
+
+- **The resolution runs on TWO paths and neither is sufficient alone.**
+  `PcmSpeaker.applyOutputChainParams` is reached from `SetOutputChain` when the
+  controller pushes and from `SetJackRouting` when a plug moves — because
+  nothing pushes config when a plug moves, and nothing re-reads the plug when
+  config is pushed. Both call sites are `//go:build server`, so a host
+  `go test ./...` compiles neither; the wiring is pinned by a source guard,
+  verified by reintroducing each fault and watching it go red.
+- **An UNKNOWN plug position keeps the guard ON.** Before `jack.Watch` has
+  dispatched there is no answer, and the conservative direction is the one
+  `jack.Inserted()` already takes for absent hardware.
+- **The controller cannot implement this and deliberately does not try.** No
+  device reports its plug position to the controller, so the controller-side
+  chain — still live for firmware that does not announce `output_chain` —
+  could never honour the key however faithfully it were mirrored. The absence
+  of a mirror is therefore pinned by a test, because the obvious later "fix"
+  is to add one, and a controller applying a bypass from a plug position it
+  invented is worse than the bug.
+
+`jack_detect` is a new capability, announced only where the switch is readable
+(the `ambient_light` shape). The dashboard needs it together with
+`output_chain` and shows the toggle disabled with the reason otherwise: either
+half alone is a control that saves into a key nothing reads.
+
+**Not verified on hardware.** Everything above the device boundary is in CI —
+the resolution grid, the limiter being left alone, idempotence, the wiring
+guards, and the controller half. What no test here can answer is whether
+`Ext_Speaker_Amp_Switch` gates the internal driver, and that is precisely the
+question the default-off choice exists to avoid having to answer blind.

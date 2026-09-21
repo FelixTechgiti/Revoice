@@ -39,9 +39,8 @@ package outchain
 // magnitude better than the ~4s the controller-side chain costs.
 const fadeMS = 40.0
 
-// Params is the whole chain's settable state — the seven config keys that
-// already ride the config push and are, until this lands, ignored by the
-// device.
+// Params is the whole chain's settable state — seven config keys describing
+// the audio, plus one describing when to bypass part of it.
 type Params struct {
 	Bands              []float64
 	Loudness           bool
@@ -50,6 +49,57 @@ type Params struct {
 	LimiterReleaseMS   float64
 	GuardEnabled       bool
 	GuardDB            float64
+
+	// GuardBypassOnJack turns the bass guard off while a plug is in the
+	// headphone jack. Policy rather than audio: it is resolved by ForJack
+	// before any of this reaches a filter.
+	//
+	// The guard is Amazon's voicing for the 1.5" internal driver — it removes
+	// low frequencies that driver cannot deliver, measured at -28.6dB at
+	// 31.5Hz and -19.0dB at 63Hz with the shipped -30dB setting (#231). With
+	// a plug in, that driver is not in the signal path: the jack's switch
+	// contacts divert the signal physically, which internal/bindings/jack
+	// records as measured rather than assumed. A protection stage guarding a
+	// load that is not connected is just a low-cut, and into a real amplifier
+	// it is the difference between a system and "nur Mitteltöne".
+	//
+	// DEFAULT OFF, and that is the considered half. device/CLAUDE.md records
+	// Ext_Speaker_Amp_Switch observed Off while the internal speaker was
+	// audibly playing, and that observation has not been retested since the
+	// jack gain fix. If the control does not gate the internal driver, a
+	// device with a plug in is still feeding it — and bypassing the guard
+	// automatically would then send unguarded bass to a 1.5" driver on every
+	// device in the fleet, on the strength of an untested assumption. A
+	// setting costs the one user with a hi-fi one toggle and costs everybody
+	// else nothing.
+	//
+	// The limiter is deliberately NOT part of this. It measured as
+	// contributing nothing at -12dBFS and it is the only thing standing in
+	// front of the dashboard's +/-12dB faders.
+	GuardBypassOnJack bool
+}
+
+// ForJack resolves the pushed configuration against the plug position, and
+// returns what the chain should actually run.
+//
+// It clears GuardBypassOnJack on the way out, so everything a Chain ever sees
+// is already resolved and Equal is comparing audio against audio. Feeding
+// UNRESOLVED parameters to SetParams is therefore a bug rather than a
+// conservative choice: Equal ignores the policy field (see below), so a change
+// to the setting alone would be dropped. The single call site is
+// PcmSpeaker.SetOutputChain, which resolves on every push and again on every
+// jack transition.
+//
+// An UNKNOWN plug position is passed as false by that call site, which keeps
+// the guard on. That is the conservative direction and the same answer
+// jack.Inserted() gives for absent hardware: a device we know nothing about
+// behaves exactly as one with no jack always has.
+func (p Params) ForJack(inserted bool) Params {
+	if inserted && p.GuardBypassOnJack {
+		p.GuardEnabled = false
+	}
+	p.GuardBypassOnJack = false
+	return p
 }
 
 // Equal reports whether two parameter sets would produce identical audio, so
@@ -70,6 +120,10 @@ func (p Params) Equal(o Params) bool {
 		p.LimiterReleaseMS == o.LimiterReleaseMS &&
 		p.GuardEnabled == o.GuardEnabled &&
 		p.GuardDB == o.GuardDB
+	// GuardBypassOnJack is deliberately absent: it is policy, not audio, and
+	// ForJack has already turned it into a GuardEnabled above. Comparing it
+	// here would report a difference no listener can hear and buy a crossfade
+	// for it.
 }
 
 // stages is one complete signal path. Cloning one gives a second path with

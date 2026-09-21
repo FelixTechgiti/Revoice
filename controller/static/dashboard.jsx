@@ -2899,6 +2899,8 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                 triggerCapable={!device.connected || !!device.owwTriggerCapable}
                 mixCapable={!device.connected || !!device.audioMixCapable}
                 audioStateCapable={!device.connected || !!device.audioStateCapable}
+                jackBypassCapable={!device.connected
+                  || (!!device.outputChainCapable && !!device.jackDetectCapable)}
                 holdCapable={!device.connected || !!device.buttonHoldCapable}
                 sendspinCapable={!device.connected || !!device.sendspinCapable}
                 spotifyCapable={!device.connected || !!device.spotifyCapable}
@@ -9726,7 +9728,7 @@ const STAGE_MONO = "'DM Mono',monospace";
 // control sitting under a toggle that does not govern it would look fine and
 // be silently wrong.
 const CONFIG_SECTIONS = {
-  "playback": ["eqBands", "eqLoudness", "duckDb", "limiterEnabled", "limiterThreshold", "limiterRelease", "bassGuardEnabled", "bassGuardDb", "audioHoldoffMs"],
+  "playback": ["eqBands", "eqLoudness", "duckDb", "limiterEnabled", "limiterThreshold", "limiterRelease", "bassGuardEnabled", "bassGuardDb", "bassGuardJackBypass", "audioHoldoffMs"],
   "wakeword": ["owwModel", "owwThreshold", "owwSpeexNs", "bargeInEnabled", "bargeInThreshold", "wakeArbitrationMs", "owwOnDevice"],
   "microphones": ["adcMicpga", "adcDigitalGain", "micGainDb", "beamformingEnabled", "beamAngle", "aecEnabled", "aecDelayMs", "aecTailMs", "aecRefSource", "nsAsr", "saveUtterances"],
   "ring": ["ledScene", "ledListenColor", "ledThinkColor", "meterAttack", "meterDecay", "meterFloor", "meterGamma", "meterRef", "meterCurve"],
@@ -9875,6 +9877,7 @@ function onDeviceMode(config) {
 function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                             shadowCapable = true, mixCapable = true,
                             audioStateCapable = true,
+                            jackBypassCapable = true,
                             holdCapable = true, triggerCapable = true,
                             hwEchoRef = false, hwRefCapable = true,
                             sendspinCapable = true,
@@ -10196,6 +10199,15 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
           </div>
           <div style={{ marginTop: 8, fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
             {t('cfgBassGuardNote')}
+          </div>
+          <div style={{ ...inputStyle, marginTop: 12 }}>
+            <Toggle label={t('cfgJackBypass')} disabled={!jackBypassCapable}
+              sub={jackBypassCapable ? t('cfgJackBypassSub') : t('cfgNoJackBypass')}
+              value={config.bassGuardJackBypass ?? false}
+              onChange={v => set('bassGuardJackBypass', v)}/>
+          </div>
+          <div style={{ marginTop: 8, fontFamily: "'Instrument Sans',sans-serif", fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
+            {t('cfgJackBypassNote')}
           </div>
         </StageAdvanced>
       </Stage>

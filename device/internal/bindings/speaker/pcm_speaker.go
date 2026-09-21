@@ -349,6 +349,12 @@ func (p *PcmSpeaker) SetJackRouting(inserted bool) {
 	p.applyJackWrites(jackRouting(inserted))
 	log.Printf("[speaker] jack routing applied (%s)",
 		map[bool]string{true: "external", false: "internal"}[inserted])
+
+	// The output chain cares about the plug too, and only when the user has
+	// asked it to (#231): the bass guard protects a 1.5" driver the jack's
+	// switch contacts have taken out of the path. Re-resolved here rather
+	// than only on a config push, because nothing pushes when a plug moves.
+	p.applyOutputChainParams()
 }
 
 func (p *PcmSpeaker) applyJackWrites(ws []mixerWrite) {

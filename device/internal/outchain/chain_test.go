@@ -337,3 +337,105 @@ func TestParamsEqualCoversEveryField(t *testing.T) {
 		t.Error("Params.Equal says an identical copy differs")
 	}
 }
+
+// ── The jack bypass (#231) ───────────────────────────────────────────────────
+
+func jackParams() Params {
+	return Params{Bands: flatBands(), Loudness: false,
+		LimiterEnabled: true, LimiterThresholdDB: -1, LimiterReleaseMS: 150,
+		GuardEnabled: true, GuardDB: -30}
+}
+
+// The whole of the feature, in the four states it can be in. Table rather than
+// four functions because the point is the GRID: three of the four cells must
+// leave the guard exactly where the controller put it, and a change that
+// bypasses one cell too many is the harmful direction.
+func TestForJackBypassesTheGuardOnlyWhenAskedAndOnlyWithAPlugIn(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		bypass        bool
+		inserted      bool
+		wantGuardedOn bool
+	}{
+		{"default, nothing plugged in", false, false, true},
+		{"default, plug in", false, true, true},
+		{"bypass on, nothing plugged in", true, false, true},
+		{"bypass on, plug in", true, true, false},
+	} {
+		p := jackParams()
+		p.GuardBypassOnJack = tc.bypass
+		got := p.ForJack(tc.inserted)
+		if got.GuardEnabled != tc.wantGuardedOn {
+			t.Errorf("%s: GuardEnabled = %v, want %v",
+				tc.name, got.GuardEnabled, tc.wantGuardedOn)
+		}
+	}
+}
+
+// The limiter is the only thing standing in front of the dashboard's +/-12dB
+// faders, and the issue's own measurements say it contributes nothing to the
+// complaint. Bypassing it along with the guard would be the change that ships
+// unshaped audio into somebody's amplifier.
+func TestForJackLeavesEverythingButTheGuardAlone(t *testing.T) {
+	p := jackParams()
+	p.Bands = boostBands(4)
+	p.Loudness = true
+	p.GuardBypassOnJack = true
+
+	got := p.ForJack(true)
+	want := p
+	want.GuardEnabled = false
+	want.GuardBypassOnJack = false
+	if !got.Equal(want) || got.GuardDB != want.GuardDB {
+		t.Errorf("ForJack changed more than the guard:\n got %+v\nwant %+v", got, want)
+	}
+	if !got.Loudness || !got.LimiterEnabled ||
+		got.LimiterThresholdDB != p.LimiterThresholdDB ||
+		got.LimiterReleaseMS != p.LimiterReleaseMS {
+		t.Errorf("ForJack disturbed loudness or the limiter: %+v", got)
+	}
+	if got.GuardDB != p.GuardDB {
+		t.Error("ForJack changed GuardDB, so restoring the guard would restore it wrong")
+	}
+}
+
+// ForJack clears the policy field, so everything a Chain is ever handed is
+// already resolved. Without that, Equal — which deliberately ignores the field
+// — would be comparing a resolved set against an unresolved one and calling
+// two different chains identical.
+func TestForJackReturnsAResolvedSetWithNoPolicyLeftInIt(t *testing.T) {
+	for _, inserted := range []bool{false, true} {
+		p := jackParams()
+		p.GuardBypassOnJack = true
+		if got := p.ForJack(inserted); got.GuardBypassOnJack {
+			t.Errorf("inserted=%v: ForJack left the policy field set", inserted)
+		}
+	}
+}
+
+// Idempotence is what makes it safe to call on every push AND every jack
+// transition, which is exactly how the speaker uses it.
+func TestForJackIsIdempotent(t *testing.T) {
+	p := jackParams()
+	p.GuardBypassOnJack = true
+	once := p.ForJack(true)
+	twice := once.ForJack(true)
+	if !once.Equal(twice) {
+		t.Errorf("resolving twice differs:\n once %+v\ntwice %+v", once, twice)
+	}
+}
+
+// The counterpart to TestParamsEqualCoversEveryField, and the one exception to
+// it: GuardBypassOnJack is policy rather than audio. Pinned in its own test so
+// that adding it to Equal fails HERE, with the reason, rather than being read
+// as an oversight in the other one.
+func TestParamsEqualIgnoresThePolicyField(t *testing.T) {
+	a := jackParams()
+	b := jackParams()
+	b.GuardBypassOnJack = true
+	if !a.Equal(b) {
+		t.Error("Params.Equal compares GuardBypassOnJack — it is resolved by " +
+			"ForJack before the chain sees it, so comparing it buys a " +
+			"crossfade for a difference nobody can hear")
+	}
+}
