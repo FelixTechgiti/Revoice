@@ -12,6 +12,32 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.55.0-fx.1
+
+### Das Gerät sagt jetzt, ob es die Namensauflösung überhaupt laden konnte
+
+**Nur für emOS-Geräte, und nur eine Diagnose — es repariert nichts.** Wenn
+Spotify und AirPlay bei dir laufen, brauchst du diese Fassung nicht.
+
+Seit 2.54.0-fx.1 bringt der Controller eine kleine Bibliothek aufs Gerät, mit
+der Spotify und AirPlay unter emOS Namen auflösen können. Was bisher niemand
+sehen konnte: ob das Gerät sie **auch tatsächlich lädt**.
+
+Androids Programmlader darf eine Bibliothek ablehnen. Er schreibt dann eine
+Warnung, verwirft sie und startet das Programm trotzdem. Für alles, was von
+außen sichtbar ist, sieht das genauso aus wie ein Gerät, das die Datei nie
+bekommen hat: Der Endpunkt startet, findet keinen Namen, beendet sich, und
+versucht es eine Minute später wieder. Der Updates-Reiter meldet die ganze
+Zeit „Installiert", und das stimmt sogar — die Datei liegt da.
+
+Die Firmware fragt jetzt einmal direkt nach und schreibt die Antwort ins Log.
+Der Controller zeigt sie im Updates-Reiter als eigenen Zustand an:
+*Installiert, aber das Gerät konnte sie nicht laden*.
+
+**Was du davon hast:** Falls Spotify oder AirPlay nach dem Update von
+2.54.0-fx.1 weiterhin nicht gehen, steht ab jetzt im Log, woran es liegt —
+statt dass drei mögliche Ursachen ununterscheidbar bleiben.
+
 ## 2.54.0-fx.1
 
 ### Spotify Connect und AirPlay lösen auf emOS wieder Namen auf
