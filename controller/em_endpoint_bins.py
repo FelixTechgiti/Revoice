@@ -71,6 +71,15 @@ class Kind:
     turning the toggle on IS the ask, and it is the only signal that carries
     the user's intent for this device rather than for the store.
 
+    It may be None, and exactly one kind uses that: the resolver shim is
+    five kilobytes and is a PRECONDITION of both endpoints rather than one
+    of them, so gating it on either toggle would leave the other broken and
+    gating it on both would be a rule with no toggle behind it. What stands
+    in for the toggle there is the device's own answer — `resolver_status`
+    carries `needed`, and a device that says it does not need the file is
+    never sent it. That is a stronger gate than a setting, because it cannot
+    disagree with the device.
+
     `status_sub` is the key INSIDE `status_attr` that answers for this
     file, for a kind that shares another's status object. Sharing the
     attribute outright was wrong in both directions and neither showed up
@@ -106,7 +115,7 @@ class Kind:
                  "status_fallback")
 
     def __init__(self, key, filename, dest, capability, status_attr, label,
-                 source, config_key, in_release=True, status_sub=None,
+                 source, config_key=None, in_release=True, status_sub=None,
                  status_fallback=False):
         self.key         = key
         self.filename    = filename
@@ -206,6 +215,53 @@ KINDS: dict[str, Kind] = {
         source="device/shairport/build-ap2.sh",
         config_key="airplay2Enabled",
         status_sub="nqptp",
+    ),
+    # The getaddrinfo shim, and the reason it is a kind at all.
+    #
+    # On emOS, bionic's `getaddrinfo` resolves nothing and its
+    # `gethostbyname` resolves everything (#263) — so librespot and
+    # shairport-sync both die at startup on a name lookup, and every other
+    # panel reads healthy while they do it. The library answers getaddrinfo
+    # itself, over the call that works, and the firmware preloads it into the
+    # endpoints. emOS cannot be the place this is fixed: it ships only inside
+    # a boot image the user assembles, and this has to reach a device that is
+    # already running.
+    #
+    # **No toggle**, unlike every other kind here, and that is the one thing
+    # to understand before changing it. This is not an endpoint; it is what
+    # both endpoints stand on. Gating it on `spotifyEnabled` would leave
+    # AirPlay broken on a device that wanted only AirPlay, and there is no
+    # honest single key for "either". The gate is instead the device's own
+    # `needed`, which no setting can contradict — and it costs nothing to be
+    # generous with, because the file is five kilobytes against librespot's
+    # twenty megabytes.
+    "gaishim": Kind(
+        key="gaishim",
+        filename="gaishim.so",
+        dest="/data/local/bin/gaishim.so",
+        capability="gai_shim",
+        status_attr="resolver_status",
+        label="Name resolution shim (emOS)",
+        source="device/gaishim/build.sh",
+        # Published, like every other kind — and that carries an ORDERING
+        # COST that has to be paid deliberately, not discovered.
+        #
+        # `select()` refuses a release missing any wanted asset, so from this
+        # commit until an `endpoints-v*` release carrying gaishim.so exists,
+        # every EXISTING release is skipped and the automatic fetch is off
+        # for librespot and both shairport-syncs too. Installs from the
+        # dashboard are unaffected throughout, and binaries already on a
+        # device keep running; what pauses is only the automatic pickup of a
+        # NEW endpoint build.
+        #
+        # So cut an endpoints release as soon as this merges — the same shape
+        # as the add-on pin in the root CLAUDE.md, where the commit
+        # necessarily comes first and the only question is how long the gap
+        # lasts. The alternative, in_release=False, is refused by
+        # test_every_kind_is_published_so_none_is_hand_installed and rightly:
+        # a kind that is never published can only ever reach a device through
+        # somebody uploading a file, and "temporarily" is how that becomes
+        # permanent.
     ),
 }
 
@@ -411,6 +467,16 @@ def device_state(k: Kind, live, db_path: str | None = None) -> dict:
         status = "unknown"
     elif k.capability not in (getattr(live, "capabilities", None) or []):
         status = "unsupported"
+    elif (st or {}).get("needed") is False:
+        # The device has positively said it resolves names without help —
+        # a FireOS device, where netd answers. Not missing and not an error:
+        # installing the shim there would replace a full resolver with a
+        # deliberately small one to fix a fault that platform does not have.
+        #
+        # `is False` and not falsiness, because firmware that does not send
+        # the field at all has said nothing, and silence must fall through to
+        # the ordinary answer rather than read as a refusal.
+        status = "not_needed"
     elif st is None:
         # Absence means something different for a sub-kind. The device
         # reports the nested block only for an AirPlay 2 build, so a classic
@@ -447,6 +513,12 @@ def device_state(k: Kind, live, db_path: str | None = None) -> dict:
         # register-time flavour, so requiring "missing" would disable the
         # nqptp button for the whole session after somebody installed the
         # AirPlay 2 binary — exactly when they are about to click it.
+        # `not_needed` means opposite things for the two kinds that can
+        # produce it, so it appears on both sides of this. For a sub-kind it
+        # is a stale register-time flavour and the file should still install;
+        # for a kind the DEVICE said it does not need, it is the device's own
+        # answer about its own libc, and installing anyway is how a file
+        # nothing loads ends up on a disk with a success message behind it.
         "installable":   have is not None and (
             status in ("missing", "installed")
             or (k.status_sub is not None
@@ -491,6 +563,13 @@ def refuse_install(k: Kind, live, db_path: str | None = None) -> str | None:
     if stored(k, db_path) is None:
         return (f"no {k.filename} has been uploaded — build one with "
                 f"{k.source} and upload it first")
+    status = getattr(live, k.status_attr, None)
+    if k.status_sub:
+        status = (status or {}).get(k.status_sub)
+    if (status or {}).get("needed") is False:
+        return (f"this device resolves names without {k.filename} — it is "
+                f"running FireOS, where netd answers. Installing it would "
+                f"put a file here that nothing loads")
     return None
 
 
@@ -511,7 +590,11 @@ def install_needed(k: Kind, capabilities, effective: dict, status,
     Four ways of declining, each a rule from elsewhere in this tree:
 
       * the toggle is off — the user has not asked for this endpoint HERE.
-        The store being full is not an instruction to fill the fleet.
+        The store being full is not an instruction to fill the fleet. A kind
+        with no toggle (the resolver shim) skips this one and is gated by
+        the device's own `needed` instead.
+      * the device says it does not need this file — only the resolver shim
+        can say so, and only a FireOS device does.
       * the firmware does not announce the capability — a binary with nothing
         to exec it, which is what `refuse_install` already says by hand.
       * the shell said nothing we understand (`status is None`) — failure to
@@ -523,9 +606,14 @@ def install_needed(k: Kind, capabilities, effective: dict, status,
         rather than hashing it. Suggestive and never proof, and the
         alternative is re-pushing every binary on every connect for ever.
     """
-    if not (effective or {}).get(k.config_key):
+    # A kind with no toggle is gated by the device instead — see Kind's
+    # docstring. `needed is False` is the device saying it resolves names
+    # itself; silence is firmware that cannot say, and falls through.
+    if k.config_key is not None and not (effective or {}).get(k.config_key):
         return None
     if k.capability not in (capabilities or []):
+        return None
+    if (status or {}).get("needed") is False:
         return None
     have = stored(k, db_path)
     if have is None:

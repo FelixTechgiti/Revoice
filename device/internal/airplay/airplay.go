@@ -823,7 +823,15 @@ func (c *Client) session(ctx context.Context) error {
 	// and a classic one never opens it at all — so this is inert on the
 	// binary most devices run and load-bearing on the one that matters. See
 	// ShmDir: the point is that one resolver answers for both children.
-	cmd.Env = append(os.Environ(), ShmDirEnv+"="+ShmDir())
+	// Preloaded on emOS, where bionic's getaddrinfo resolves nothing (#263):
+	// an AirPlay 2 build reaches nqptp by name and a classic one resolves its
+	// own hostname, so both die at startup without it. Read per session for
+	// the reason the shm directory is written per session — the controller
+	// can install the library at any moment, and the next restart should pick
+	// it up rather than the next reboot.
+	res := endpoint.ResolverStatus()
+	endpoint.LogResolver(res)
+	cmd.Env = res.Env(append(os.Environ(), ShmDirEnv+"="+ShmDir()))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

@@ -731,3 +731,90 @@ def test_a_non_digest_is_not_stored_as_one():
     assert "md5" not in ebins.parse_stat("EMBIN:ok:12:" + "g" * 32)
     # Upper case is a digest, just spelled differently.
     assert ebins.parse_stat("EMBIN:ok:12:" + "A" * 32)["md5"] == "a" * 32
+
+
+# ─── The resolver shim ───────────────────────────────────────────────────────
+#
+# Its gate is not a setting. The three tests below are the whole of it, and
+# each covers a way of being wrong that is silent: a library installed where
+# nothing loads it, a library withheld from the device that needs it, and a
+# library pushed at a device whose resolver already works.
+
+def test_gaishim_dest_matches_the_device_constant():
+    """The path both halves compare against, with nothing to make them agree.
+
+    Same failure as the binaries above and quieter: a shared object installed
+    where the firmware does not preload it produces no error anywhere. The
+    endpoints simply go on failing every name lookup, which is the exact
+    symptom the file exists to end.
+    """
+    src = (REPO / "device/internal/endpoint/resolver.go").read_text()
+    m = re.search(r'const\s+ShimPath\s*=\s*"([^"]+)"', src)
+    assert m, "ShimPath constant not found in resolver.go"
+    assert ebins.KINDS["gaishim"].dest == m.group(1)
+
+
+def _shim_store(tmp_path):
+    """A store holding a shim of a known size, so install_needed gets past
+    "nothing has been uploaded" to the gate under test."""
+    (tmp_path / ebins.STORE_SUBDIR).mkdir(parents=True, exist_ok=True)
+    (tmp_path / ebins.STORE_SUBDIR / "gaishim.so").write_bytes(b"x" * 4824)
+    return str(tmp_path / "revoice.db")
+
+
+def test_gaishim_has_no_toggle_and_is_gated_by_the_device(tmp_path):
+    """The one kind with no `config_key`, on purpose.
+
+    It is a precondition of BOTH endpoints rather than one of them, so
+    `spotifyEnabled` would leave AirPlay broken on a device that wanted only
+    AirPlay and there is no honest key for "either". What replaces the toggle
+    is the device's own `needed`, which a setting cannot contradict.
+
+    Both halves are asserted together because either alone is a live fault:
+    no toggle and no device gate installs it everywhere including FireOS, and
+    a device gate that is not consulted is the same as not having one.
+    """
+    k = ebins.KINDS["gaishim"]
+    assert k.config_key is None, "the shim must not hang off an endpoint toggle"
+
+    db = _shim_store(tmp_path)
+    caps = ["gai_shim"]
+    needed = {"ok": False, "reason": "not_installed", "needed": True}
+    assert ebins.install_needed(k, caps, {}, needed, db_path=db) is not None, \
+        "an emOS device missing the shim must be sent it with no toggle set"
+
+    not_needed = {"ok": False, "reason": "not_installed", "needed": False}
+    assert ebins.install_needed(k, caps, {}, not_needed, db_path=db) is None, \
+        "a device that says it resolves names itself must not be sent the shim"
+
+
+def test_silence_about_needing_the_shim_is_not_a_refusal(tmp_path):
+    """Firmware too old to send `needed` has said nothing, not "no".
+
+    `is False` rather than falsiness, throughout. The project's rule is to
+    degrade to old behaviour rather than to a wrong answer, and the wrong
+    answer here is a device that needs the file being told it does not —
+    which reads, on every panel, as a device that is fine.
+    """
+    k = ebins.KINDS["gaishim"]
+    silent = {"ok": False, "reason": "not_installed"}
+    assert ebins.install_needed(k, ["gai_shim"], {}, silent,
+                                db_path=_shim_store(tmp_path)) is not None
+
+
+def test_a_device_that_does_not_need_the_shim_is_not_told_it_is_missing():
+    """`not_needed`, and the install withdrawn with it.
+
+    A FireOS device has a working resolver; the shim there would replace it
+    with a deliberately small one. Reporting that as "not installed" accuses
+    a device that is working exactly as it should, and offering the install
+    invites somebody to make it worse.
+    """
+    class Live:
+        capabilities = ["gai_shim"]
+        resolver_status = {"ok": False, "reason": "not_installed",
+                           "needed": False}
+
+    state = ebins.device_state(ebins.KINDS["gaishim"], Live())
+    assert state["status"] == "not_needed"
+    assert state["installable"] is False

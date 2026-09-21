@@ -27,6 +27,7 @@ import (
 	"github.com/wilbowes/EchoMuse/internal/clock"
 	"github.com/wilbowes/EchoMuse/internal/config"
 	"github.com/wilbowes/EchoMuse/internal/discovery"
+	"github.com/wilbowes/EchoMuse/internal/endpoint"
 	"github.com/wilbowes/EchoMuse/internal/platform"
 	"github.com/wilbowes/EchoMuse/internal/spotify"
 	"github.com/wilbowes/EchoMuse/internal/wifi"
@@ -708,6 +709,16 @@ func (c *ControlClient) connect(ctx context.Context, server *discovery.ServerInf
 		// without a shell session on the user's own hardware.
 		"spotify_status": spotify.Report(),
 		"airplay_status": airplay.Report(airplay2Wanted()),
+		// Whether the getaddrinfo shim is installed, and whether this device
+		// needs one at all. Beside the two above and for their reason: on
+		// emOS without it, BOTH endpoints start, retry every 60 seconds and
+		// never resolve a name, and every other panel reads healthy while
+		// they do it (#263).
+		//
+		// `needed` rides with it because the controller cannot work it out
+		// twice: absence on a FireOS device is correct and must not be
+		// offered as an install, and absence on an emOS one is the fault.
+		"resolver_status": endpoint.ResolverStatus().Report(),
 		// Which userspace this firmware booted on — see internal/platform.
 		//
 		// On REGISTRATION and not the stats tick, which is where it was first
@@ -1460,7 +1471,21 @@ func capabilities() []string {
 		// claim about a process that is still executing the old inode —
 		// which is exactly the failure this whole message exists to end,
 		// with a reassuring sentence added on top.
-		"endpoint_restart"}
+		"endpoint_restart",
+		// "gai_shim": this firmware preloads a getaddrinfo replacement into
+		// the streaming endpoints when it is installed and the base is emOS.
+		//
+		// Announced rather than inferred from base_os, and the distinction
+		// is the one this list keeps making: base_os says the device NEEDS
+		// the shim, and only a capability says the firmware will USE it.
+		// Reading the first as the second would have the controller install
+		// a library into a fleet whose firmware never preloads it, and then
+		// report Spotify as fixed — a specific claim about a program that
+		// still cannot resolve a name. The runtime half, whether the file is
+		// actually there, rides the register message as resolver_status, the
+		// same "could it" vs "is it" split as spotify against
+		// spotify_status.
+		"gai_shim"}
 	if als.Present() {
 		caps = append(caps, "ambient_light")
 	}

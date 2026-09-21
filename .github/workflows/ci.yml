@@ -560,6 +560,32 @@ jobs:
           file emos/build/init32 | grep -q "statically linked" || {
             echo "::error::emOS armv7a init is not statically linked"; exit 1; }
 
+      # The getaddrinfo shim, in the SAME image and against the SAME NDK that
+      # built the firmware above. That is the point of putting it here rather
+      # than on a bare runner: the library is loaded into a process whose libc
+      # is Amazon's, and the struct layout it commits to is read out of the
+      # NDK's headers by abicheck.c. A different NDK is a different set of
+      # headers to be checked against.
+      #
+      # build.sh runs three things and fails the job on any of them: the
+      # off-target checker (which drives the real getaddrinfo on the host),
+      # the ABI check, and an export check — a shim that loads and interposes
+      # nothing is otherwise completely silent, and was measured once.
+      - name: Build the getaddrinfo shim and run its checks
+        run: |
+          docker run --rm -v "$PWD/device":/device -w /device/gaishim \
+            revoice-compiler bash -lc \
+            'HOSTCC=/opt/android/ndk/21.4.7075529/toolchains/llvm/prebuilt/linux-x86_64/bin/clang ./build.sh'
+      - name: Check the shim is a 32-bit ARM shared object
+        # Same reasoning as the two checks above. A shared object that is not
+        # ARM loads nowhere and says so only in a linker warning nobody reads,
+        # and LD_PRELOAD failures do not stop the program — the endpoint just
+        # goes on failing every name lookup exactly as before.
+        run: |
+          file device/gaishim/out/gaishim.so
+          file device/gaishim/out/gaishim.so | grep -q "32-bit LSB shared object, ARM" || {
+            echo "::error::gaishim.so is not a 32-bit ARM shared object"; exit 1; }
+
   emos-checks:
     name: emOS init checks (ring and password)
     runs-on: ubuntu-latest
