@@ -61,6 +61,7 @@ import em_config_sections as sections_mod
 import em_console_pw
 import em_emos_build
 import em_devicediag
+import em_updates
 import em_netflash
 import em_endpoint_bins
 import em_endpoint_release
@@ -882,12 +883,35 @@ async def _get_me(request: web.Request) -> web.Response:
 
 # ─── Devices ──────────────────────────────────────────────────────────────────
 
+async def _current_releases() -> dict:
+    """
+    The newest published firmware and emOS versions, for the per-device
+    update tracks.
+
+    A plain helper rather than a route: it takes no request and carries no
+    authorisation of its own, so it must NOT be decorated — `require_auth`
+    on something that is never routed is a decorator that looks like a
+    guard and guards nothing.
+
+    Both come from caches, because this runs on every dashboard poll. A
+    version that is missing — a failed poll, update checks switched off —
+    stays missing rather than becoming a default: em_updates reads absence
+    as "unknown", and that is the only honest answer when nobody looked.
+    """
+    fw, emos = await asyncio.gather(_get_cached_release(),
+                                    _get_cached_emos_release())
+    return {"firmware": fw, "emos": emos}
+
+
 @auth.require_auth
 async def _get_devices(request: web.Request) -> web.Response:
     """GET /api/devices — all devices, live state merged with DB."""
     loop = asyncio.get_event_loop()
-    rows = await loop.run_in_executor(None, db.get_all_devices)
-    return _ok([_merge_device(row) for row in rows])
+    rows, releases = await asyncio.gather(
+        loop.run_in_executor(None, db.get_all_devices),
+        _current_releases(),
+    )
+    return _ok([_merge_device(row, releases) for row in rows])
 
 
 @auth.require_auth
@@ -6291,6 +6315,47 @@ async def _post_provision_diagnostics(request: web.Request) -> web.Response:
     )
 
 
+# In-process TTL for the emOS release, and the reason it is not the DB-backed
+# cache the firmware poll uses: this one exists purely to keep /api/devices
+# from calling GitHub on every dashboard poll, so it has to survive a few
+# seconds rather than a restart. A cold controller does one extra fetch.
+_emos_release_cache: Optional[dict] = None
+_emos_release_ts: float = 0.0
+
+
+async def _get_cached_emos_release() -> Optional[dict]:
+    """
+    The newest emOS release, at most `_update_check_interval()` seconds old.
+
+    `/api/devices` needs it on every poll and `_fetch_latest_emos_release`
+    has no cache at all — one uncached outbound call per dashboard refresh
+    per user, which is exactly the background traffic the update-check
+    interval exists to bound. 0 means checks are DISABLED (#159): serve
+    whatever is cached and make no call, which for a fresh install is None
+    and renders as "unknown" rather than as "up to date".
+
+    The emOS TAB deliberately keeps calling `_fetch_latest_emos_release`
+    directly. It is the page somebody opens when they are about to write a
+    partition, and a release cut two minutes ago should be visible there.
+    """
+    global _emos_release_cache, _emos_release_ts
+
+    interval = _update_check_interval()
+    now = time.time()
+    if interval <= 0:
+        return _emos_release_cache
+    if _emos_release_cache and (now - _emos_release_ts) < interval:
+        return _emos_release_cache
+
+    fresh = await _fetch_latest_emos_release()
+    # A FAILED poll must not evict a good answer — `_github_releases` returns
+    # None for a network blip, and treating that as "no release exists" would
+    # flip every device to unknown on one dropped request.
+    if fresh:
+        _emos_release_cache, _emos_release_ts = fresh, now
+    return _emos_release_cache
+
+
 async def _fetch_latest_emos_release() -> Optional[dict]:
     """
     The newest published emOS release carrying an `init` asset.
@@ -7809,16 +7874,25 @@ def _row_sections(row) -> list:
         return []
 
 
-def _merge_device(row) -> dict:
+def _merge_device(row, releases: Optional[dict] = None) -> dict:
     """
     Merge a DB device row with live in-memory state.
 
     DB row provides persistent fields (label, config, firmware_ver etc).
     Live _devices dict provides transient state (connected, speaking,
     muted, listening, thinking).
+
+    `releases` carries the newest published firmware and emOS versions, and
+    is what turns the per-track answers below into something a row can show.
+    Passed IN rather than fetched here because this function runs once per
+    device per dashboard poll and both lookups are async; None means the
+    caller did not ask, and every track then reads "unknown" — which is the
+    honest answer for a caller that never looked, and is deliberately not the
+    same as "up to date".
     """
     device_id = row["device_id"]
     live = _live(device_id)
+    releases = releases or {}
     # Lazy, for the reason every other em_esphome call site here is lazy:
     # em_esphome imports em_api at module level. After the first call this
     # is a sys.modules lookup, which is what makes it affordable on a path
@@ -7940,6 +8014,50 @@ def _merge_device(row) -> dict:
         # support bundle and the payload reconcile all need to tell "Android"
         # apart from "not asked".
         "baseOs":          getattr(live, "base_os", None) if live else None,
+        # WHICH emOS, live if the device is connected and from the last
+        # register otherwise. The stored value is what makes the fleet
+        # answerable at all: reading it off a device costs a ~26s shell
+        # probe, so before #255 the emOS version could not appear in a list.
+        #
+        # Null is never "up to date": it is FireOS, where the question does
+        # not apply, or firmware too old to report it. `updates` below tells
+        # those apart using baseOs, which is the only place that distinction
+        # can be made.
+        # `row` is a sqlite3.Row, which indexes but has no .get — and not
+        # every caller here selects the whole table, so the column is guarded
+        # rather than assumed (the same shape as `token` above).
+        "emosVer":         (getattr(live, "emos_ver", None) if live else None)
+                           or (row["emos_ver"] if "emos_ver" in row.keys() else None),
+        # Every per-device update track, folded into one answer (#255).
+        #
+        # Computed HERE rather than in the dashboard, because the dashboard
+        # already computed one of them (`needsUpdate`, a string comparison on
+        # firmware) and a second rule in JavaScript is a second rule: the row
+        # and the device's own Updates tab would then be free to disagree
+        # about the same device, which is the shape that makes people stop
+        # trusting an indicator. em_updates owns the comparison and is
+        # exercised without aiohttp.
+        #
+        # THREE answers per track, never a boolean. "Nobody could read this"
+        # and "nothing waiting" must not render alike — that is the failure
+        # the emOS panel already refuses to commit for one device, and an
+        # aggregate commits it across the whole fleet at once.
+        "updates": em_updates.device_summary(em_updates.device_tracks(
+            firmware_ver=row["firmware_ver"] if "firmware_ver" in row.keys() else None,
+            firmware_latest=(releases.get("firmware") or {}).get("version"),
+            # The STORED base_os is consulted here and deliberately not by
+            # the `baseOs` field above. That field's consumers — the wizard,
+            # the support bundle, the payload reconcile — are all asking
+            # about a device they are talking to right now, and a stored
+            # value would answer for one that is not there. This asks the
+            # fleet question, where a device that is offline is the normal
+            # case rather than the exception.
+            base_os=(getattr(live, "base_os", None) if live else None)
+                    or (row["base_os"] if "base_os" in row.keys() else None),
+            emos_ver=(getattr(live, "emos_ver", None) if live else None)
+                     or (row["emos_ver"] if "emos_ver" in row.keys() else None),
+            emos_latest=(releases.get("emos") or {}).get("version"),
+        )),
         # The DERIVED answer, not a second copy of the rule. em_platform owns
         # "which payloads mean anything here"; a dashboard that re-derived it
         # from baseOs would be a mirror free to disagree with the server that

@@ -1077,6 +1077,33 @@ MIGRATIONS: list[str] = [
 
     UPDATE system_config SET value = '22' WHERE key = 'schema_version';
     """,
+
+    # ── v23 — remember WHICH emOS each device booted ─────────────────────────
+    #
+    # The companion to base_os in v21, and it exists because the emOS version
+    # was the one update track nobody could see. It was readable only by
+    # opening a device's Updates tab and waiting out a ~26s shell probe —
+    # affordable for a tab somebody deliberately opened, impossible for a list
+    # of devices, so no page could ever say "these three need an emOS update"
+    # (#255).
+    #
+    # It now rides the REGISTER message (em_platform.VERSION_REGISTER_KEY),
+    # which makes it knowable for a CONNECTED device; this column is what
+    # makes it knowable for the rest, which on any real fleet is most of them
+    # at any moment. Exactly v21's split: the live value answers "what is THIS
+    # device", the stored one answers "what is the fleet".
+    #
+    # NULL means never reported — firmware older than this, a FireOS device
+    # where the question is meaningless, or a device that has not registered
+    # since the column existed. It is NOT "up to date", and nothing may render
+    # it as such: absence read as currency is the failure the emOS panel
+    # already refuses to commit, and an aggregated indicator would commit it
+    # across the whole fleet at once.
+    """
+    ALTER TABLE devices ADD COLUMN emos_ver TEXT;
+
+    UPDATE system_config SET value = '23' WHERE key = 'schema_version';
+    """,
 ]
 
 # Post-migration fixups that need Python rather than SQL. Keyed by the schema
@@ -1679,6 +1706,37 @@ def set_device_base_os(device_id: str, base_os: Optional[str]) -> None:
             "UPDATE devices SET base_os = ? WHERE device_id = ?",
             (base_os, device_id),
         )
+
+
+def set_device_emos_ver(device_id: str, emos_ver: Optional[str]) -> None:
+    """
+    Record which emOS a device booted, from its register message.
+
+    Called ONLY with a non-empty value. A FireOS register and old firmware
+    both report nothing, and writing that NULL would erase the last known
+    version of a device whose base_os already says it is not on emOS today —
+    a stale version beside a corrected base_os is harmless, an erased one is
+    a fact nobody can get back without the device being on emOS again.
+    """
+    with _tx() as conn:
+        conn.execute(
+            "UPDATE devices SET emos_ver = ? WHERE device_id = ?",
+            (emos_ver, device_id),
+        )
+
+
+def fleet_emos_versions() -> dict[str, Optional[str]]:
+    """
+    Every device believed to be on emOS, mapped to its last known version.
+
+    Keyed on `base_os = 'emos'` rather than on the version being present,
+    which is the whole point: a device on emOS with NULL here is one running
+    firmware too old to say, and that is a distinct answer from "no such
+    device". Dropping those rows would turn a fleet nobody can assess into a
+    fleet that looks fully up to date.
+    """
+    rows = _q("SELECT device_id, emos_ver FROM devices WHERE base_os = 'emos'")
+    return {r["device_id"]: r["emos_ver"] for r in rows}
 
 
 def fleet_base_os() -> set[str]:

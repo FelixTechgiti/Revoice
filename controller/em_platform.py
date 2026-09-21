@@ -26,6 +26,19 @@ UNKNOWN = "unknown"
 # the stats report it briefly rode on.
 REGISTER_KEY = "base_os"
 
+# Which emOS, on the same message. Empty on FireOS and absent on firmware
+# older than #255; both mean "no version known", and neither may be read as
+# up to date — that rule is the whole reason this is a named constant rather
+# than a string literal at the one call site.
+#
+# It rides REGISTER for REGISTER_KEY's reason turned on a different axis: it
+# is a static property of the boot (VERSION_ID, stamped when the image is
+# built), and the question it answers is about the FLEET — whether anything
+# needs updating, asked of devices that are mostly offline. Probing for it
+# costs a ~26s shell round trip per device, which is why the emOS version
+# could not appear anywhere a person would notice it.
+VERSION_REGISTER_KEY = "emos_ver"
+
 
 def android_userspace(base_os) -> bool:
     """

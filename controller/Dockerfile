@@ -119,6 +119,7 @@ COPY em_console_pw.py .
 COPY em_emos_build.py .
 COPY em_netflash.py .
 COPY em_devicediag.py .
+COPY em_updates.py .
 COPY em_recordings.py .
 COPY em_turnclock.py .
 COPY em_firmware.py .

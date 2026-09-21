@@ -437,6 +437,7 @@ class Device:
         # old to say — which em_platform resolves to Android, leaving the
         # existing fleet exactly as it was.
         self._base_os: str | None = None
+        self._emos_ver: str | None = None
         # Which source owns the DEVICE's own music plane, as it last said.
         # None means it has not told us — firmware without `audio_state`, or
         # a device that has not registered since this controller started. It
@@ -1211,6 +1212,26 @@ class Device:
         TRANSFER_OK that could never come.
         """
         return self._base_os
+
+    @property
+    def emos_ver(self):
+        """
+        Which emOS this device booted, or None.
+
+        None on FireOS, where the question is meaningless, and None on
+        firmware too old to report it — and those are told apart by
+        `base_os` beside it rather than by this field. None WITH
+        base_os == "emos" is a device running emOS whose version nobody can
+        see, which the dashboard has to say out loud: an update indicator
+        that reads "nothing waiting" because nobody could look is the exact
+        failure the emOS panel already refuses to commit.
+
+        Static, from the REGISTER message, for base_os's reason. Reading it
+        off the device costs a ~26s shell round trip, which is affordable for
+        a tab somebody opened and impossible for a fleet list — so before
+        this there was no fleet-wide answer at all (#255).
+        """
+        return self._emos_ver
 
     @property
     def android_userspace(self) -> bool:
@@ -3980,6 +4001,17 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
         # device reflashed between FireOS and emOS is the case it has to track.
         if device._base_os:
             db.set_device_base_os(device_id, device._base_os)
+        # Which emOS, stored beside it and for the same reason. Empty string
+        # and absent both become None here, because they mean the same thing
+        # downstream — and a falsy value must never OVERWRITE a stored one:
+        # a device that reflashed from emOS to FireOS has its base_os
+        # corrected above, which is what makes the stale version harmless,
+        # while clearing on every FireOS register would throw away the last
+        # known version of a device that is merely on old firmware today.
+        _ver = msg.get(em_platform.VERSION_REGISTER_KEY) or None
+        device._emos_ver = _ver
+        if _ver:
+            db.set_device_emos_ver(device_id, _ver)
         # Link-security telemetry for the dashboard: True when this control
         # connection arrived over the TLS listener.
         device.secure = secure

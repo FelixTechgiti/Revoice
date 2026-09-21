@@ -720,6 +720,26 @@ func (c *ControlClient) connect(ctx context.Context, server *discovery.ServerInf
 		// before the network is up, exactly like ambient_light_status above —
 		// nothing about it needs re-reporting every 30 seconds.
 		"base_os": platform.Base(),
+		// WHICH emOS, for the same reason and in the same breath. Also a
+		// static property of the boot — VERSION_ID is stamped into
+		// /etc/os-release when the image is built — and read out of the file
+		// platform.Base() already opens, so it costs nothing extra.
+		//
+		// It rides here rather than being probed because the question it
+		// answers is about the FLEET: whether anything needs updating, asked
+		// of devices that are mostly offline. The controller's only way to
+		// learn it was a ~26s shell round trip per device, which is fine for
+		// a tab somebody deliberately opened and impossible for a list — so
+		// the emOS version could not appear anywhere a person would notice it
+		// (#255).
+		//
+		// EMPTY on FireOS, where it means nothing, and ABSENT on firmware
+		// older than this. Both resolve to "no version known", and neither
+		// may be read as up to date — the distinction that matters is made
+		// by base_os right beside it: no version WITH base_os "emos" is a
+		// device running emOS whose version nobody can see, which is a thing
+		// to say out loud rather than to smooth over.
+		"emos_ver": platform.Ver(),
 		// Which source owns the music plane at this instant. On the REGISTER
 		// message and not only on the change event, for base_os's reason
 		// turned round: the controller's aggregate is edge-driven, so a

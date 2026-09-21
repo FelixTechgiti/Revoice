@@ -60,9 +60,52 @@ func Detect(root string) string {
 	return Unknown
 }
 
+// Version reads the emOS version out of the same file Detect matches on.
+//
+// Empty for anything that is not emOS, and empty for an emOS image whose
+// os-release is missing the field — never a guess and never a placeholder,
+// because the controller's whole use for this is comparing it against a
+// published release, and a version string it cannot parse is worse than none.
+//
+// The value is `VERSION_ID` and it is stamped at BUILD time (emos/build.sh),
+// from `git describe --match 'emos-v*'` with the tag prefix stripped. So it
+// describes the image rather than something a running system can drift from,
+// which is exactly what makes it safe to send once, at registration, and keep.
+//
+// Quotes are stripped: os-release permits them and emOS does not write them
+// today, which is precisely the kind of thing that changes without anybody
+// noticing that a comparison downstream stopped matching.
+func Version(root string) string {
+	b, err := os.ReadFile(root + "/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	var id, ver string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "ID="):
+			id = strings.Trim(strings.TrimPrefix(line, "ID="), `"`)
+		case strings.HasPrefix(line, "VERSION_ID="):
+			ver = strings.Trim(strings.TrimPrefix(line, "VERSION_ID="), `"`)
+		}
+	}
+	// Only OUR os-release counts. FireOS mounts Amazon's /system and could in
+	// principle present a file of its own; reporting somebody else's version
+	// as an emOS version would have the controller offering a reflash against
+	// a release it has nothing to do with.
+	if id != EmOS {
+		return ""
+	}
+	return ver
+}
+
 var (
 	once   sync.Once
 	cached string
+
+	verOnce   sync.Once
+	cachedVer string
 )
 
 // IsAndroid reports whether the firmware booted on Amazon's Android
@@ -83,4 +126,12 @@ func IsAndroid() bool { return Base() != EmOS }
 func Base() string {
 	once.Do(func() { cached = Detect("") })
 	return cached
+}
+
+// Ver returns the detected emOS version, resolved once, empty on anything
+// else. Cached for Base's reason: it cannot change without a reboot, and a
+// value that flapped would read as a device that reflashed itself.
+func Ver() string {
+	verOnce.Do(func() { cachedVer = Version("") })
+	return cachedVer
 }

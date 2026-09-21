@@ -597,7 +597,21 @@
       offlineFor(name, duration) { return `${name} offline ${duration}`; },
       moreOffline(n) { return `${n} more offline`; },
       waitingForApproval(n) { return `${n} waiting for approval`; },
-      onOlderFirmware(n) { return `${n} on older firmware`; },
+      // Track-neutral, because it now counts emOS updates too (#255): a
+      // device whose firmware is current and whose emOS is not was being
+      // described as "on older firmware", which is false and sends somebody
+      // to the wrong button.
+      withUpdates(n) { return `${n} with updates`; },
+      updatesUnknownCount(n) {
+        return `${n} ${n === 1 ? 'device' : 'devices'} could not be checked — `
+             + `that is not the same as up to date.`;
+      },
+      updateTracks: { firmware: 'firmware', emos: 'emOS' },
+      updatesWaiting(tracks) { return `Update available: ${tracks}`; },
+      updatesUnreadable(tracks) {
+        return `Could not read: ${tracks}. Unknown, not up to date.`;
+      },
+      updatesNoneWaiting: 'Everything on this device is current',
       behindCount(updates, total) {
         return `${updates} of ${total} ${total === 1 ? 'device' : 'devices'} `
              + `${updates === 1 ? 'is' : 'are'} on something older. `
@@ -1172,7 +1186,21 @@
       offlineFor(name, duration) { return `${name} offline ${duration}`; },
       moreOffline(n) { return `${n} weitere offline`; },
       waitingForApproval(n) { return `${n} wartet auf Freigabe`; },
-      onOlderFirmware(n) { return `${n} auf älterer Firmware`; },
+      // Ohne Nennung einer Spur, weil hier jetzt auch emOS-Updates gezählt
+      // werden (#255): ein Gerät mit aktueller Firmware und veraltetem emOS
+      // wurde als „auf älterer Firmware" beschrieben, was falsch ist und zum
+      // falschen Knopf schickt.
+      withUpdates(n) { return `${n} mit Updates`; },
+      updatesUnknownCount(n) {
+        return `${n} ${n === 1 ? 'Gerät' : 'Geräte'} ${n === 1 ? 'konnte' : 'konnten'} `
+             + `nicht geprüft werden — das heißt nicht, dass alles aktuell ist.`;
+      },
+      updateTracks: { firmware: 'Firmware', emos: 'emOS' },
+      updatesWaiting(tracks) { return `Update verfügbar: ${tracks}`; },
+      updatesUnreadable(tracks) {
+        return `Nicht lesbar: ${tracks}. Unbekannt, nicht aktuell.`;
+      },
+      updatesNoneWaiting: 'Auf diesem Gerät ist alles aktuell',
       behindCount(updates, total) {
         return `${updates} von ${total} ${total === 1 ? 'Gerät' : 'Geräten'} `
              + `${updates === 1 ? 'läuft' : 'laufen'} auf einer älteren Version. `
