@@ -42,6 +42,9 @@ const NOT_PROSE = new Set([
   // A unit, which the handoff keeps untranslated — and German abbreviates
   // minutes the same way, so there is nothing to carry.
   'min',
+  // Names of files on the operator's own disk, written by the escrow step.
+  // A translated filename is a file nobody has.
+  'revoice-stock-boot-*.img', 'revoice-boot-before-patch-*.img',
 ]);
 
 // A string is prose when it carries a word of three letters or more. That

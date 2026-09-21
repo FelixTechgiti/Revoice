@@ -28,6 +28,7 @@ import (
 	internalbuttons "github.com/wilbowes/EchoMuse/internal/bindings/buttons"
 	"github.com/wilbowes/EchoMuse/internal/bindings/jack"
 	"github.com/wilbowes/EchoMuse/internal/bindings/mic"
+	"github.com/wilbowes/EchoMuse/internal/bindings/mixer"
 	"github.com/wilbowes/EchoMuse/internal/bindings/speaker"
 	"github.com/wilbowes/EchoMuse/internal/bluetooth"
 	"github.com/wilbowes/EchoMuse/internal/bootlog"
@@ -40,16 +41,21 @@ import (
 	"github.com/wilbowes/EchoMuse/internal/musicplane"
 	"github.com/wilbowes/EchoMuse/internal/netfilter"
 	"github.com/wilbowes/EchoMuse/internal/outchain"
+	"github.com/wilbowes/EchoMuse/internal/platform"
 	"github.com/wilbowes/EchoMuse/internal/sendspin"
 	"github.com/wilbowes/EchoMuse/internal/server"
 	"github.com/wilbowes/EchoMuse/internal/spotify"
 	"github.com/wilbowes/EchoMuse/internal/wakeword/shadow"
 	"github.com/wilbowes/EchoMuse/internal/wifi"
+	"github.com/wilbowes/EchoMuse/pkg/board"
 	pkgbuttons "github.com/wilbowes/EchoMuse/pkg/buttons"
 	"github.com/wilbowes/EchoMuse/pkg/led"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "platform-init" {
+		os.Exit(platformInit())
+	}
 	log.SetOutput(os.Stdout)
 	log.Printf("Revoice %s starting", client.Version)
 
@@ -638,7 +644,7 @@ func main() {
 		}
 	})
 
-	// Config applied — apply hardware changes via tinymix, AEC params to
+	// Config applied — apply hardware changes to the mixer, AEC params to
 	// the canceller. AEC/BLE read the merged post-Apply snapshot rather than
 	// the (partial) message so unmentioned fields keep their values.
 	controlClient.OnConfigApplied(func(msg config.ConfigMessage) {
@@ -702,7 +708,7 @@ func main() {
 	// half-open TCP connection the interface bounce killed, so a single
 	// send is not enough — the very first hardware success vanished that
 	// way while the WS looked connected the whole time.
-	controlClient.OnWifiChange(func(ssid, psk string) {
+	controlClient.OnWifiChange(func(ssid []byte, psk string) {
 		go func() {
 			wifi.Change(ssid, psk, controlClient.IsConnected)
 			for i := 0; i < 30; i++ { // ~5 min, then give up (dashboard TTL is 4)
@@ -1267,20 +1273,25 @@ func wifiRSSI() *int {
 
 // ─── Hardware config ──────────────────────────────────────────────────────────
 
-// applyHardwareConfig runs tinymix commands for fields that map to hardware.
+// applyHardwareConfig sets the mixer controls for fields that map to hardware.
 // Called whenever the controller pushes a config message.
 func applyHardwareConfig(msg config.ConfigMessage) {
-	if msg.AdcDigitalGain > 0 {
-		tinymix("89", strconv.Itoa(msg.AdcDigitalGain), strconv.Itoa(msg.AdcDigitalGain))
-		tinymix("107", strconv.Itoa(msg.AdcDigitalGain), strconv.Itoa(msg.AdcDigitalGain))
-		tinymix("125", strconv.Itoa(msg.AdcDigitalGain), strconv.Itoa(msg.AdcDigitalGain))
-		tinymix("143", strconv.Itoa(msg.AdcDigitalGain), strconv.Itoa(msg.AdcDigitalGain))
+	// Non-nil rather than non-zero: 0 is the bottom of each control's own
+	// range and a legitimate setting. Under the old guard the dashboard
+	// offered it, the config stored it, and the mic stayed where it was —
+	// a control that appeared to work. Absent is still absent, so firmware
+	// meeting a controller that omits the key behaves as it always did.
+	if msg.AdcDigitalGain != nil {
+		g := strconv.Itoa(*msg.AdcDigitalGain)
+		for _, adc := range []string{"A", "B", "C", "D"} {
+			mixer.Set("ADC_"+adc+" Digital Volume Control", g)
+		}
 	}
-	if msg.AdcMicpga > 0 {
-		tinymix("92", strconv.Itoa(msg.AdcMicpga), strconv.Itoa(msg.AdcMicpga))
-		tinymix("110", strconv.Itoa(msg.AdcMicpga), strconv.Itoa(msg.AdcMicpga))
-		tinymix("128", strconv.Itoa(msg.AdcMicpga), strconv.Itoa(msg.AdcMicpga))
-		tinymix("146", strconv.Itoa(msg.AdcMicpga), strconv.Itoa(msg.AdcMicpga))
+	if msg.AdcMicpga != nil {
+		g := strconv.Itoa(*msg.AdcMicpga)
+		for _, adc := range []string{"A", "B", "C", "D"} {
+			mixer.Set("ADC_"+adc+" MICPGA Volume Ctrl", g)
+		}
 	}
 }
 
@@ -1703,14 +1714,6 @@ func applyBleConfig(scanner *bluetooth.Scanner) {
 	scanner.SetEnabled(snap.BleProxyEnabled != nil && *snap.BleProxyEnabled)
 }
 
-func tinymix(ctl string, args ...string) {
-	cmdArgs := append([]string{"-D", "0", ctl}, args...)
-	out, err := exec.Command("tinymix", cmdArgs...).CombinedOutput()
-	if err != nil {
-		log.Printf("[tinymix] ctl %s failed: %v — %s", ctl, err, string(out))
-	}
-}
-
 func allLEDs(r, g, b uint8) []led.Led {
 	leds := make([]led.Led, 12)
 	for i := range leds {
@@ -1946,6 +1949,38 @@ func coresOnline() int {
 // fighting the governor is how you get a setting that appears to work and
 // silently stops.
 const hpsCoreFloor = 2
+
+// platformInitMarker is how start_server.sh tells a binary that has the
+// platform-init mode from one that would ignore the argument and start a
+// second server. It greps the binary for this string.
+const platformInitMarker = "EM_PLATFORM_INIT_V1"
+
+// platformInit applies the detected board's kernel tuning and exits. emOS only:
+// on FireOS the vendor's thermal_manager owns this. An unknown board is not a
+// failure — it keeps the kernel defaults, which are the stricter setting.
+func platformInit() int {
+	fmt.Printf("platform-init (%s) base=%s", platformInitMarker, platform.Base())
+	b := board.Detect("")
+	fmt.Printf(" board=%s", board.IDOf(b))
+	if platform.Base() != platform.EmOS {
+		fmt.Println(" — not emOS, nothing to do")
+		return 0
+	}
+	if b == nil || b.Tuning == nil {
+		fmt.Println(" — no profile, kernel defaults kept")
+		return 0
+	}
+	lines, err := board.Apply("", b.Tuning)
+	for _, l := range lines {
+		fmt.Printf(" | %s", l)
+	}
+	if err != nil {
+		fmt.Printf(" — FAILED: %v\n", err)
+		return 1
+	}
+	fmt.Println(" — ok")
+	return 0
+}
 
 // applyCoreFloor raises the hotplug floor, best-effort.
 //

@@ -2319,6 +2319,34 @@ def test_the_reconcile_is_debounced_and_claimed_before_the_work():
     assert stamp < ret, "claim the debounce before returning, not after the work"
 
 
+def test_emos_crash_logs_are_checked_on_connect_before_the_debounce():
+    """
+    A device that crashed and reconnected inside the debounce window is the
+    one most worth looking at, so the crash check sits in front of it — and
+    only for a device that positively reported emOS, which is what saves the
+    ram console.
+    """
+    fn = _strip_prose(_fn_body(
+        (CONTROLLER / "em_api.py").read_text(), "reconcile_on_connect"))
+    assert "_collect_crash_log(" in fn
+    assert fn.index("_collect_crash_log(") < fn.index("_reconcile_due(")
+    gate = fn[:fn.index("_collect_crash_log(")]
+    assert "not live.android_userspace" in gate
+
+
+def test_the_crash_log_marker_is_written_only_after_a_complete_read():
+    """
+    The marker says "this boot was examined". Writing it before the read
+    completed would lose a crash to a dropped shell session.
+    """
+    fn = _strip_prose(_fn_body(
+        (CONTROLLER / "em_api.py").read_text(), "_collect_crash_log"))
+    read = fn.index("cat {kmsg}")
+    assert fn.index("_SHELL_OK not in out") > read
+    assert fn.index("summarise(") > fn.index("_SHELL_OK not in out")
+    assert fn.index("> {seen}") > fn.index("summarise(")
+
+
 def test_deleting_a_device_forgets_its_debounce():
     """
     A re-added device is the one whose payloads are least likely to be right;
@@ -2472,6 +2500,111 @@ def test_the_emos_flow_escrows_before_it_flashes():
     # lets it survive the flash.
     assert ids.index("install_em") < ids.index("flash_emos")
     assert ids.index("install_oww") < ids.index("flash_emos")
+
+
+def test_the_fireos_flow_escrows_before_it_patches():
+    """
+    #468: the FireOS flow wrote the boot partition with no copy of the original
+    in the operator's hands. The escrow sits inside runPatchBoot, so ordering
+    WITHIN the function is the guard: stored and downloaded before the first
+    shell call that writes a partition. Matched on shell calls rather than on
+    "of=", for the reason the flash test gives.
+    """
+    src = _jsx()
+    fn = src[src.index("async function runPatchBoot"):]
+    fn = fn[:fn.index("\n  async function runInstallMagisk")]
+    writes = [i for i, line in enumerate(fn.splitlines())
+              if "c.shell(" in line and "of=${boot.target}" in line]
+    assert writes, "runPatchBoot's flash was not found; update this test"
+    lines = fn.splitlines()
+    for marker in ("setEmosRef(", "setEmosTarget(", "_downloadBytes("):
+        at = next((i for i, l in enumerate(lines) if marker in l), None)
+        assert at is not None, f"runPatchBoot must escrow via {marker}"
+        assert at < writes[0], f"{marker} must come before the partition write"
+
+    # And the restore is offered on the TWRP steps that follow the escrow.
+    assert "(isEmos ? (step === 6 || step === 7) : (step >= 2 && step <= 4))" in src, (
+        "the FireOS flow must offer the restore on a failed TWRP step")
+
+
+def test_base_os_survives_the_device_going_offline():
+    """
+    base_os rides the register message and is stored (schema v21). The API
+    used to read it off the live session only, so the dashboard's emOS /
+    FireOS 5 slug would vanish whenever a device went offline — exactly when
+    someone is trying to work out what it was. A live report still wins.
+
+    Checked at EVERY site that answers `baseOs`, not at the first one in the
+    file. There are two — the device list and the emOS panel — and a guard
+    that reads `src.index(...)` pins whichever happens to come first, which is
+    how the panel shipped resolving it live-only while the test stayed green
+    about the list.
+    """
+    import ast
+
+    src = (CONTROLLER / "em_api.py").read_text()
+    tree = ast.parse(src)
+    lines = src.splitlines()
+
+    sites = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = "\n".join(lines[fn.lineno - 1:fn.end_lineno])
+        if '"baseOs"' in body:
+            sites.append((fn.name, body))
+
+    assert len(sites) >= 2, (
+        f"found only {[n for n, _ in sites]} — a guard over one site cannot "
+        "notice the other one going live-only")
+
+    for name, body in sites:
+        assert 'getattr(live, "base_os", None)' in body, (
+            f"{name}() answers baseOs without asking the live session first")
+        assert '["base_os"]' in body, (
+            f"{name}() answers baseOs with no fallback to the stored value, so "
+            "the slug vanishes exactly when the device does")
+
+
+def test_only_a_registered_device_blocks_the_wizard():
+    """
+    The wizard refuses a device already on the controller — but a row with no
+    firmware_ver is not one. ensure_device_token creates it when the TLS token
+    is minted, before the device has ever connected, so matching on the serial
+    alone refused every re-run of a provision that had got that far.
+
+    Located by FUNCTION NAME rather than by scanning back from the error
+    string: the decision moved into duplicateVerdict() so it could be unit
+    tested, and textual adjacency then pointed at nothing. Behaviour is covered
+    by controller/tests/duplicate_device.test.mjs; this pins that the rule is
+    still expressed in the source at all.
+    """
+    src = _jsx()
+    at = src.index("function duplicateVerdict")
+    body = src[at:src.index("\n  }", at)]
+    assert "knownDevices" in body and "d.firmware_ver" in body, (
+        "the already-registered check must ignore rows that never registered")
+
+
+def test_a_restore_ends_the_wizard_run():
+    """
+    A restore undoes the partition write that every later step builds on, and
+    the wizard cannot step backwards, so carrying on provisions on top of a
+    stock boot image — found on VVV 2026-09-18, sitting on Install Magisk as if
+    Patch Boot had held. A successful restore therefore ends the run: the step
+    controls go, nothing auto-runs, and the operator is told to start again.
+    """
+    src = _jsx()
+    fn = src[src.index("async function restoreEscrowedBoot"):]
+    fn = fn[:fn.index("\n  async function ", 1)]
+    ok = fn.index("Escrowed image restored and verified")
+    assert "setRestored(true)" in fn[ok:], (
+        "setRestored(true) must follow the verified restore, never precede it")
+    assert fn.index("setRestored(true)") > fn.index("_writeBootPartition"), (
+        "the run may only end once the restore has been written and verified")
+    assert "{!restored && (<>" in src, "the step controls must be hidden after a restore"
+    assert "|| running || restored || stepState[step] !== 'pending') return;" in src, (
+        "no step may auto-run after a restore")
 
 
 def test_the_flash_step_verifies_against_the_partition():
@@ -2702,6 +2835,47 @@ def test_the_emos_init_is_verified_before_it_is_served():
         assert want in fn, f"{name} must resolve through {want}"
 
 
+def test_the_busybox_build_can_satisfy_the_gpl_obligation():
+    """
+    busybox is the only GPL-2.0 thing emOS ships, and the obligation is met by
+    publishing source ALONGSIDE the binary — not by a link, which would leave
+    compliance depending on busybox.net's server layout.
+
+    Asserted against code rather than prose: every string checked here is an
+    executable line, because a test that greps for the words would be satisfied
+    by the comment explaining them.
+    """
+    script = (CONTROLLER.parent / "emos" / "tools" / "build-busybox.sh").read_text()
+    body = "\n".join(l for l in script.splitlines()
+                     if l.strip() and not l.lstrip().startswith("#"))
+
+    # The tarball is pinned, and checked on EVERY run rather than only after a
+    # download — a cached or pre-seeded one is no less likely to be wrong.
+    assert "BB_SHA512=" in body, "the busybox source must be pinned by hash"
+    assert "sha512sum -c -" in body, "the pin must actually be checked"
+
+    # Both artifacts reach the output directory, which is what the release
+    # publishes. Without these the binary ships with no corresponding source.
+    assert '"$OUT/busybox-$BB_VER.tar.bz2"' in body, \
+        "the source tarball must be installed into the output directory"
+    assert '"$OUT/busybox-LICENSE"' in body, \
+        "the licence text must be installed into the output directory"
+
+    # And the tarball must actually BE the source of the binary. The build diffs
+    # the tree it compiled against a fresh extraction and refuses on any
+    # modified or missing upstream file — the supplicant build beside this one
+    # patches its sources with inline python, so "we do not patch busybox" has
+    # to be enforced rather than assumed.
+    assert "diff -rq" in body, \
+        "the build must prove the tree it compiled matches the published tarball"
+
+    # The release gate, which fails the publish rather than the build.
+    wf = (CONTROLLER.parent / ".github" / "workflows"
+          / "emos-release.yml").read_text()
+    assert "busybox-LICENSE" in wf and "busybox-$BB_VER.tar.bz2" in wf, \
+        "the release must verify both GPL assets exist before publishing"
+
+
 def test_the_emos_release_workflow_asserts_what_it_publishes():
     """
     The last point before the artifact is something people flash. CI checks a
@@ -2749,18 +2923,29 @@ def test_the_emos_release_workflow_asserts_what_it_publishes():
                 published |= {f.strip() for f in files.split("\n") if f.strip()}
 
     # Pinned as an exact SET, so adding an asset is a deliberate edit here. The
-    # invariant is that everything published is OURS: two inits (one per kernel
-    # architecture) and emOS's own WiFi userspace, which is hostap under BSD,
-    # libnl-tiny under LGPL and our own shell script.
+    # invariant is that we have the RIGHT to redistribute everything in it: two
+    # inits (one per kernel architecture) and emOS's own userspace, which is
+    # hostap under BSD, libnl-tiny under LGPL, busybox under GPL-2.0 and our own
+    # shell script.
+    #
+    # The two busybox-* assets are the GPL-2.0 OBLIGATION, not extras. §3(a) wants
+    # the corresponding source to accompany the binary, so the verified upstream
+    # tarball and the licence text are published beside it — a link to busybox.net
+    # would leave compliance depending on a third party's server. Dropping either
+    # ships GPL-2.0 object code with no source, which is why they are pinned here
+    # rather than left to the release step.
     #
     # A BOOT IMAGE MUST NEVER APPEAR. It carries the device's own kernel and
     # DTBs, so publishing one would redistribute Amazon's code — the image is
     # assembled on the user's side from the partition they read off their device.
-    assert published == {"emos/build/init", "emos/build/emos-payload.zip"}, (
+    assert published == {"emos/build/init", "emos/build/emos-payload.zip",
+                         "emos/build/bb/busybox-*.tar.bz2",
+                         "emos/build/bb/busybox-LICENSE"}, (
         f"the published set changed — got {sorted(published)}. Everything here "
-        f"must be ours, and a boot image must never be among it. The loose "
-        f"`init` is not redundant: _fetch_latest_emos_release matches it by "
-        f"exact name, so dropping it strands every fielded controller.")
+        f"must be redistributable by us, and a boot image must never be among "
+        f"it. The loose `init` is not redundant: _fetch_latest_emos_release "
+        f"matches it by exact name, so dropping it strands every fielded "
+        f"controller. The busybox source and licence are a GPL-2.0 obligation.")
     assert not any(".img" in f or "boot" in f.rsplit("/", 1)[-1]
                    for f in published), (
         "an image or boot partition must never be a release asset — it carries "
@@ -2847,7 +3032,7 @@ def test_the_wifi_tools_go_only_into_a_32_bit_image():
         "the tools must come from the one list, so they cannot diverge"
     tools = api[api.index("EMOS_SBIN_ASSETS = ("):]
     tools = tools[:tools.index(")") + 1]
-    for name in ("wpa_supplicant", "wpa_cli", "em-wifi"):
+    for name in ("wpa_supplicant", "wpa_cli", "em-wifi", "busybox"):
         assert f'"{name}"' in tools, f"{name} missing from EMOS_SBIN_ASSETS"
 
 
@@ -3319,3 +3504,22 @@ def test_the_device_pull_uses_no_base64_flag_the_device_lacks():
     # first 76 characters and silently truncates every chunk.
     assert "busybox tr -d" in code, \
         "the pulled base64 must be joined into one line"
+
+def test_the_fireos_flow_refuses_an_emos_boot_image_before_it_writes():
+    """
+    Patching an emOS boot image with Magisk bootloops the device — reported and
+    reproduced on hardware 2026-09-20. Step 1's FireOS 5 check cannot catch it
+    and is not wrong: emOS mounts FireOS's /system, so build.prop reports 5.1.1
+    and the device passes by that test's own logic.
+
+    The ORDERING is the assertion, as it is for the OTA's md5: a refusal that
+    happens after the pull and patch is a refusal that has already spent the
+    device's boot slot.
+    """
+    src = _jsx()
+    fn = src[src.index("async function runPatchBoot"):]
+    fn = fn[:fn.index("\n  async function ", 1)]
+    assert "isOurBootImage(" in fn, (
+        "runPatchBoot must check whose image is in the slot before patching it")
+    assert fn.index("isOurBootImage(") < fn.index("of=/tmp/work/boot.img"), (
+        "the emOS check must precede the pull, or the refusal comes too late")

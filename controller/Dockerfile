@@ -116,6 +116,8 @@ COPY em_tap_burst.py .
 COPY em_player.py .
 COPY em_config_sections.py .
 COPY em_console_pw.py .
+COPY em_labels.py .
+COPY em_crashlog.py .
 COPY em_emos_build.py .
 COPY em_netflash.py .
 COPY em_devicediag.py .
@@ -126,6 +128,7 @@ COPY em_announce.py .
 COPY em_runbarrier.py .
 COPY em_ring_light.py .
 COPY em_volume.py .
+COPY em_wifi.py .
 COPY em_timers.py .
 COPY version.py .
 # ESPHome native API subpackage (frame protocol, message registry, vendored protobuf)

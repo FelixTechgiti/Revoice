@@ -90,7 +90,7 @@ hör die Antwort aus dem Dot. Gebrauchte Geräte kosten um die 10 €.
 | | |
 |---|---|
 | **Kein Phone-Home** | Keine Telemetrie, keine Analytics, kein Installationszähler. Niemand — wir eingeschlossen — kann sehen, wer Revoice benutzt. |
-| **Echte Hardware-Stummschaltung** | Die Mute-Taste schaltet den Mikrofon-Wandler ab, nicht bloß eine Softwarevariable. Roter Ring, und es kommt nichts mehr durch. |
+| **Stummschaltung im Audiochip** | Die Mute-Taste schaltet die Mikrofon-Wandler ab, nicht bloß eine Softwarevariable: Stummgeschaltet liest jeder der neun Aufnahmekanäle exakt null. Roter Ring, und es kommt nichts mehr durch. Ein physischer Trennschalter ist es aber nicht — den hat der Dot 2 nicht, und ein Root-Prozess auf dem Gerät kann den Mute wieder aufheben. |
 | **Verschlüsselte Geräteverbindung** | TLS mit eigener Zertifizierungsstelle und Token pro Gerät. Der Einrichtungsassistent legt das automatisch an. |
 | **Die einzige Verbindung nach draußen** | Eine stündliche Abfrage bei GitHub, ob es eine neuere Version gibt — abschaltbar, siehe [Konfiguration](docs/configuration.md#was-dein-netzwerk-verlässt). |
 

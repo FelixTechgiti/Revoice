@@ -5,20 +5,21 @@ Revoice with **no Amazon userspace at all** — no Android init, no
 `system_server`, no `mediaserver`, no audio HAL.
 
 It is a distribution in the ordinary sense: it does not include a kernel of its
-own. It pairs the device's existing MediaTek 3.18 kernel with our own PID 1,
-busybox, and bionic and tinyalsa mounted read-only from the device's `/system`.
+own. It pairs the device's existing MediaTek 3.18 kernel with our own PID 1 and
+our own busybox, with bionic and tinyalsa mounted read-only from the device's
+`/system`.
+
+emOS runs on both of the Echo Dot 2's kernels: FireOS 5's 64-bit one
+(amonet-biscuit v1.1.0) and FireOS 6's 32-bit one (v2.0.0). `build.sh` and the
+wizard read the reference kernel's architecture and build a matching init.
 
 > **⚠️ Do not install amonet-biscuit v2.0.0 on an Echo that is running
 > today.** Version 2.0.0 of the unlock (10 September 2026) replaces the Echo's
 > bootloaders, and after that FireOS 5 no longer boots — a working device stops
-> working, and there is no safe way back. Unlock a new Echo with **v1.1.0**,
-> which is the path with by far the most device-hours behind it.
->
-> **A device already on v2.0.0 is not shut out.** It runs FireOS 6, and emOS
-> runs on that kernel as of 0.5: `build.sh` and the wizard read the reference
-> kernel's architecture and build a matching init, 64-bit for FireOS 5 and
-> 32-bit for FireOS 6. The boot was measured on hardware on 2026-09-12; **no
-> v2.0.0 device has been through the wizard end to end yet.**
+> working, and there is no safe way back. That is about the upgrade, not about
+> FireOS 6: a device already on v2.0.0 takes the wizard's emOS flow, and the
+> boot was measured on hardware on 2026-09-12. **No v2.0.0 device has been
+> through the wizard end to end yet.**
 >
 > Either way, **do not try to go back by flashing FireOS 5 or an older
 > amonet**: that rewrites bootloaders by hand, which is how an Echo gets
@@ -220,6 +221,40 @@ replace them:
 - **DHCP on FireOS 6 is busybox `udhcpc`**, which needs a script to apply a
   lease it has already obtained; without one it gets an address and discards
   it, which reads as a DHCP failure and is not.
+- **emOS mounts the `/system` its image was BUILT beside**, named by
+  `emos.system=/dev/block/mmcblk0pN` on its own cmdline and parsed by
+  `cmdline_system_part()`. It used to hardcode p13, which is right only while
+  the reference comes from slot A — and since the wizard now leaves stock FireOS
+  in its own slot and puts emOS in the other, the boot slot and the system slot
+  are deliberately different values. Absent, it falls back to p13, so images
+  built before this keep booting exactly as they did.
+
+  An emOS image is Amazon's kernel plus our ramdisk and nothing else; bionic,
+  the linker, tinyalsa, `/system/bin/sh` and the WiFi firmware all come from
+  `/system` at runtime. So an image is a PAIR — a kernel and the userspace it
+  was taken beside — and the pairing travels with the image rather than being
+  guessed at each boot. Read it with `od` on the image or from `/proc/cmdline`
+  on a running device; `cmdlinecheck.c` pins the parser.
+- **emOS ships its own busybox** — 1.38.0, static ARM32, built by
+  `tools/build-busybox.sh`. A FireOS 6 `/system` has toybox and **no busybox at
+  all**, so without ours there is no `udhcpc` (hence no address), no `ntpd`, no
+  `syslogd`/`klogd`, and no `awk` for `em-wifi` to read a scan with. It was
+  working on the first FireOS 6 device only because amonet v2's OPTIONAL root
+  component had left one at `/data/local/bin/busybox` — which is the rule that
+  cost: **emOS must not depend on anything that is optional for the unlock.**
+
+  It is built on **Alpine, not the NDK**, and that is the one deliberate
+  exception to the pinned-toolchain rule. The binary is static, so it needs
+  only the kernel's syscall ABI — bionic is a free choice and the wrong one.
+  `defconfig` against the NDK needs eight source patches and twenty applets
+  disabled, and clang 9 segfaults compiling `hush.c`; against musl the same
+  `defconfig` builds with none of that. The only thing trimmed is the eleven
+  listening daemons (`telnetd`, `httpd`, `inetd`, …), which is a posture
+  choice, not a build one.
+
+  `busybox_path()` looks in `/system` FIRST and `/sbin` last, so the FireOS 5
+  fleet keeps running on Amazon's copy and only FireOS 6 — where none of this
+  ever worked — gets ours.
 
 FireOS 5 keeps Amazon's supplicant and `dhcpcd` unless an image carries ours,
 because that path works on the fleet today and should not be swapped for
@@ -502,12 +537,17 @@ Three layers, three different answers, and the design follows from them:
 - **Amazon's `/system`** — bionic, the linker, tinyalsa, wpa_supplicant. No
   licence to redistribute. Mounting it at runtime on a device that already has
   it is a different act from shipping it.
-- **Our code** — MIT, like the rest of the repo. busybox is GPL-2.0 and is the
-  device's own copy, not ours.
+- **Our code** — MIT, like the rest of the repo.
+- **busybox** — GPL-2.0, and since `emos-v0.6` it is OURS: we build it and the
+  release publishes the binary. That is the only licence here that obliges us
+  to offer SOURCE, so the release notes carry the pinned upstream URL and point
+  at `tools/build-busybox.sh`, which is the complete recipe. Keep that in the
+  notes. On FireOS 5 the copy in use is still the device's own.
 
 Leaning on `/system` is legally clean but pins emOS to one FireOS build. A
-self-contained ramdisk would need our own userspace — a static Go binary and
-busybox, no bionic. Not legal advice; and never ship Amazon marks or branding.
+self-contained ramdisk would need our own userspace — a static Go binary, and
+the busybox and supplicant we now ship, with no bionic. Not legal advice; and
+never ship Amazon marks or branding.
 
 ## How it boots, and what the ring tells you
 
@@ -723,14 +763,28 @@ nothing guarantees B stays pristine, and it boots FireOS without our permissive
 cmdline or the `service revoice` init entry, so Revoice does not start. It
 boots, which is what recovery is for.
 
-**Our cmdline patch DESTROYS the original arguments rather than appending
-them.** `runPatchBoot` zeroes bytes 64-576 of the header and writes 51 bytes,
-so slot A's cmdline is exactly `bootopt=64S3,32N2,64N2
-androidboot.selinux=permissive` and everything FireOS shipped is gone. The
-device boots regardless - LK supplies `root=`, `androidboot.hardware` and the
-rest, and the kernel defaults cover what is left - so this has been true for
-the life of the wizard with nothing to show for it. Slot B is the only reason
-it is visible at all.
+**On amonet v2 that last resort does not boot from where it is.** v2's
+bootloader only ever starts `boot_a` (#544); the BCB changes
+`androidboot.slot_suffix` and nothing else. A stock image kept in B is a copy
+to restore INTO A, not a slot to switch to. The wizard therefore always writes
+emOS to A and keeps stock in B, copying it there first when A held the only
+one.
+
+**The cmdline patch preserves the original arguments.** `runPatchBoot` appends
+`androidboot.selinux=permissive` to the existing NUL-terminated field if absent.
+It does not replace FireOS's `bootopt`, `rootwait`, `init`, build-variant or
+verity arguments, and it refuses to patch if the combined value cannot fit
+while retaining a terminator. It replaces each existing
+`androidboot.selinux=enforce` token in place with
+`androidboot.selinux=permissive`, preserving all other argument bytes and
+whitespace. Other unknown SELinux values are refused. Appending a duplicate
+cannot safely override the first value. The wizard validates the actual field
+even when the unpack log contains `permissive`; it skips rewriting the cmdline
+only when the bounded transformation leaves the image unchanged.
+Earlier wizard versions zeroed bytes 64-576 and wrote only 51 bytes; the device
+happened to boot because LK supplied `root=`,
+`androidboot.hardware` and the rest, and the kernel defaults covered what was
+left. Slot B was the only reason the loss was visible.
 
 **The patch itself is NOT inert, and the ordering is why.** LK splices the
 image's cmdline into the middle of its own and then appends
@@ -749,13 +803,16 @@ init, and a write-once property gives the opposite precedence to the one a
 kernel parameter would. Both tokens on the cmdline with the device reading
 permissive IS the measurement that settles it.
 
-Appending rather than replacing is therefore the fix, and it has to keep that
-property: append `androidboot.selinux=permissive` to whatever cmdline the
-image already carries, so it still lands ahead of LK's `enforce`. 215 bytes
-plus 31 against a 512-byte field, so it fits. It needs a hardware test, since
-an argument that is currently absent and unmissed may matter on a device that
-is not this one - and do NOT copy slot B's cmdline as a template: its `bootopt`
-third field is `32N2` against slot A's `64N2`, so it is a different build.
+When the image has no SELinux argument, appending preserves that ordering: the
+image's permissive value still lands ahead of LK's `enforce`. When the image
+already carries `androidboot.selinux=enforce`, replacing that token in place
+sets the first image-owned value correctly without discarding any other
+argument. The observed 215-byte field plus the appended argument fits within
+512 bytes. The byte-level behavior is covered by a Node regression test, but
+the revised image still needs a hardware boot test, since an argument that is
+currently absent and unmissed may matter on another device. Do NOT copy slot
+B's cmdline as a template: its `bootopt` third field is `32N2` against slot A's
+`64N2`, so it is a different build.
 
 **`misc` (`p8`) holds a boot-control block, and it is empty.** 4KB of zeros
 with one record at offset **0x360**:

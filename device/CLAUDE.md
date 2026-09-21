@@ -191,7 +191,7 @@ The always-on wake stream (`mic_start` without `lock_mic`) is **ungated and AGC-
 | `internal/wakeword/fixture/` | Shared golden-fixture parser, tolerance policy and `Verify`. Used by both the host test and `tools/oww_probe`, deliberately — the probe's answer is the trusted one because it runs on hardware, so it must be exactly as strict as the test by construction. Tolerances are relative to the **tensor's** scale, not per element: per-element relative error is meaningless for tensors straddling zero |
 | `internal/bindings/als/` | Ambient light (ams **TSL2540** on i2c). Android does not expose it AT ALL — `dumpsys sensorservice` reports an empty list, nothing under `/sys/class/sensors`, no input device; it is visible only on the raw i2c bus, the same shape as the mute LED being on a different GPIO than the vendor HAL believed. Resolved **by name, not address** (`0-0039` is an enumeration accident). **The bus listing is not a hardware inventory**: both ALS names are registered by Amazon's board file, so a `tsl2540` at 0x39 and a `tsl2584tsv` at 0x29 appear on every unit whatever is soldered on (`modalias` is static kernel data). Which one answers differs by batch — ours have the 2540 and nothing at 0x29 (`taos_probe() err = -6`, ENXIO), the `G090LF096` batch has the 2584 instead, reachable only through IIO at `/sys/bus/iio/devices/iio:device0` (#90). A second-sourced part, not a driver fault, so the answer is to read the IIO sensor too, never to loosen the match to a `tsl` prefix. The **boot log is the real inventory** — both drivers probe on every unit and log what replied — but `dmesg` rolls, so it needs reading soon after a reboot. Never `unbind` the driver to experiment: it succeeds, leaves the `als_*` attributes in place, and the next read hangs the device until a power cycle. **Polled every 5s, not every 1s, and the reason is the kernel log rather than the syscalls.** The driver prints a line on every read under its darkness threshold (`tsl2540_get_lux: darkness (0 <= 10)`), so a 1Hz poll is ~86,000 kernel lines a day — and it only fires in the dark, so it runs all night, which is exactly when a device sits idle and a crash most needs explaining. Measured on EFF 2026-09-04: the whole log ring was that one line and `messages.last` had reached 609KB. The cost is not disk — MediaTek's ram_console is the ONLY crash channel this kernel has and it is a fixed-size ring we do not control, so anything filling it evicts the evidence. `MinInterval` already refuses to report more often than every 2s, so 1Hz was finer than the reporting floor it feeds; if #296 ever wants faster, make the poll adaptive rather than paying a permanent flood. `Lux()` returns **nil, never 0** — a covered sensor reads a genuine 0. `Watch` reports a step change immediately (25% relative, 10-lux floor, measured noise ±1.5%); the steady value rides the ~30s stats tick. `Report()` says **why** there is no sensor (`ok`/`no_chip`/`no_attribute`/`unknown`, plus every i2c name it saw) and rides the register message as `ambient_light_status` — absence used to be logged only to the device's own stdout, which support bundles do not collect, so two users could not be told apart without a shell session (#90). The whole bus is enumerated **before** matching: returning at the match truncated the list on working devices, which is exactly the side you compare against |
 | `internal/bindings/jack/` | Headphone jack detect (`/sys/class/switch/h2w`, mediatek accdet). Polled, not evented — the ACCDET input node reports no keys on this hardware. `Watch` dispatches the state it STARTS in as well as every change: accdet is edge-triggered and a boot has no edge, so a device booted with a cable in got no correction at all. The callback (`PcmSpeaker.SetJackRouting`) owns both positions — the amp switch, and the `HP Driver Gain Volume` that accdet drops to the floor of its range on insert and nothing used to raise. Output *destination* is still physical, done by the jack's own switch contacts, so no mux layer should be driven — but level is ours |
-| `internal/wifi/` | Safe WiFi network change with auto-rollback (wifi_change/wifi_commit/wifi_scan control messages; pending-marker recovery at startup). Reload path is `svc wifi disable/enable` ONLY — see package comment for the hardware-proven constraints |
+| `internal/wifi/` | Safe WiFi network change with auto-rollback (wifi_change/wifi_commit/wifi_scan control messages; pending-marker recovery at startup). Reload path is `svc wifi disable/enable` ONLY — see package comment for the hardware-proven constraints. **An SSID is 0–32 arbitrary BYTES and is handled as bytes** (`ssid.go`): decoded from wpa_cli's printf_encode, carried as `ssid_hex`, compared as bytes, and written quoted when wpa_supplicant's quoted form can hold it (it reads to the LAST `"`, so quotes and backslashes are literal) or as hex when not. Until 2026-09-19 every path refused `"` and `\`, trimmed spaces, and wrote escaped text back as a different network — and the emOS wizard put SSIDs into a shell command |
 | `internal/bluetooth/` | BLE proxy — raw HCI passive scan over `/dev/stpbt` (single-owner, so Android's Bluedroid is durably `pm disable`d first), parsed into adverts and forwarded to the controller. `emit.go` decides which of them are worth sending; see "The BLE proxy" below, and read it before changing the scan cadence or the filtering |
 | `internal/outchain/` | The output chain — EQ, bass guard, limiter — applied POST-MIX at the ALSA write (#243). A port of the controller's `em_eq`/`em_mbc`/`em_limiter`, and correctness means **agreement with them**: `internal/outchain/fixture` replays golden captures and all fifteen cases match bit for bit. No build tag, deliberately — it is arithmetic and belongs in the host suite. `Chain` adds the one thing the reference does not have: parameter changes that do not click, by crossfading between two complete chains rather than interpolating coefficients (which can pass through unstable states). Keep the STAGES faithful and put every divergence in `Chain`, or the fixture stops being evidence. The controller stands down for a device announcing `output_chain` (`controller/em_outchain.py`) — shaping at both ends is two limiters in series. `Params.ForJack` is the one thing in here that is not audio: it resolves the pushed set against the plug position, and the speaker calls it on every push AND every jack transition (see the jack section below) |
 | `internal/musicplane/` | Who is filling the music plane. It had exactly one producer by construction until the device started speaking protocols of its own; Sendspin, Spotify Connect and AirPlay are each a SECOND producer of the same plane, and summing two of them is two songs rather than a mix. Home Assistant wins — a request routed through HA is the direct request made to this device — and among local sources the newest claim wins. The rule that makes it usable is that a displaced source is told to LEAVE, not merely stopped writing: a server still streaming to a client that went quiet keeps filling a buffer nobody hears and the group's view of this device stays wrong. Nothing rejoins when HA's music ends. **A pipe-fed source holds the plane only while audio FLOWS** (`IdleClaim`): librespot and shairport-sync are daemons that run continuously so the device stays in the Spotify and AirPlay pickers, and a phone that disconnects just stops writing to the pipe — so a plane released on process exit is released at the next reboot. Nothing depended on that until Home Assistant did: the arbiter was only ever asked "may I write", which a stale owner answers correctly, and the question it cannot answer is "is this Echo making a sound" — measured 2026-09-10, the Audio Source entity read `airplay` for minutes after the session was disconnected. The claim expires after `DefaultIdle` (2s, twenty missed reads) and is retaken by the next chunk; the controller's own `audioHoldoffMs` is what keeps a gap between tracks from reaching an amplifier, so this value does not have to. It also carries the ONE observer of those handovers (`OnChange`), which is what lets the controller tell Home Assistant this Echo is audible: Spotify, AirPlay and Sendspin play from programs on the device and no frame of their audio passes through the controller, so nothing else can see them. One observer, not a list — there is exactly one consumer and a slice would invite a second nobody sequenced against the first. It fires OUTSIDE the lock and BEFORE the eviction callback: outside because holding the lock across anything that can stall blocks every other claim, and before because eviction does protocol I/O on a socket that may itself be stalled, and the amplifier should not wait for a goodbye |
@@ -775,6 +775,60 @@ regmap is readable at `/sys/kernel/debug/regmap/2-0018/registers`
 contends for the same PCM and wedged a device hard enough to need a power
 cycle.
 
+**MIXER CONTROL IDS ARE NOT STABLE ACROSS KERNELS, and addressing a control by
+number is therefore a bug waiting for a new board.** FireOS 6's kernel exposes
+two more controls than FireOS 5's, early enough in the list that everything
+after shifts by two. Measured 2026-09-16 on two Dots running emOS side by side:
+
+|  | FireOS 5 | FireOS 6 |
+|---|---|---|
+| controls in the mixer | 239 | 241 |
+| `HPR Output Mixer R_DAC Switch` | 234 | 236 |
+| `ADC_A Left Ip Select ADC_A DIF1_L switch` | 223 | 225 |
+
+Until 2026-09-17 `codec.Routes` addressed all ten of its DAPM switches by
+number, so on every FireOS 6 device all ten landed two places early: 234 set
+`Left Input Mixer IN3_L P Switch` and the DAC was never connected to the output
+mixer (silence), while the eight capture writes set the single-ended IN2 inputs
+when the array is on the differential DIF1 ones. Reported as #546 by
+@jthoward64 and reproduced here on 2026-09-16. The shift starts after id 160,
+so mute (105–160), volume (61), the amp (5) and mic gain were right on both
+kernels; only the routes were not.
+
+**The failure is SILENT by construction and that is the general lesson.**
+Writing `1` to the wrong control is a perfectly valid write — `tinymix` exits
+0, the route loop's failure count stays 0, and its own "audio may be silent"
+warning cannot fire. A device logs a clean boot and plays nothing. This is the
+same shape as the mute LED being on a different GPIO than Amazon's HAL
+believed, and as `event2` being the volume button on biscuit and a touchscreen
+on checkers: **resolve by NAME, and let a name that is absent be loud.**
+
+**Fixed: every mixer write goes through `internal/bindings/mixer`**, which
+calls tinyalsa's `mixer_get_ctl_by_name` — the lookup is native, a control this
+board lacks is an error, and there is no process spawn per write. The
+firmware no longer runs `tinymix` at all (`guard_test.go` fails on
+`exec.Command("tinymix"`), and `start_server.sh` names its controls too
+(`controller/tests/test_mixer_names.py`). Four things to keep:
+
+- **Call only functions both devices' `libtinyalsa.so` export.** The NDK
+  sysroot header is tinyalsa 2.x and the devices are not; a symbol the device
+  library lacks stops the binary loading, which is a crash-loop and an A/B
+  rollback. Checked 2026-09-17 with `llvm-nm -D` against both libraries; do
+  it again when adding a call.
+- **The names are measured**, present and unique on both kernels and on stock
+  FireOS 5 (32 controls). `device/tools/mixer_probe` reads any list of them
+  through the same code path, for comparing against `tinymix -D 0 <name>`.
+- **`tinymix` accepts names on both kernels' binaries**, quoted, which is what
+  the script relies on.
+- **Verified on the bench 2026-09-17 on both kernels**, with the installed
+  server paused and the routes opened first: the new binary closed all ten,
+  the DAC path registers (`003f`, `0089`, `008c/8d`) returned to their
+  running values, and capture was live (VAD rms 0.0019–0.0023 against the
+  dead-path 0.00035). On EFF (FireOS 5, the fleet's kernel) the full 239-control
+  listing under the new binary matched the old one except a timestamp control.
+  The four mic ADCs (`tlv320aic3101`, `0-0018`..`0-001b`) have no regmap, so
+  capture is proven by signal, not by register.
+
 ## The BLE proxy, and what it costs the device running it
 
 Passive HCI scan over `/dev/stpbt`, forwarded to the controller and
@@ -932,6 +986,24 @@ hotplug reacting to a burst that has already begun. It is procfs, so it does
 not survive a reboot — hence applying it in the binary, which re-applies every
 start. Do NOT write `cpu1/online` directly: HPS re-parks it within
 `down_times`, giving a setting that appears to work and silently stops.
+
+**Board tuning under emOS (`pkg/board`, 2026-09-17).** Nothing in emOS applies
+what FireOS's `thermal_manager` and init did, so the kernel's compiled-in
+defaults ran instead — measured against a stock device: the FireOS 6 kernel
+scales cores at 50/30% (FireOS 5: 80/70), CPU throttling starts at 65°C (stock
+84°C) and the board sensor `tmp103` at 50.25°C (stock 56.5°C). `server
+platform-init`, run once per boot by `start_server.sh` on emOS only, applies
+stock's values. Three rules: the board is identified POSITIVELY by idme
+`device_type_id` (the device tree says only `MT8163`, as every MT8163 product
+does — and idme values are NUL-terminated); every zone and cooler the profile
+names is resolved by type before ANY write, else nothing is written; and every
+value is read back. An unknown board keeps the kernel defaults, which are the
+stricter setting — the wrong profile on the wrong device is the failure to
+avoid. The script greps the binary for `EM_PLATFORM_INIT_V1` first, because a
+binary without the mode ignores the argument and starts a second server.
+Stock's `.tp/thermal.conf` is MediaTek's obfuscated format (char minus
+position mod 10); Amazon's `thermal.policy.conf` is plaintext. The
+`thermal_budget` cooler's `levels` are written 0-based and read back 1-based.
 
 **`cpuPct` is a share of ONLINE capacity**, derived from the aggregate
 `/proc/stat` line. The same absolute work therefore reads as *half* the
@@ -2434,6 +2506,48 @@ Playback ring clearing waits for the device's `playback_stats` (`device.playback
   `state.json`.
 - **Volume arc** owns the ring for its 2s display window against *animations* — they repaint ~every 100ms and would otherwise stomp the arc within one frame. It does **not** outrank a deliberate action-button press: a dot release calls `CancelVolumeDisplay()`, which drops the hold so the listening frame paints (it deliberately does not repaint — the controller's frame lands within an RTT, and clearing to black would put a dark gap between the two). The arc is protection from repaint churn, not from the user. On expiry the ring repaints the latest `baseLEDs` frame (`onDisplayExpire` → `paintBaseLEDs`), handing back mid-animation. The arc shows only for physical volume button presses (v2.9.5): remote sets and the boot-time volume seed apply silently (`volumeController.Set` showRing flag). The mute-button LED is sysfs gpio444, active-high — not the gpio445 in Amazon's `libled_hal.so`, whose constant is off by one and whose pad is muxed away (stock drives the pin via the `/dev/mtgpio` ioctl; see `mute_button.go`).
 
+## Where the serial comes from
+
+The whole fleet is keyed on it, so a missing one is not cosmetic: every device
+that cannot resolve a serial registers as `unknown-device` and they collide
+with each other. Three sources, in `GetSerialNo`, and emOS's `init.c` mirrors
+the same order for the same reasons:
+
+1. **`/proc/idme/serial`** — Amazon's ID Manager, exported by their kernel
+   driver and world-readable. The hardware value, needing no property service
+   and no bootloader argument, and it answers identically under FireOS, emOS
+   and TWRP. Verified 2026-09-15 on a v1 (matching `getprop` exactly) and a v2
+   in recovery.
+2. **`getprop ro.serialno`** — needs Android's property service, so FireOS only.
+3. **`androidboot.serialno` on the kernel cmdline** — needs Android's init NOT
+   to have run, since it consumes every `androidboot.*` argument and strips it.
+
+**idme leads because the cmdline is not reliably there to be read.** On FireOS 6
+the kernel is 32-bit, so `COMMAND_LINE_SIZE` is 1024; LK wraps the image cmdline
+with 421 bytes of prefix and 344 of suffix, and emOS's own cmdline is 385 bytes
+against stock's 70. Total 1150, and `androidboot.serialno` — near the end of
+LK's suffix — starts at byte 1040 and is cut off before the kernel sees it.
+FireOS 5 boots aarch64 where the limit is 2048 and the same string fits, which
+is why this presented as specific to amonet 2.x. Measured on the spare,
+2026-09-15.
+
+**The cmdline is the only source that can be WRONG rather than absent**, and it
+cannot be guarded against: a value cut mid-truncation is short but well formed,
+and procfs appends a newline either way, so it is byte-identical to a serial
+legitimately last on the line. Using it at all is therefore logged.
+
+A value that is not printable ASCII is **rejected**, not passed on. This is an
+identifier the controller stores, logs and keys rows on, so a plausible-looking
+wrong one is worse than none — `unknown-device` at least says it does not know.
+`emos/init/serialcheck.c` covers both parsers off-target.
+
+**`/proc/idme` carries more than the serial**: `board_id`, `product_name`,
+`productid`, `device_type_id`, and per-unit `alscal` and `miccal.0`–`miccal.6`.
+The board fields are the identity candidate for #541 — `/proc/device-tree/model`
+reads `MT8163` on every board using that SoC and cannot discriminate between
+them, while `device_type_id` (`A3S5BH2HU6VAYF` on a Dot 2) can. The calibration
+values have never been read by anything here.
+
 ## The emOS console password
 
 `consolePassword` arrives on the config push and the firmware does exactly one
@@ -2499,4 +2613,4 @@ including why hashing is worth it when deleting the file defeats it, is in
 
 ## cgo dependency
 
-SpeexDSP C source (AEC) is vendored in `device/internal/aec/`. The compiler Docker image provides the ARM cross-toolchain. If adding new cgo dependencies, they must compile cleanly with the `revoice-compiler` image against the FireOS 5 sysroot.
+SpeexDSP C source (AEC) is vendored in `device/internal/aec/`. `internal/bindings/mixer` links the device's own `libtinyalsa.so` (see the mixer section for the symbol rule). The compiler Docker image provides the ARM cross-toolchain. If adding new cgo dependencies, they must compile cleanly with the `revoice-compiler` image against the FireOS 5 sysroot.
