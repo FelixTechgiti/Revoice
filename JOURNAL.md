@@ -2837,3 +2837,630 @@ Three things came out of it that outlive the flag, and they are in
 every minute, which is the fault 0.6.0's DNS proxy exists to end. Either the
 running image is not what it should be or the proxy does not cover this case,
 and the two want different next steps — see the follow-up.
+
+## 2026-09-14 — we ship busybox, and stop overwriting the stock boot image
+
+Two dependencies emOS should never have had, and both were invisible because
+something else on the device happened to cover for them.
+
+**The first was busybox** (#524). `init.c` starts DHCP on FireOS 6 with
+`/sbin/udhcpc`, and nothing ever shipped one — the 09-12 WiFi work was done on a
+device carrying amonet v2's *optional* root component, which had left a busybox
+at `/data/local/bin`. It reached further than DHCP: `ntpd`, `syslogd`/`klogd`
+and `em-wifi`'s `awk` all resolved through the same lookup, and on FireOS 5 the
+copy in use was Amazon's.
+
+**The toolchain was the whole problem, and the OS was not.** Building busybox
+`defconfig` against the pinned NDK needed eight source patches — `utmpx.h`,
+`sys/kd.h`, `in6_ifreq` defined twice, no `SYSLOG_NAMES`, `union semun`, missing
+`SWAP_FLAG_*`, then `getusershell`/`ether_hostton`/`setbit`/`gethostid`/
+`explicit_bzero` absent at link — twenty applets disabled to get that far, and
+clang 9 **segfaults** compiling `hush.c`, reproduced at `-j1` with 17GB free.
+The binary is static, so it needs only the kernel's syscall ABI and the libc is
+a free choice; bionic is the wrong one because busybox does not target it.
+Against musl the same `defconfig` built first try with zero patches and zero
+disables. That is also why amonet's busybox "just worked" — it is an
+OpenWrt-style musl build.
+
+Alpine over a convenience image, because it is a distribution's own gcc and musl
+rather than one maintainer's; qemu makes it a native armv7 build with no
+cross-compilation surface to get wrong, at ~8 minutes. 980,284 bytes, 397
+applets, static ET_EXEC ARM32, and byte-identical across four independent builds
+once `SOURCE_DATE_EPOCH` is pinned — without it the banner carries wall-clock
+time and nothing is verifiable.
+
+**toybox was evaluated properly and is not the answer**, which is worth writing
+down because 0BSD makes it look like one. Built it: 617,636 bytes, 228 applets —
+and of the 21 emOS needs, eight are in `toys/pending/`, whose own README says the
+code "may or may not work, some of the commands here are unfinished stubs".
+`dhcp`, `syslogd`, `klogd`, `route`, `ip`, `awk`, `vi`, `less` — every one of
+them. `pending/dhcp.c` is copyright 2012–2013 and has sat there unpromoted for
+over a decade. The decisive part: **FireOS 6 already ships toybox**, so "use
+toybox" is the configuration we have and it is what fails.
+
+**Ordering, not just presence.** `busybox_path()` now puts ours FIRST on every
+layout. Everything else in that list belongs to somebody else — Amazon's on
+FireOS 5, a third-party root's on FireOS 6 — and searching those first hands
+DHCP, `ntpd` and the system log to a binary of unknown vintage that a reflash
+can remove, with nothing reporting the swap. Proven by planting a decoy busybox
+at `/data/local/bin` and rebooting: `/sbin/awk -> /sbin/busybox`, ours still won.
+
+**GPL-2.0 is the only licence here obliging us to distribute SOURCE**, and that
+is met by ASSETS rather than by wording in the notes. Every release publishes the
+verified upstream tarball and the licence text beside the binary; a link to
+busybox.net would leave compliance depending on a third party's server layout.
+The build proves the binary came from that tarball by diffing the compiled tree
+against a fresh extraction — "we do not patch busybox" is a claim about the
+build, and the supplicant script beside it patches its sources with inline
+python, so a keyword grep for `patch` would have been theatre.
+
+**The second dependency was the stock boot image**, and the wizard was eating it.
+It wrote the slot the device had BOOTED, which on a stock device is the slot the
+stock image is in. That image is the build reference for every future emOS image
+and the only way back to FireOS, and we ship neither a kernel nor a userspace —
+so once both slots hold emOS there is nothing on the device to rebuild from. The
+spare was in exactly that state, its only surviving stock FireOS 6 boot image an
+escrow on a laptop.
+
+**Where boot-next lives, finally.** `misc` offset 864 held `00 41 42 42 01 8f`,
+recorded as undecoded since 09-13. It is Amazon's own `bootloader_control`:
+magic `0x42424100`, a version byte, then AOSP's `slot_metadata` bitfield per slot
+— priority in the low 4 bits, tries in the next 3, successful in the top. A
+healthy device reads A=`0x8f` and B=`0x00`. TWRP ships `bcbtool` (a wrapper on
+`amzn_bcbtool`) with `get_active`/`set_active`, which confirmed the decode on the
+same boot. **Writing a slot does not select it**, and that is the whole defect:
+a verified write can still boot the other slot, which presents as the flash
+having done nothing.
+
+**An emOS install is a PAIR**, and this is the part that took the longest to see.
+emOS carries Amazon's kernel and its own ramdisk and nothing else — bionic, the
+linker, tinyalsa, `/system/bin/sh` and the WiFi firmware all come from `/system`
+at runtime, 768MB of Amazon's code we neither ship nor could. `init.c` hardcoded
+`mmcblk0p13` for it, which is right only while the reference comes from slot A —
+and once stock keeps its slot and emOS goes in the other, the boot slot and the
+system slot are *deliberately different*. So the packer stamps
+`emos.system=/dev/block/mmcblk0pN` onto the image's own cmdline and init mounts
+that. A build-time fact frozen into the image, deliberately NOT read from the
+BCB: that says where emOS is booting FROM, which is precisely the slot we do not
+want. `cmdlinecheck.c` is the fifth off-target check, because a misparse does not
+fail the mount — every system partition on these devices holds a valid FireOS, so
+it mounts a *different* Amazon userspace, boots, and looks healthy.
+
+Proven by stamping **p14** on purpose, since p13 is what the fallback picks and
+would have proven nothing: `/proc/mounts` came back p14 and the boot was healthy.
+Which incidentally settles the version-skew worry — emOS runs fine off either
+FireOS 6 system.
+
+**The hardware run found a bug no test could have.** Running the shipped probe
+against the spare returned `SLOT b stock` for a slot holding an *older emOS
+image*: `emos.system=` only exists on images built since the stamp, so every emOS
+image already in the field read as stock. The wizard would have escrowed an emOS
+image AS the stock recovery image, preserved it, and never found the real one.
+`ramoops.mem_address=0x44400000` covers those — our packer has appended it to
+every image it has ever built — and it is matched by full address rather than the
+bare key, because the two ways of being wrong are not equal: reading OURS as
+stock costs the escrow, reading STOCK as ours overwrites it. The classification
+happens in shell, so the guard matches the `case` statement rather than the
+comment above it.
+
+Then the whole rule end to end: both-ours refused with the escrow instruction,
+stock restored into slot B, donor B / target A chosen (**not** the booted slot,
+which is what the old rule followed), image built against `system_b`, written to
+slot A, BCB pointed at A, device booted emOS mounting p14 — with
+`7506fab6…` still sitting in slot B.
+
+**FireOS 5 is untouched and does not get the fix.** Every new path is gated on
+the v2 layout. `system_a` is p13 there too (verified on a live FireOS 5 device),
+so an unstamped v1 image falls back correctly; but the boot partitions are p17/p18
+in Android's map against p10/p11 on v2, and v1's `other-boot` names the ACTIVE
+slot — so that flow still overwrites the stock image, and fixing it needs a v1
+device to write against.
+
+Two smaller things fixed on the way, both known and both unfixed since 09-12: the
+console now sets `ANDROID_DATA`, so commands stop printing two lines of tzdata
+warning before their own output; and `console` has a `req`, so an unexecutable
+shell logs `svc console absent` once instead of respawning for ever — the failure
+mode that hid the FireOS 6 system-as-root layout for a day.
+
+**Still open from today**: `ntpd` runs and queries `10.10.1.1` — the router, from
+DHCP — which does not serve NTP, so it backs off for ever and the clock stays at
+2010 until the controller's `ack` supplies it. Real, not a regression, and
+choosing an NTP source is a decision with a phone-home flavour rather than a bug
+fix. Also worth knowing: `pgrep` on emOS reports nothing for `ntpd`, `syslogd` or
+`klogd` while `/run/messages` is actively being written, so it is not evidence a
+service is dead.
+
+## 2026-09-15 — two releases, and the serial was never on the cmdline to find
+
+Shipped `emos-v0.6` (busybox 1.38.0, stock boot image preserved, GPL source as
+release assets) and `controller-ea-v2.24.0-ea.5` carrying it. GA stays 2.23.1
+and `:latest` did not move. The order was not optional: `EMOS_SBIN_ASSETS` now
+refuses a payload without `busybox`, so a controller built after #533 cannot
+build a FireOS 6 image against emOS 0.5.
+
+Also merged #528 (the OWW model leak, ~2.5GB over three days, @scragnog) and
+#540, which fixed three faults in the wizard's connect step. One of those is
+worth restating because the issue understated it: `readFireosBuild` globbed
+`/dev/block/platform/*/by-name`, which amonet v2 does not have, so **no** v2
+device could ever have its FireOS build, Android release or identity read. #513
+had fixed the same belief in `classifyBootTarget` without sweeping the second
+call site. When a wrong assumption is fixed, grep for its other homes.
+
+**The serial.** An emOS device on amonet 2.x reports none, and the fleet is
+keyed on it — every such device registers as `unknown-device` and they collide.
+The first three hypotheses were all wrong and all cheap to kill: amonet 2.x's LK
+not supplying it (it does — read it straight off the device), the emOS packer
+dropping it (it preserves the donor cmdline and appends), and PR #463's
+territory (that is the FireOS flow's patcher, a different path).
+
+It is **length**. LK wraps the image cmdline with 421 bytes of prefix and 344 of
+suffix; emOS's own cmdline is 385 against stock's 70, for a total of 1150.
+FireOS 6 runs the 32-bit kernel — the reason we ship `init32` — where
+`COMMAND_LINE_SIZE` is 1024. `androidboot.serialno` sits near the end of LK's
+suffix, starts at byte 1040, and is cut off before the kernel sees it. FireOS 5
+boots aarch64, limit 2048, same string fits. Both parsers were correct the whole
+time and there was nothing to find, which is why it presented as a v2 quirk.
+
+The fix came from Wil asking whether the hardware exposed it somewhere.
+**`/proc/idme/serial`** — Amazon's ID Manager, exported by their kernel driver,
+world-readable, no property service and no bootloader argument. It reads
+correctly on a v1 under Android (matching `getprop` exactly) and on a v2 in
+TWRP where the cmdline is empty. Both halves now try it first.
+
+Trimming the cmdline was the alternative and is worse: it buys bytes by dropping
+FireOS arguments (`lowmemorykiller.*`, `veritykeyid`) whose only proof is a
+boot, and it leaves the serial hostage to a budget the next addition silently
+blows again. The cmdline stays as a fallback and is now **logged when used**,
+because it is the one source that can be wrong rather than absent — a value cut
+mid-truncation is short but well formed, and procfs appends a newline either
+way, so it cannot be told from a serial legitimately last on the line.
+
+`serialcheck.c` is the sixth off-target check and earned its place before it was
+wired into CI: it caught `serial_copy` leaving partial output on rejection,
+which handed back stale stack bytes that read as a perfectly valid serial, and
+`serial_from_cmdline` matching a longer argument merely *ending* in our key —
+the same trap `cmdlinecheck.c` already guards for `emos.system=`. The Go half's
+test then failed in CI having passed locally, because the fixtures were written
+`0o444` and rewritten in the same test: root ignores the permission bits and the
+runner does not.
+
+**`/proc/idme` carries more than the serial** — `board_id`, `product_name`,
+`device_type_id`, and per-unit `alscal` and `miccal.0`–`miccal.6`. That matters
+for #541, filed today for the board framework: `/proc/device-tree/model` reads
+`MT8163` on both Dots, so it names the SoC and cannot discriminate between
+boards on the same chip, while `device_type_id` can. The microphone calibration
+values have never been read by anything in this project.
+
+Also today: #541 itself, after @vithurshanselvarajah asked on #535 what
+maintenance would be expected of someone porting to an Echo 2 (radar). The
+answer is architectural rather than a policy — the firmware should detect the
+board and resolve every hardware hook by name, so nobody has to hold every piece
+of hardware to keep a board alive. The four `pkg/` interfaces already exist; what
+is missing is selection, topology hardcoded inside the bindings, and bindings
+that cannot build off-target. Device emulation in CI was considered and parked:
+the bugs this project actually has — DAC clipping, mixer state, a kernel bus
+timeout in the audio IRQ, a partition write landing in the wrong slot — all live
+below the line any emulator draws.
+
+## 2026-09-16 — a wizard run that worked, and ten codec switches that never did
+
+Two releases out (`controller-ea-v2.24.0-ea.6`, `emos-v0.7`), the emOS wizard
+run end to end on a stock FireOS 6 device for the first time, and the fault
+that run exposed.
+
+**#545: the build endpoint dropped `system_part` on the floor.** The packer's
+stamping code was correct and tested; it was never reached. The multipart
+parser is a hand-written if/elif over `field.name` and had no branch for that
+field, so it was skipped in silence, `parts` never carried it,
+`build_emos_image` ran with `system_part=None`, and every emOS image was built
+with no `emos.system=` stamp. emOS then fell back to the p13 it hardcoded
+before the stamp existed. Three things said it was working: the release notes,
+the wizard's own transcript naming the partition it had resolved, and a
+controller log line reading `with no /system stamp (older wizard)` — which
+blamed the caller for the handler's omission, and was wrong a second way since
+the v1 path sends no partition by design.
+
+Nothing could have caught it. The packer's tests pass `system_part` directly,
+`slot_choice.test.mjs` covers the wizard resolving it, and no test crossed
+between them. `tests/test_emos_image_fields.py` now does, comparing what
+`runBuildEmos` appends against what `em_api` reads — the Python side via `ast`
+and the JS side from the function's own body, so a comment naming a field
+satisfies neither half.
+
+**It was not theoretical, and tonight proved it.** The wizard run stamped
+`emos.system=/dev/block/mmcblk0p14`, because the device had booted slot B so
+stock stayed in B and the donor was `system_b`. The old fallback would have
+mounted p13 — the wrong userspace — and booted anyway.
+
+**#546: every codec route write lands on the wrong control on FireOS 6.** Its
+kernel exposes two extra mixer controls early in the list and everything after
+shifts by two. Measured on two Dots running emOS side by side:
+
+                                   FireOS 5   FireOS 6
+    controls in the mixer             239        241
+    HPR Output Mixer R_DAC Switch     234        236
+    ADC_A Left ... DIF1_L switch      223        225
+
+So 234 set `Left Input Mixer IN3_L P Switch`, the DAC was never connected to
+the output mixer, and the device played nothing. Reported by @jthoward64 as two
+playback controls; it is **all ten**, because the eight capture writes set the
+single-ended IN2 inputs while the microphone array is on the differential DIF1
+ones. Setting 236 and 239 by hand restored audio immediately.
+
+**It fails silently by construction**, which is why a user found it rather than
+a test: writing 1 to the WRONG control is a valid write, so `tinymix` exits 0,
+the failure count stays 0, and the "audio may be silent" warning never fires.
+The whole fleet was FireOS 5 until amonet v2 made FireOS 6 devices usable, so
+this shipped working and broke only for new users.
+
+**The fix on the branch parses `tinymix`'s listing, and that is the wrong
+answer.** `mixer_get_ctl_by_name` is in the NDK sysroot's `tinyalsa/mixer.h`,
+the device's own `/system/lib/libtinyalsa.so` exports it, and we already link
+that library for PCM. The C API does the lookup natively, returns NULL for a
+control that is not there, and removes eleven process spawns from a boot path
+where heavy shell commands have been observed inducing mic capture stalls. The
+parsing version was written first and a test immediately caught it matching a
+longer control that merely started the same way. Rewrite it on the mixer API —
+the cost is not the code, it is verifying it on a FireOS 5 device, since every
+fielded device is FireOS 5 and this replaces their audio bring-up wholesale.
+
+**Two smaller faults of the same family, both found by auditing rather than by
+symptom.** A wake threshold of exactly 1.0 was storable and can never fire, the
+score being a sigmoid that approaches 1.0 while the comparison is `>=`; clamped
+at the DB write path, because the device takes its threshold from the pushed
+config and clamping the dashboard would leave it deaf with a reassuring screen.
+And `adcDigitalGain`/`adcMicpga` were gated on being non-zero, so dragging
+either slider to 0 saved, displayed, and changed nothing — they are pointers
+now, like the three sibling keys that were already done that way.
+
+**What the wizard run did not reproduce.** #544 needs a device whose ACTIVE
+slot is A, so that emOS is written to `boot_b`. This device booted B, so emOS
+went to `boot_a` — the slot @jthoward64 reports as working.
+
+**Still open from the run:** `Could not read /system/build.prop` on an amonet
+v2 device, which #517 was supposed to fix. `_sysreadScript` already handles
+FireOS 6's system-as-root layout, so it is either an empty `ro.boot.slot_suffix`
+in TWRP resolving `system_a` on a device that booted B, or the mount not
+happening. The consequence is that the Android release and board checks both
+silently skip on v2.
+
+## 2026-09-17 — the codec by name, emOS's missing policy, and a bootloader that only starts slot A
+
+Five merges (#557, #558, #559, #561, #564), one PR waiting on a hardware run
+(#563), no release. Both bench Echos run a local build of main
+(`v2.15.0-37-gd5e9456`).
+
+**Releases, as settled tonight.** A device `v*` tag goes straight to the GA
+fleet through OTA, so firmware is soaked as a LOCAL build on the bench first.
+And any EA cut is a GA release candidate. The agreed order: local build on the
+bench (done), new `start_server.sh` plus a reboot on both kernels (done), the
+wizard blockers (#563, #564, #463/#455, #468), then ea.7 as RC1 with a ~7-day
+soak on both kernels, then firmware and GA.
+
+**#546 fixed properly (#557).** Every mixer control is now reached by name
+through tinyalsa's `mixer_get_ctl_by_name` (`internal/bindings/mixer`), and
+the firmware no longer spawns `tinymix` at all. The id shift on the FireOS 6
+kernel starts after control 160, so only the ten route switches were ever
+wrong; mute, volume, amp and mic gain were right on both kernels, which
+corrects the 16th's reading. The cgo half calls only functions both devices'
+`libtinyalsa.so` export — the NDK header is tinyalsa 2.x, and a symbol the
+device lacks would stop the binary loading. Bench test on both kernels with the
+installed server paused and the routes opened first: all ten closed, the DAC
+path registers came back, mic live; on EFF the full 239-control listing under
+the new binary matched the old one except a timestamp control.
+
+**emOS was running the kernel's compiled-in policy, not stock's (#558).**
+Diffed kernel state between stock FireOS 5 (71VVV) and emOS on both kernels.
+Not missing: the watchdog threads, `panic_on_oops`, thermal protection as such.
+Different: the FireOS 6 kernel scales cores at 50/30% (why the spare sat on
+four), and the kernel's thermal defaults are STRICTER than stock — CPU throttle
+from 65°C against 84°C, the board sensor from 50.25°C against 56.5°C. Stock's
+values come from `/system/etc/.tp/thermal.conf` (MediaTek's obfuscated `.mtc`:
+each character minus its position mod 10) and Amazon's plaintext
+`thermal.policy.conf`. `pkg/board` identifies the board by idme
+`device_type_id` (the device tree says only `MT8163`; idme values end in a
+NUL, which the first hardware run tripped over and correctly refused on), and
+`server platform-init`, run by `start_server.sh` on emOS only, applies stock's
+values after resolving every zone and cooler by name. An unknown board keeps
+the kernel defaults. emOS uses ~45MB of 493MB, so zram and the VM tunables
+were left alone.
+
+**Crash logs are collected (#559).** emOS saved `last_kmsg` every boot and
+nothing read it. The controller now checks it on connect, reports a boot that
+did not end in `reboot: Restarting system` as a `kernel` error event, and marks
+the copy seen on the device. MediaTek prints a call trace on every restart, and
+C95's crash left no panic line, so "clean" has to be the positive test. All
+four saved logs on the bench are ordinary reboots.
+
+**#544 is the bootloader, not the image.** amonet v2's LK on biscuit starts
+`boot_a` whatever the BCB says; the BCB changes `androidboot.slot_suffix` and
+nothing else. Proven on the spare: BCB set B-active, reboot, the emOS image in
+`boot_a` came up reporting `_b` (BCB restored after). kaeru hands normal boots
+to the stock `get_boot_part()`, so its source could not settle it. The 09-14
+rule — write the slot that is not stock — worked only where stock sat in B.
+#563 always targets A and copies stock A→B first when A holds the only copy.
+It also fixes the escrow reading the slot LK *reported* booting rather than the
+one holding stock.
+
+**The v2 `build.prop` failure (#564).** TWRP 3.7 makes `/system` a symlink to
+`/system_root/system`, which does not exist until mounted, so the wizard's
+mount on `/system` failed with ENOENT and its script still printed the
+sentinel. Every v2 device read as "build unknown" and the release and board
+checks skipped. Now mounted on a private `/tmp` directory; verified in TWRP on
+the spare, not on v1's TWRP 3.2.3.
+
+**A lesson paid for.** `/init recovery` on EFF (amonet v1) did not come up as a
+USB-visible TWRP and needed Wil to power-cycle it. On the v2 spare the same
+command reaches TWRP with adb in about a minute. Do not send a v1 device to
+recovery without someone at it.
+
+**Also:** #235 was already fixed by #249 in August — a stale note put it back
+on the blocker list. Filed #560 (an emOS `emos-svc` start/stop; note
+`/init <word>` reboots into boot mode `<word>` today) and #562 (the ADC digital
+gain reads 88 on a control reporting range 0–64, identically on stock).
+
+**Still open:** the spare's keepalive drops and "wake word fell behind"
+warnings (none since 12:19, several coincided with console use, two overnight
+did not); `wifi_tx_thro` 302/258 on emOS against 0 on stock; the new
+`start_server.sh` has not been through a reboot on a FireOS device running
+EchoMuse — the bench has none.
+
+## 2026-09-18 — the mute button is a key, and what stock FireOS does to make sound
+
+**The Dot 2's mute is not a hardware kill switch.** Measured on VVV (stock
+FireOS 5.5.5.4) with Wil at the device. The physical press arrives as
+`KEY_MUTE` on `/dev/input/event1` (`mtk-kpd`), identical to one injected with
+`sendevent`. Muted, all nine capture channels read bit-exact zero with Wil
+clapping: the mute is real, and it is in the digital path (codec ADCs or the
+audio front end), since an analogue disconnect would still leave a noise
+floor. One injected `KEY_MUTE` then undid the PHYSICAL mute: ring off, the
+seven mics back at ~−62dBFS, claps at −34dBFS. Wil's working theory was a
+flip-flop behind the button; there is none in this path. `gpio445` stayed high
+throughout, muted or not, consistent with it being the wrong pin (the real
+mute LED is gpio444, `mute_button.go`).
+
+This corrected `docs/quickstart.md`, which called our mute "hardware-level
+since v2.7.4". Ours is the same shape as stock's: the firmware writes the four
+codecs' mute controls and refuses `mic_start`. Real, and inside the chips, but
+reversible by any root process, and "hardware-level" read as "software cannot
+undo it". The internal notes' "hardware ADC mute" is accurate and stays; it
+is the user-facing claim that promised more than the board has.
+
+**Recording the array needs our own tool, and the mediaserver trap is sharper
+than the jack notes said.** Stock `tinycap` cannot open biscuit's mic at any
+depth: `-b 24` is 4-byte S24_LE, the hardware takes only packed S24_3LE, and
+16/32 fail the same way. `porting/pcm_capture` is `capture_mics` with flags.
+And a PCM mediaserver holds is not merely busy: `tinypcminfo -D 0 -d 24`
+blocked indefinitely and had to be killed, so everything that touches the mic
+runs after `stop media`, which Android undoes by restarting it.
+
+**Watching stock make a sound recovers the route we found by hand.**
+`porting/probe.sh` presses volume up then down so FireOS plays its chime, and
+diffs the mixer, regmaps and DAPM graph against idle. On VVV: `pcm23p` at
+S16_LE/2ch/48k, `Ext_Speaker_Amp_Switch` On, `Audio_DacMux_Setting` flipped,
+`HP Driver Gain Volume` 0→6, codec `003f`/`0040`/`0089`/`0090`/`0091`. That is
+the DAC path biscuit's bring-up assembled over weeks; for a new board it is
+one chime.
+
+**#463 changes nothing on stock FireOS 5, and #455's premise was read off
+slot B.** Its patch function, run on three stock FireOS 5 boot images
+(5.5.5.4's update package, a 2017 image and the v2test copy), wrote bytes
+identical to the old 51-byte replacement: a stock slot A cmdline is only
+`bootopt=64S3,32N2,64N2`. The "everything FireOS shipped" list (lowmemorykiller,
+rootwait, verity) is slot B's. Merged on that basis without a bench run.
+
+**VVV's slot B is a 32-bit kernel.** `boot_b_x` (p11) starts `00 00 a0 e1`
+after its MTK header, an ARM zImage, and carries `bootopt=…,32N2`; slot A is
+gzip and `64N2`. So `bootopt`'s third field reads as kernel bitness, and a
+FireOS 5 Dot 2 carries a 32-bit kernel image it never boots. One device.
+
+**Also today:** `porting/` (profile, probe, `pcm_capture`, a README for
+testers) in #570; the dev add-on installed on the HA host from main + #563 +
+#568 + #569, stopped, `boot: manual`, ESPHome from 16201; #563 and #568
+rebased over #463's conflicts.
+
+**The FireOS 5 native wizard path, on the bench.** VVV restored to stock
+5.5.5.4 (wipe cache/data, sideload `272.6.8.0`, f1r30s; the lk/tee write
+errors in the log are amonet's TWRP protecting the unlock), then provisioned
+through the dev add-on with the soaking firmware (v2.15.0-37-gd5e9456). All 13
+steps; #568's escrow landed before the flash, a wrong Magisk file was refused
+before any write, and Restore verified against the partition; #463's cmdline
+came out exactly as predicted. The new firmware registered, HA adopted it on
+16201, and a full turn ran (`Close the office blind.`, outcome ok) — the first
+time the name-based mixer code has run under stock FireOS rather than emOS.
+
+It found three wizard faults. A restore left the run on the next step as if
+the undone write still held, and a boot image picked as the custom server
+installed cleanly, the step verifying only size — both fixed in #571 (a
+restore ends the run; the file must be a 32-bit ARM ELF carrying our module
+path). And the "already registered" check matched a row created only by a
+minted TLS token, which has no `firmware_ver` and has never connected — not
+yet fixed.
+
+**HA's satellite setup timed out once, n=1.** The connection test failed on
+the first attempt and passed on the second, and from our side the two are
+identical: the proxied test sound fetched, 102 periods streamed, playback
+device-confirmed in 4.5s. The only difference is timing — the first announce
+arrived 0.2s after HA's first connection. The test passes when the satellite
+fetches a URL, and for ESPHome HA wraps that URL in its ffmpeg proxy, so the
+fetch that counts is ffmpeg's; the guess is that it, or HA's listener, was not
+ready that early. Unverified: HA debug logging on `assist_satellite` and
+`esphome` across a re-add would settle it. The same session's
+`SatelliteBusyError` was a 7.3s link stall stretching a 2.9s announcement to
+8.7s while HA asked for another — correct refusal, VVV's WiFi worth watching.
+
+**All three provisioning paths ran on hardware through the dev add-on
+(main + #563 + #568 + #569), and the release order's bench gate is met.**
+
+*emOS on FireOS 6, the spare, #563's three slot cases*, each set up by hand in
+TWRP and verified by read-back after dropping caches, with both slots copied
+off first (`/root/em-diag/spare-2026-09-18/`). Stock only in B: built from B,
+emOS to A, B's md5 unchanged read from emOS afterwards (`busybox mknod` then
+md5). Both stock: built from A against system_a (p13), B kept, and emOS booted
+on p13 for the first time on this unit. Stock only in A: the wizard copied A
+to B and verified it, logged "Stock FireOS is now kept in slot B", and only
+then wrote A; B read back as `7506fab…` from the device afterwards. That is
+the copy path, and it is the one that protects the only stock image.
+
+The build is REPRODUCIBLE: run 1's image was byte-identical to the one
+already in slot A (same donor, same init, same stamp, `82a6cba9…` both), and
+runs 2 and 3 built `e615da4c…` twice. So a re-provision that changes nothing
+writes identical bytes — run 1 proved the logic and the write path, not a
+change of content.
+
+*emOS on FireOS 5*, on G090LF11803611NF (v1) rather than VVV, because it was
+already emOS v0.5 and makes the v1 re-provision case: escrowed our own image
+(`d619034b…`, recognised by the ramoops marker alone — it predates the
+`emos.system=` stamp), the packer rebuilt from it without doubling its own
+arguments, and it came up v0.7 on aarch64 and registered. No stamp on v1 is by
+design (the v1 path sends no system partition; emOS falls back to p13). #564's
+`/system` read worked on TWRP 3.2.3, its last untested case. v1's slot B holds
+the 32-bit-kernel image again (`32N2`), as on VVV.
+
+**Traps met on the way.** TWRP 3.7's dd refuses `conv=fsync` outright ("conv
+option disabled") and writes nothing — caught only because every hand write
+was read back; the wizard is unaffected because it writes with busybox dd.
+Plugging a Dot into this box power-cycles it, so the console is not there for
+~40s. This box has no udev: a third ACM port needed `mknod /dev/ttyACM2 c 166
+2`. And the emOS console's idle timeout drops back to the password gate, where
+a command is taken as a wrong password.
+
+**Still owed from the bench:** the "already registered" check matching a
+token-only row; the stale "No Echo unlocked with v2 has been through this
+wizard before"; and "Build: Android 16.1.0" read from TWRP's own ramdisk on
+the first line. #571 (restore ends the run, the server-binary check, the
+FAIL-BUSY scan) is green and not merged. The three bench devices now hold
+dev's CA, so the ea.7 soak needs them re-provisioned through EA.
+
+**The first public board profile leaked its owner's identifiers.** @technotiger
+ran `porting/profile.sh` on a Dot 3 (donut) and attached the result to #527.
+The Dot 3 publishes Amazon's whole idme block in its device tree, so the
+serial, WiFi and Bluetooth MACs and `mac_sec` went out with it: the script
+read `/proc/idme` through an allowlist and then copied the tree's `/idme` node
+wholesale. The Dot 2's tree has no such node, so testing on VVV found nothing.
+Deleted the comment, apologised, and pointed them at GitHub Support — the
+direct attachment URL still serves the file after the comment is gone, which
+is worth knowing before anyone relies on deletion. #574 removes `/idme` and
+`/chosen` before anything is built from the tree and, as the backstop,
+refuses to make the archive if the device's serial survives anywhere in the
+output; the #527 post now links the fixed commit. The shape to remember: an
+allowlist on one path is no protection if a second path copies the same data
+raw.
+
+**Evening.** ea.7 (RC1) is on the EA add-on; EFF reconnected and took the new
+`start_server.sh` (md5 `4e91b101…`), which is safe on released firmware because
+`platform-init` needs the `EM_PLATFORM_INIT_V1` marker v2.15.0 lacks and every
+control name exists on stock FireOS 5. The soak has not started: the spare,
+VVV and NF still trust dev's CA and need re-provisioning through EA.
+
+The first Dot 3 (donut, MT8167B) profile: LED driver identical to biscuit's
+(`is31fl3236` @ 0-003f), mics 4ch S32_LE on `pcm1c`, playback `pcm6p`
+S16/2ch/48k through a TAS2770, an AWB write-back stream on `pcm7c` that looks
+like a hardware echo reference, `gpio-privacy` delivering KEY_MUTE with DOWN
+and UP 48µs apart (a latch, probably — untested), and its BCB marking slot B
+active. It also exposed two porting bugs fixed in #575: its mic belongs to one
+of Amazon's own daemons, not mediaserver (probe.sh now finds the holder's init
+service by pid), and toybox `ps` needs `-A`.
+
+#566 (quiet jack output) was answered; the jack gain fix has been in v2.15.0
+since 09-10. #576 is open and NOT merged: the emOS / FireOS 5 slug per device,
+middle-ellipsis for long names and versions across six sites, and a 32-character
+label cap (HA itself has none; 255 is its entity_id limit). Its first browser
+look squeezed the tile's name to two letters, so the name now owns the header
+row with firmware · OS beneath it — built into the dev add-on (stopped) and
+not yet seen.
+
+
+## 2026-09-19 — what a TWRP wipe takes, and why it does not matter on biscuit
+
+Wil asked for an optional TWRP wipe at the start of the wizard and, before it
+was built, for an in-depth look at what `twrp wipe data` actually does, since
+he uses it routinely. From TWRP's source (android-8.1 for v1's 3.2.3,
+android-12.1 for v2's 3.7): `wipe data` is `Factory_Reset()`, which deletes
+everything in /data except lost+found, misc/vold and — on data-media builds —
+media/; `wipe cache` formats /cache. So it removes `/data/nvram`, MediaTek's
+home for WiFi/BT config, and emOS never runs the `nvram_daemon` that rebuilds
+it. Wil's own wipes were always followed by a FireOS boot, which rebuilds it.
+
+**On biscuit nothing in /data/nvram is per-device**, measured read-only over
+USB serial on EFF and the spare. The GPT has no `nvram`, `nvdata` or `proinfo`
+partition — the three libnvram restores from — so the stock daemon can only
+write compiled defaults. EFF's `APRDEB/WIFI` is byte-identical to the 512-byte
+symbol `stWifiCfgDefault` in its own `/system/lib/libcustom_nvram.so`, plus a
+trailer `0xAA` and an 8-bit checksum (add on even bytes, xor on odd; n=1 on a
+non-zero file). The MACs and mic/ALS calibration live in `/proc/idme`, a
+partition: wlan0 matched idme's `mac_addr` on both. Both kernels do read
+`/data/nvram/APCFG/APRDEB/WIFI` (country, 5GHz enable, band-edge TX power),
+and the spare — no /data/nvram at all — ran 16h associated on 5GHz. EFF, WITH
+the file, still runs country `WW`: the default's country code is 0, which the
+driver replaces with WW. After a clean reboot of both, the spare (no file)
+reads identically: `/proc/net/wlan/country` WW, firmware 0xa.66, associated at
+5785, and the same `Country:0 is not support. Replaced with WW` at boot.
+Whether the fallback matches `stWifiCfgDefault` in the TX power fields is not
+measured — the driver's NVRAM lines sit below the default log level. If
+parity is ever wanted the file can be regenerated from the device's own
+`/system` by symbol name: data, no vendor code.
+
+A bench trap met on the way: with no udev here, the ACM minors follow USB
+enumeration order, so rebooting two devices swapped ttyACM0 and ttyACM1.
+Re-read `/sys/class/tty/ttyACM*/device/../serial` after every reboot.
+
+The wipe shipped **emOS flow only**, default off: on FireOS 5 a data wipe also
+takes f1r30s with it and the wizard does not reinstall it (#269 Part 1).
+
+**Follow-up, same morning.** VVV (FireOS 5.5.5.4 + EchoMuse) also runs country
+`WW` with nothing in `wifi_country_code`, and its WIFI record is byte-identical
+to EFF's — two devices, one default. The FireOS 6 library
+(`/system/vendor/lib/libcustom_nvram.so`) carries the same `stWifiCfgDefault`.
+What stock FireOS with Alexa set up does for country is unknown (no stock unit
+left) and was deliberately not chased. The emOS flow now writes the record at
+Install EchoMuse if it is missing (`ensureWifiNvram`), read from the device's
+own /system by symbol name, so a wiped emOS device runs stock's radio settings
+rather than the driver's fallback. Never overwrites; warns rather than fails.
+
+**Evening: every valid SSID, on every path.** Wil asked whether names with
+spaces and special characters were covered. They were not, on any of the four
+paths that take one. The emOS wizard put the SSID and password inside a
+single-quoted shell command on the console, so `Bob's WiFi` broke it (and a
+crafted name could run commands); the FireOS wizard, the controller and the
+firmware all refused `"` and `\`; both scan parsers trimmed spaces and passed
+wpa_cli's `Caf\xc3\xa9` escapes through as the name, which then named a
+different network; and `em-wifi` split scan output on whitespace, cutting "My
+Home WiFi" to "My". An SSID is 0-32 arbitrary bytes, so it is now handled as
+bytes throughout: decoded from printf_encode, carried as `ssid_hex`, compared
+as bytes, and written quoted when wpa_supplicant's quoted form can hold it —
+it reads to the LAST `"` (wpa_config_parse_string, and the same in
+wpa_config_parse_psk), so quotes and backslashes are literal — or as hex when
+not. Over the console only hex is ever sent, so nothing typed reaches a shell;
+the emOS wizard derives the 64-hex PSK in the browser (PBKDF2, checked against
+the IEEE 802.11i vectors). Verified by running the emOS wpa_supplicant 2.10
+build under qemu (in a PID namespace: 32-bit bionic refuses pids above 65535)
+against a conf with each form, which printed the exact bytes back. FireOS's
+older supplicant keeps the quoted form it has always had; hex there is only for
+names quoting cannot carry, and has not been seen on a FireOS device.
+
+**Released at close: ea.10 (RC4) and emOS v0.8.** #585 (barge slider runs
+Precise → Eager like Sensitivity; schema v24 lowers a stored owwThreshold above
+0.975, since #549 only clamps on write) and #586 (every valid SSID) merged,
+tested together on main (1149 passed), then `controller-ea-v2.24.0-ea.10` and
+`emos-v0.8` cut from 52cff1d. ea.10 is on GHCR for both arches with `:latest`
+still 2.23.1. emOS v0.8 is v0.7 plus the `em-wifi` fix — the init is unchanged,
+which matters because every controller including GA fetches the latest emOS
+release — and it is the first release published without GitHub's generated PR
+list (#582). The EA add-on was deliberately NOT updated, so the overnight soak
+runs uninterrupted on ea.9. The firmware half of #586 is on main and not in the
+soaked binary (v2.15.0-69); it needs a device test before `v2.16.0`.
+
+Wil set two directions at the end of the day. **emOS OTA (#573) is the priority
+for the release after GA**, and should take the same form as the server binary
+update — per device from the Updates tab, shell-plane push to `.part`, md5
+before anything is written, serialised with the other OTAs, rolled back if the
+new image does not come up. And a standing rule, now in CLAUDE.md: **where a
+standard or spec exists, conform to it and prove it with a test** — the SSID
+bug is its worked example.
+
+Also today: #543 (@scragnog) and #547 (@costajohnt) merged after we resolved
+their `ci.yml` clashes on their branches; #565 and #552 have change requests
+out; every open issue now carries labels (new `area:emos`, `area:porting`); and
+all six release pages were stripped of the generated PR list that credited
+unrelated work.

@@ -9,13 +9,13 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/wilbowes/EchoMuse/internal/androidsvc"
 	"github.com/wilbowes/EchoMuse/internal/bindings/codec"
+	"github.com/wilbowes/EchoMuse/internal/bindings/mixer"
 
 	"github.com/Binozo/GoTinyAlsa/pkg/pcm"
 	"github.com/Binozo/GoTinyAlsa/pkg/tinyalsa"
@@ -234,7 +234,7 @@ func (p *PcmSpeaker) Init() error {
 	// down, which presents as a clean "voice stream complete, underruns=0"
 	// into silence. See the codec package.
 	codec.EnsureRoutes()
-	exec.Command("tinymix", "-D", "0", "61", "0", "0").Run() // mute before touching amp or stream
+	mixer.Set(mixer.PlaybackVolume, "0") // mute before touching amp or stream
 
 	device := tinyalsa.NewDevice(cardNr, deviceNr, pcm.Config{
 		Channels:         2,
@@ -264,10 +264,10 @@ func (p *PcmSpeaker) Init() error {
 
 	go p.silenceLoop()
 
-	time.Sleep(100 * time.Millisecond)                           // silence reaches the DAC (~2 periods)
-	exec.Command("tinymix", "-D", "0", "5", "On").Run()          // enable amp onto a clocked, silent DAC
-	time.Sleep(50 * time.Millisecond)                            // let amp settle
-	exec.Command("tinymix", "-D", "0", "61", "100", "100").Run() // unmute
+	time.Sleep(100 * time.Millisecond)     // silence reaches the DAC (~2 periods)
+	mixer.Set(mixer.SpeakerAmp, "On")      // enable amp onto a clocked, silent DAC
+	time.Sleep(50 * time.Millisecond)      // let amp settle
+	mixer.Set(mixer.PlaybackVolume, "100") // unmute
 
 	log.Println("PcmSpeaker initialised — silence stream running")
 	return nil
@@ -353,10 +353,8 @@ func (p *PcmSpeaker) SetJackRouting(inserted bool) {
 
 func (p *PcmSpeaker) applyJackWrites(ws []mixerWrite) {
 	for _, w := range ws {
-		args := append([]string{"-D", "0", w.Ctl}, w.Args...)
-		if out, err := exec.Command("tinymix", args...).CombinedOutput(); err != nil {
-			log.Printf("[speaker] jack routing: ctl %s: %v — %s", w.Ctl, err, strings.TrimSpace(string(out)))
-		}
+		// mixer.Set logs a failing control itself
+		mixer.Set(w.Ctl, w.Args...)
 	}
 }
 
@@ -364,11 +362,9 @@ func (p *PcmSpeaker) applyJackWrites(ws []mixerWrite) {
 // after Android's HAL has rewritten it.
 //
 // 30s is a compromise, not a measurement. Shorter closes the window of silence
-// after each mediaserver restart; longer costs fewer process spawns, and spawns
-// are not free on this hardware — a heavy shell command was observed inducing
-// mic capture stalls on 2026-09-03, and the mic pipeline has a hard 160ms
-// deadline. Two short-lived reads per 30s sits well below what caused that,
-// and the reverts themselves only arrive every 60-90s.
+// after each mediaserver restart. It dates from when each read spawned tinymix;
+// the reads are now two ioctls, but the reverts only arrive every 60-90s, so
+// there is nothing to gain from polling faster.
 const JackReconcileInterval = 30 * time.Second
 
 // ReconcileJackRouting reads the routing controls back and rewrites only the
@@ -389,13 +385,9 @@ func (p *PcmSpeaker) ReconcileJackRouting() int {
 
 	current := map[string]string{}
 	for _, ctl := range []string{ctlSpeakerAmp, ctlHPDriverGain} {
-		out, err := exec.Command("tinymix", "-D", "0", ctl).CombinedOutput()
-		if err != nil {
-			continue // a failed read is not evidence of drift
-		}
-		if v, ok := tinymixValue(string(out)); ok {
+		if v, err := mixer.Get(ctl); err == nil {
 			current[ctl] = v
-		}
+		} // a failed read is not evidence of drift
 	}
 
 	drift := jackRoutingDrift(inserted, current)
@@ -690,8 +682,8 @@ func (p *PcmSpeaker) AllowMusic() { p.music.clearDiscard() }
 // amp-off after every server exit as a belt-and-braces for paths where
 // this never runs (SIGKILL, panic).
 func (p *PcmSpeaker) Close() {
-	exec.Command("tinymix", "-D", "0", "61", "0", "0").Run() // mute
-	exec.Command("tinymix", "-D", "0", "5", "Off").Run()     // amp off
+	mixer.Set(mixer.PlaybackVolume, "0") // mute
+	mixer.Set(mixer.SpeakerAmp, "Off")   // amp off
 	close(p.stopCh)
 	// May be nil: the open runs on its own goroutine and may never have
 	// succeeded, which since 2026-09-10 is a state the device runs in

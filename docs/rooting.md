@@ -80,9 +80,9 @@ Für das Entsperren selbst (die maßgebliche Liste steht in R0rt1z2s Thread):
   unten zu macOS
 - Python 3 (fürs Patchen des Boot-Images und Anlegen der Magisk-Datenbank)
 - Die folgenden Dateien heruntergeladen und bereit:
-  - `amonet-biscuit-v1.1.0.zip` — aus R0rt1z2s XDA-Thread. **Nicht
-    v2.0.0**, was der Thread inzwischen zuerst anbietet; siehe die
-    Warnung ganz oben auf dieser Seite.
+  - `amonet-biscuit-v1.1.0.zip` oder `v2.0.0` — aus R0rt1z2s XDA-Thread.
+    v2.0.0 heißt FireOS 6 und damit emOS; siehe den Hinweis ganz oben auf
+    dieser Seite. Der Rest dieser Liste beschreibt den FireOS-5-Weg.
   - `update-kindle-csm_biscuit-272.6.8.0_user_680767620.bin` —
     FireOS-5-Firmware (**genau dieser Build** — siehe unten)
   - `f1r30s.zip` — aus R0rt1z2s XDA-Thread. Tut vier Dinge, nicht eines:
@@ -145,8 +145,11 @@ Das dauerhafte Entsperren, der Bootrom-Exploit und TWRP für dieses Gerät sind
 Folge diesem Thread, nicht dieser Seite. Wir verlinken ihn, statt ihn zu
 kopieren, weil eine Kopie veraltet, ohne dass es jemand merkt. Sollten die
 beiden sich je widersprechen, hat der Thread recht — **mit einer Ausnahme:
-der Version.** Nimm v1.1.0, nicht v2.0.0. v2.0.0 hält FireOS 5 vom Booten ab,
-und Revoice braucht FireOS 5; siehe die Warnung ganz oben auf dieser Seite.
+einem Echo, auf dem Revoice unter FireOS 5 bereits läuft.** Das Update auf
+v2.0.0 nimmt ihm FireOS 5, siehe die Warnung ganz oben auf dieser Seite. Für
+ein neues Gerät entscheidet die Version, welcher Weg des Assistenten offen
+steht: v1.1.0 lässt es auf FireOS 5 und damit beide Wege, v2.0.0 bringt es auf
+FireOS 6, wo nur der emOS-Weg geht.
 
 **Das ist der Teil, der ein Gerät ruinieren kann.** Er führt einen
 Bootrom-Exploit aus, verändert die Partitionstabelle und löscht `userdata`.

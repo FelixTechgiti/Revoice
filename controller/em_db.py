@@ -131,6 +131,7 @@ DEFAULT_DEVICE_CONFIG = {
     # likely ending no_speech. Lower it per device if a custom wake model
     # trades recall for false positives (see oww_forge/README.md).
     "owwThreshold":     0.5,
+    # The ceiling is OWW_THRESHOLD_MAX below, enforced on every write.
     # Barge-in (§3.2, controller-side): wake word spoken during TTS playback
     # cancels it and starts a fresh turn. Requires device AEC (aecEnabled)
     # on — with barge-in the mic streams through playback, and AEC is what
@@ -431,6 +432,23 @@ DEFAULT_DEVICE_CONFIG = {
     # emOS only, like the password beside it.
     "consoleTimeoutMin": 0,
 }
+
+# The highest wake threshold that can ever fire, enforced on every config
+# write by _clamp_wake_threshold below.
+#
+# openwakeword's score is a sigmoid: it approaches 1.0 and never reaches it,
+# and both scorers compare with `>=` (em_controller's ctrl_hit, and the
+# device's own shadow.go). So a threshold of exactly 1.0 is a bar nothing
+# clears — a device that scores perfectly and never wakes, which presents as
+# one that has stopped responding rather than as a value set too high.
+#
+# The dashboard's Sensitivity slider could write 1.0 until #543, so stored
+# values at the ceiling exist in the field. This is the write-side guard: a
+# value that cannot work must not reach the database, whichever client sent
+# it. 0.975 rather than something rounder because it is the strictest setting
+# that has been measured to fire — 18,021 scored frames across three Gen 2
+# Dots peaked at 0.999, with 178 at or above 0.98.
+OWW_THRESHOLD_MAX = 0.975
 
 # Maximum log rows retained per device. Older rows are pruned on insert.
 LOG_RETENTION = 10_000
@@ -1063,6 +1081,32 @@ MIGRATIONS: list[str] = [
 
     UPDATE system_config SET value = '22' WHERE key = 'schema_version';
     """,
+
+    # ── v23 — the kernel each device booted ──────────────────────────────────
+    #
+    # base_os says "emos" and board says "biscuit" whichever kernel emOS runs
+    # on, so the dashboard could not tell FireOS 5's 64-bit kernel (aarch64,
+    # 3.18.19+) from FireOS 6's 32-bit one (armv7l, 3.18.19-g…). The register
+    # message now carries `uname -m` and `uname -r`; stored for the reason
+    # base_os is (v21), so an offline device keeps its label. Generic across
+    # boards. NULL means never reported.
+    """
+    ALTER TABLE devices ADD COLUMN kernel_arch TEXT;
+    ALTER TABLE devices ADD COLUMN kernel_release TEXT;
+
+    UPDATE system_config SET value = '23' WHERE key = 'schema_version';
+    """,
+
+    # ── v24 — a stored wake threshold that can never fire ───────────────────
+    #
+    # #549 caps owwThreshold at OWW_THRESHOLD_MAX on every WRITE, but a 1.0
+    # stored before it — the old Sensitivity slider's strictest notch — stays
+    # in the database until someone saves again, and the device keeps a bar
+    # nothing clears. The work is in _fixup_v24; this entry only moves the
+    # version, so the rule has one copy.
+    """
+    UPDATE system_config SET value = '24' WHERE key = 'schema_version';
+    """,
 ]
 
 # Post-migration fixups that need Python rather than SQL. Keyed by the schema
@@ -1126,7 +1170,39 @@ def _fixup_v19(conn) -> None:
                 f"its entities."
             )
 
-_MIGRATION_FIXUPS = {11: _fixup_v11, 19: _fixup_v19}
+def _fixup_v24(conn) -> None:
+    """
+    Lower any stored owwThreshold above OWW_THRESHOLD_MAX, per device and fleet.
+
+    Through _clamp_wake_threshold, so this and the write path cannot disagree
+    about the ceiling. A config that will not parse is left alone: this repairs
+    one value and has no business rewriting anything it cannot read.
+    """
+    rows = conn.execute("SELECT device_id, config FROM devices").fetchall()
+    for row in rows:
+        try:
+            cfg = json.loads(row["config"] or "{}") or {}
+        except (json.JSONDecodeError, TypeError):
+            continue
+        fixed = _clamp_wake_threshold(cfg, row["device_id"])
+        if fixed is not cfg:
+            conn.execute("UPDATE devices SET config = ? WHERE device_id = ?",
+                         (json.dumps(fixed), row["device_id"]))
+    row = conn.execute(
+        "SELECT value FROM system_config WHERE key = 'global_device_config'").fetchone()
+    if row:
+        try:
+            cfg = json.loads(row["value"] or "{}") or {}
+        except (json.JSONDecodeError, TypeError):
+            return
+        fixed = _clamp_wake_threshold(cfg, "fleet")
+        if fixed is not cfg:
+            conn.execute(
+                "UPDATE system_config SET value = ? WHERE key = 'global_device_config'",
+                (json.dumps(fixed),))
+
+
+_MIGRATION_FIXUPS = {11: _fixup_v11, 19: _fixup_v19, 24: _fixup_v24}
 
 # ─── Connection management ────────────────────────────────────────────────────
 
@@ -1667,6 +1743,15 @@ def set_device_base_os(device_id: str, base_os: Optional[str]) -> None:
         )
 
 
+def set_device_kernel(device_id: str, arch: str, release: str) -> None:
+    """Record the kernel a device booted (`uname -m`, `uname -r`), per register."""
+    with _tx() as conn:
+        conn.execute(
+            "UPDATE devices SET kernel_arch = ?, kernel_release = ? WHERE device_id = ?",
+            (arch, release, device_id),
+        )
+
+
 def fleet_base_os() -> set[str]:
     """
     Every base_os the fleet has reported, as a set.
@@ -1681,6 +1766,36 @@ def fleet_base_os() -> set[str]:
     return {r["base_os"] for r in rows}
 
 
+def _clamp_wake_threshold(config: dict, where: str) -> dict:
+    """Hold owwThreshold at or below OWW_THRESHOLD_MAX.
+
+    Applied at the two write choke points rather than in the API handlers,
+    because all four callers go through those and a per-handler copy is one
+    that can disagree with the others. Idempotent, so the internal writers
+    (section pruning, the register path) pay one comparison.
+
+    Returns a NEW dict when it changes something — callers reuse the dict they
+    passed, and editing it under them would make the clamp visible in places
+    that never asked for it.
+
+    A non-number passes through untouched: storing a wrong TYPE is somebody
+    else's bug and inventing a value here would hide it. `bool` is excluded
+    explicitly because it is a subclass of int in Python, so True would
+    otherwise clamp to a plausible-looking 0.975.
+    """
+    value = config.get("owwThreshold")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return config
+    if value <= OWW_THRESHOLD_MAX:
+        return config
+    log.warning(
+        f"[db] {where}: owwThreshold {value} cannot fire — openwakeword's "
+        f"score never reaches 1.0 and the comparison is >=. Storing "
+        f"{OWW_THRESHOLD_MAX}."
+    )
+    return {**config, "owwThreshold": OWW_THRESHOLD_MAX}
+
+
 def set_device_config(device_id: str, config: dict) -> None:
     """
     Persist updated config for a device.
@@ -1688,6 +1803,7 @@ def set_device_config(device_id: str, config: dict) -> None:
     The caller is responsible for immediately pushing the config to the
     live device over the control WebSocket if it is currently connected.
     """
+    config = _clamp_wake_threshold(config, device_id)
     with _tx() as conn:
         conn.execute(
             "UPDATE devices SET config = ? WHERE device_id = ?",
@@ -1759,6 +1875,7 @@ def get_global_device_config_raw() -> dict:
 
 def set_global_device_config(config: dict) -> None:
     """Persist updated fleet-wide default device config."""
+    config = _clamp_wake_threshold(config, "fleet")
     with _tx() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO system_config (key, value) VALUES ('global_device_config', ?)",
