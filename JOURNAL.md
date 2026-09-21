@@ -3624,3 +3624,64 @@ passes; it is in the list now.
 135. **Nicht am Gerät verifiziert** — no device has yet run firmware that
 reports `emos_ver`, so on today's fleet the emOS track reads `unknown`, which
 is the correct answer and is exactly what the third state is for.
+
+## 2026-09-21 — Vier offene Routen, gefunden weil eine davon antwortete
+
+**`POST /api/devices/{id}/emos_reflash` trug keinen Autorisierungs-Dekorator.
+Diese Route schreibt eine Boot-Partition.** Drei weitere waren im selben
+Zustand.
+
+Gefunden ohne Suche danach. Ein Nutzer bat darum, seine offenen Fehler selbst
+nachzusehen, statt sie ihm abzufragen; über die Home-Assistant-Verbindung
+ging das, weil der Controller dort als Add-on läuft. `GET
+/api/devices/{id}/emos` antwortete mit 200, jede andere Route mit 401 — und
+dieser Unterschied ist der Fehler. Die Diagnose, die ich holen wollte, kam
+mit; sie kam nur eben unauthentifiziert.
+
+| Route | was sie tut |
+|---|---|
+| `POST …/emos_reflash` | schreibt die Boot-Partition |
+| `GET …/emos` | öffnet eine Shell, 26s-Sonde, meldet Version, Platz, Binärdateien, Netz-Log |
+| `GET …/oww_assets` | öffnet eine Shell, listet installierte Weckwort-Dateien |
+| `GET /api/releases/controller` | liest einen zwischengespeicherten Release |
+
+**Jede einzelne hat einen korrekt dekorierten Nachbarn, der dasselbe tut** —
+`_post_debloat`, `_post_secure_link`, `_post_oww_assets` und das OTA sind
+admin; `_get_device_mdns_scan`, das ebenfalls sondiert, ist admin; und
+`_post_oww_assets` war admin, während sein eigenes GET es nicht war. Die
+Absicht stand also überall daneben. Gefehlt hat jedes Mal eine Zeile.
+
+**Die Reichweite ist enger, als es zuerst aussieht, und weiter, als sie sein
+darf.** Als Home-Assistant-Add-on gibt es keinen `ports:`-Block, der Zugang
+läuft über Supervisors Ingress, und der verlangt einen angemeldeten
+HA-Benutzer — also erreicht sie **jeder angemeldete HA-Benutzer, auch ohne
+Adminrechte**, vorbei am Admin-Gate des Controllers. Über
+`docker-compose.deploy.yml` dagegen läuft der Controller mit `network_mode:
+host` auf Port 8768, und dort sind alle vier **ohne jede Anmeldung aus dem
+LAN erreichbar**, die Reflash-Route eingeschlossen.
+
+**Warum nichts es gemerkt hat, ist der Teil, der sich verallgemeinert.** Ein
+Dekorator ist eine Zeile über einer Funktion, und das Einzige, was eine
+fehlende Zeile bemerkt, ist jemand, der sie schon vermutet. Über die
+Routentabelle gab es keinen einzigen Test. Dieselbe Form wie der
+Dashboard-Test, den CI am selben Tag nie ausgeführt hatte: eine Liste, die
+von Hand gepflegt wird, und kein Wächter darüber, weil eine Lücke darin wie
+nichts aussieht.
+
+`tests/test_route_auth.py` dreht die Regel deshalb um. Eine Route ist
+autorisiert, **es sei denn**, sie steht in einer `PUBLIC`-Zuordnung mit einer
+ausgeschriebenen Begründung — damit eine Ausnahme eine sichtbare Handlung im
+Diff wird statt einer Abwesenheit. Dazu drei Dinge, die nicht wieder
+auseinanderlaufen dürfen: die beiden WebSocket-Routen sind vom Dekorator
+befreit und nie von der Autorisierung, also wird geprüft, dass sie weiterhin
+selbst eine Sitzung auflösen; jedes `POST` an ein Gerät muss admin sein, weil
+`require_auth` es jedem angemeldeten Nicht-Admin erlauben würde; und eine
+Ausnahme für eine Route, die es nicht mehr gibt, fliegt auf, weil sie sonst
+später einen neuen Handler gleichen Namens still mit abdecken würde.
+
+Gegengeprüft, indem der Fehler wieder eingebaut wurde: ohne den Dekorator an
+der Reflash-Route werden drei der acht Tests rot.
+
+**In CI verifiziert**: 1683 Controller-Tests bestanden. Kein Hinweis auf
+Missbrauch — das hier ist eine fehlende Absicherung, kein beobachteter
+Vorfall.
