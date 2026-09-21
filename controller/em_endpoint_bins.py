@@ -573,6 +573,31 @@ def refuse_install(k: Kind, live, db_path: str | None = None) -> str | None:
     return None
 
 
+def wants_install(k: Kind, capabilities, effective: dict) -> bool:
+    """
+    Could this device want this kind at all — the half that costs no I/O.
+
+    Split out because there were TWO copies of it and they disagreed. The
+    caller in em_api filters the kind list before spending a shell round trip
+    per kind, and `install_needed` gates again with the device's answer in
+    hand. Both are right to ask; only one may define it.
+
+    What that cost, measured on a live device 2026-09-21: the resolver shim
+    has no `config_key`, the em_api copy read `effective.get(None)` as falsy
+    and dropped it from the list, and `install_needed` — which knows about
+    toggle-less kinds — was never reached. The store fetched `gaishim.so` and
+    held it; the device logged that it needed the file and could not resolve
+    a name; and nothing connected the two. Every panel was correct and the
+    endpoint stayed dead.
+
+    So: a kind with no toggle passes here, and is gated later by the DEVICE's
+    own `needed`, which is the stronger gate anyway.
+    """
+    if k.config_key is not None and not (effective or {}).get(k.config_key):
+        return False
+    return k.capability in (capabilities or [])
+
+
 def install_needed(k: Kind, capabilities, effective: dict, status,
                    db_path: str | None = None) -> str | None:
     """
@@ -606,12 +631,11 @@ def install_needed(k: Kind, capabilities, effective: dict, status,
         rather than hashing it. Suggestive and never proof, and the
         alternative is re-pushing every binary on every connect for ever.
     """
-    # A kind with no toggle is gated by the device instead — see Kind's
-    # docstring. `needed is False` is the device saying it resolves names
+    # The toggle and the capability, from the one definition both callers
+    # share. A kind with no toggle passes it and is gated by the device
+    # instead — `needed is False` is the device saying it resolves names
     # itself; silence is firmware that cannot say, and falls through.
-    if k.config_key is not None and not (effective or {}).get(k.config_key):
-        return None
-    if k.capability not in (capabilities or []):
+    if not wants_install(k, capabilities, effective):
         return None
     if (status or {}).get("needed") is False:
         return None
