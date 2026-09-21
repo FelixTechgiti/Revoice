@@ -34,14 +34,15 @@ import (
 var snapshotExempt = map[string]string{
 	// The output chain has its own accessor, OutputChain(), because it is
 	// read per audio period and wants one struct rather than nine fields.
-	"EqBands":          "read via OutputChain()",
-	"EqLoudness":       "read via OutputChain()",
-	"LimiterEnabled":   "read via OutputChain()",
-	"LimiterThreshold": "read via OutputChain()",
-	"LimiterRelease":   "read via OutputChain()",
-	"BassGuardEnabled": "read via OutputChain()",
-	"BassGuardDb":      "read via OutputChain()",
-	"DuckDb":           "read via OutputChain()",
+	"EqBands":             "read via OutputChain()",
+	"EqLoudness":          "read via OutputChain()",
+	"LimiterEnabled":      "read via OutputChain()",
+	"LimiterThreshold":    "read via OutputChain()",
+	"LimiterRelease":      "read via OutputChain()",
+	"BassGuardEnabled":    "read via OutputChain()",
+	"BassGuardDb":         "read via OutputChain()",
+	"BassGuardJackBypass": "read via OutputChain()",
+	"DuckDb":              "read via OutputChain()",
 }
 
 func parseConfigGo(t *testing.T) *ast.File {

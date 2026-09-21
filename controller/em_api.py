@@ -7895,6 +7895,14 @@ def _merge_device(row) -> dict:
         # Gates the audio hold-off, and with it the two HA entities that
         # report whether this Echo is audible.
         "audioStateCapable": getattr(live, "audio_state_capable", False) if live else False,
+        # The two halves the bass-guard-on-jack bypass needs (#231), reported
+        # separately because they fail for different reasons and the disabled
+        # control has to say which: firmware too old to shape its own audio,
+        # or a board with no jack detect. The controller can supply neither —
+        # its own chain cannot know the plug position — so a device missing
+        # either gets the setting disabled rather than saved.
+        "outputChainCapable": getattr(live, "output_chain_capable", False) if live else False,
+        "jackDetectCapable": getattr(live, "jack_detect_capable", False) if live else False,
         # What is coming out of the speaker, aggregated by em_audiostate:
         # the controller's own stream, Spotify Connect, AirPlay, Sendspin,
         # or a voice turn. The dashboard draws its `playing` state from it,

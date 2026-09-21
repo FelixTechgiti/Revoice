@@ -1052,6 +1052,26 @@ class Device:
         return em_outchain.CAPABILITY in (self.capabilities or [])
 
     @property
+    def jack_detect_capable(self) -> bool:
+        """
+        Whether this device can tell that something is plugged into its jack.
+
+        A property of the BOARD rather than of the firmware, which is why it
+        is announced conditionally like `ambient_light`: `jack.Inserted()`
+        answers "not inserted" for hardware that is simply absent, so nothing
+        downstream can tell the two apart from the value alone.
+
+        The controller has no use for the plug position itself — no device
+        reports it — and that is exactly the point. It gates the
+        bass-guard-on-jack bypass (#231), which the controller-side chain
+        could never implement, so the dashboard must offer that setting only
+        where the DEVICE runs the chain (`output_chain`) AND knows the plug
+        position. Either half missing is a toggle that saves into a key
+        nothing reads.
+        """
+        return "jack_detect" in (self.capabilities or [])
+
+    @property
     def timer_alarm_ringing(self) -> bool:
         """A finished timer is alerting on this device right now."""
         return self.timer_alarm_task is not None and not self.timer_alarm_task.done()
