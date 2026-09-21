@@ -506,6 +506,11 @@ def device_state(k: Kind, live, db_path: str | None = None) -> dict:
         "reason":        (st or {}).get("reason"),
         "reason_text":   STATUS_REASONS.get((st or {}).get("reason") or ""),
         "device_size":   (st or {}).get("size"),
+        # Present AND refused by the linker — a fourth state the ok/reason
+        # pair cannot express, and the one that looks healthy from every
+        # side: the file is there, the md5 matches, and the endpoints run
+        # without it. Only the device can know; it rides `resolver_status`.
+        "preload_error": (st or {}).get("preload_error"),
         "stored":        have,
         "matches_store": matches,
         # A sub-kind must stay installable while its own state is unknown or

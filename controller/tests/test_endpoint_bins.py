@@ -866,3 +866,31 @@ def test_em_api_does_not_spell_the_gate_out_again():
         "_sync_endpoint_bins must use em_endpoint_bins.wants_install"
     assert "effective.get(k.config_key)" not in body, \
         "the toggle gate is spelled out in em_api again — it drifted once"
+
+
+def test_a_linker_refusal_reaches_the_dashboard():
+    """Installed and refused — the state that reads healthy from every side.
+
+    The file is present, the md5 matches, the endpoints are running, and none
+    of it works. Only the device can know, and it can only say so if the
+    field is carried: `ok` stays true because the file really is installed,
+    so `ok` alone is exactly the misleading half.
+    """
+    class Live:
+        capabilities = ["gai_shim"]
+        resolver_status = {"ok": True, "size": 4840, "needed": True,
+                           "preload_error": 'WARNING: linker: could not load '
+                                            'library "gaishim.so"'}
+
+    state = ebins.device_state(ebins.KINDS["gaishim"], Live())
+    assert state["status"] == "installed"
+    assert "could not load" in (state["preload_error"] or ""), \
+        "the linker's complaint must survive into the API the dashboard reads"
+
+
+def test_no_refusal_means_no_field():
+    class Live:
+        capabilities = ["gai_shim"]
+        resolver_status = {"ok": True, "size": 4840, "needed": True}
+
+    assert ebins.device_state(ebins.KINDS["gaishim"], Live())["preload_error"] is None
