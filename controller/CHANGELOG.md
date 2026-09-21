@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.65.0-fx.1
+
+### Die Namensauflösung wurde geholt und nicht installiert
+
+**Nachtrag zu 2.64.0-fx.1, und wer die installiert hat, braucht diese hier.**
+Der Controller hat `gaishim.so` korrekt aus der Veröffentlichung geholt und
+abgelegt — und es dann nie auf das Gerät geschoben. Spotify und AirPlay
+blieben damit genauso tot wie vorher, während im Updates-Reiter alles richtig
+aussah.
+
+Am Gerät gemessen: Die Datei lag im Speicher des Controllers, das Gerät
+schrieb zwei Minuten später in sein Log, dass es genau diese Datei braucht und
+keinen Namen auflösen kann, und dazwischen geschah nichts.
+
+Die Ursache war eine doppelte Regel im Controller. Der neue Eintrag hängt
+absichtlich an keinem Schalter — er ist Voraussetzung für *beide* Endpunkte,
+nicht Teil eines einzelnen. An einer zweiten Stelle wurde aber weiterhin nach
+einem Schalter gefragt, und „kein Schalter" las sich dort als „ausgeschaltet".
+Beide Stellen fragen jetzt dieselbe.
+
+**Der Knopf im Updates-Reiter war nie betroffen** — von Hand installieren
+funktionierte die ganze Zeit. Kaputt war nur der Weg, der es von selbst tut.
+
+Nach dem Update installiert der Controller die Datei beim nächsten
+Verbindungsaufbau des Geräts selbst und startet die Endpunkte neu. Es ist
+nichts zu klicken.
+
 ## 2.64.0-fx.1
 
 ### Die Namensauflösung für emOS-Geräte lässt sich installieren
