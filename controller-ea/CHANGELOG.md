@@ -1,5 +1,50 @@
 # Changelog
 
+## 2.64.0-fx.1
+
+### Die Namensauflösung für emOS-Geräte lässt sich installieren
+
+Gehört zu Firmware **2.54.0-fx.1** und wird ohne sie nicht wirksam. Wer kein
+emOS-Gerät hat, braucht dieses Update nicht dringend — es ändert dort nichts.
+
+Auf emOS scheiterten Spotify Connect und AirPlay an der Namensauflösung, und
+zwar an einer Stelle, die sich in emOS nicht reparieren lässt: Amazons
+Systembibliothek weist die Antwort ab, obwohl sie richtig ist, und weist jede
+andere Form ebenfalls ab. Die Firmware bringt dafür jetzt eine eigene kleine
+Bibliothek mit; dieser Controller ist die Stelle, die sie aufs Gerät bringt.
+
+**Im Updates-Reiter unter Streaming-Endpunkte** steht dazu ein neuer Eintrag:
+*Namensauflösung (emOS)*. Er verhält sich wie librespot und shairport-sync,
+mit zwei Unterschieden:
+
+- **Er hängt an keinem Schalter.** Die Datei ist Voraussetzung für *beide*
+  Endpunkte, nicht Teil eines einzelnen — an `Spotify` gekoppelt bliebe
+  AirPlay kaputt und umgekehrt. Stattdessen sagt das Gerät selbst, ob es sie
+  braucht. Das kann keine Einstellung überstimmen.
+- **Auf einem FireOS-Gerät steht dort „Nicht nötig".** Dort funktioniert die
+  Namensauflösung, und die Bibliothek würde einen vollständigen Dienst durch
+  einen absichtlich kleinen ersetzen. Die Installation wird dort gar nicht
+  erst angeboten.
+
+Wird sie installiert, startet der Controller alle Endpunkte des Geräts neu —
+alle drei, nicht nur einen. Die Bibliothek wird beim Start eines Programms
+gelesen und nie wieder, ein schon laufender librespot könnte sie also nicht
+mehr aufnehmen. Ohne diesen Neustart hätte die Installation Erfolg gemeldet,
+während sich nichts geändert hätte.
+
+### Endpunkt-Updates holen sich kurz nicht mehr von selbst
+
+**Nebenwirkung, zeitlich begrenzt, und es ist keine Störung.** Der Controller
+holt Endpunkt-Programme automatisch aus einer Veröffentlichung — aber nur,
+wenn sie *vollständig* ist, damit nie eine halbe Fassung übernommen wird. Die
+neue Datei gehört ab jetzt dazu und fehlt in allen bisherigen
+Veröffentlichungen. Bis eine neue erscheint, ruht dieses automatische Holen
+auch für librespot und shairport-sync.
+
+Was weiter geht: Installationen aus dem Dashboard, und alles, was schon auf
+einem Gerät liegt, läuft unverändert. Es pausiert nur das selbsttätige
+Aufgreifen **neuer** Endpunkt-Fassungen.
+
 ## 2.63.0-fx.1
 
 ### Sicherheitsfix: vier Schnittstellen waren nicht abgesichert

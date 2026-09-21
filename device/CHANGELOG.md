@@ -12,6 +12,55 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.54.0-fx.1
+
+### Spotify Connect und AirPlay lösen auf emOS wieder Namen auf
+
+**Wenn dein Echo emOS fährt, ist das die Fassung, auf die du gewartet hast.**
+Spotify Connect und AirPlay starteten dort, versuchten es jede Minute neu und
+kamen nie über den ersten Schritt hinaus — die Auflösung eines Namens. Unter
+FireOS ändert sich nichts; dort hat das nie gefehlt.
+
+**Was kaputt war, saß nicht bei uns.** emOS beantwortet Namensanfragen selbst,
+weil Amazons Systembibliothek es nicht kann, und diese Antwort war
+nachweislich richtig: Byte für Byte dieselbe Form, die Android selbst sendet,
+mit der richtigen Adresse. Amazons Bibliothek lehnt sie trotzdem ab — und
+lehnt jede andere Form ab, die Android senden könnte. Acht wurden probiert.
+Es gibt also keine Antwort, die wir hätten schreiben können.
+
+Deshalb beantwortet die Firmware die Anfrage jetzt selbst. Eine knapp 5 KB
+große Bibliothek springt vor die kaputte Stelle und benutzt den anderen Weg,
+den dasselbe emOS anbietet und der einwandfrei funktioniert. Sie wird in
+librespot, shairport-sync und nqptp geladen, wenn das Gerät emOS fährt und die
+Datei installiert ist.
+
+**Du brauchst beides.** Diese Firmware allein reicht nicht:
+
+1. Diese Firmware aufspielen.
+2. Im Updates-Reiter unter **Streaming-Endpunkte** die *Namensauflösung
+   (emOS)* installieren.
+
+Fehlt die Datei, sagt das Log es beim Start eines Endpunkts in einer Zeile,
+statt weiter stumm zu scheitern.
+
+**Nebenbei behoben:** `localhost` wird in der Bibliothek beantwortet, bevor
+irgendjemand gefragt wird. Bisher ging der Name an den Router, und ein Router,
+der ihn nicht kennt — eine FRITZ!Box tut das —, machte AirPlay 2 unmöglich,
+weil dessen Zeitgeber sich genau darüber erreicht.
+
+**Was bewusst fehlt:** Die Bibliothek ist kein vollständiger Namensdienst. Sie
+beantwortet IPv4. Ein ausdrücklich nach IPv6 gefragter **Name** wird
+abgelehnt, statt eine IPv4-Adresse in einer IPv6-Hülle zurückzugeben — eine
+falsche Antwort wäre hier schlimmer als keine. IPv6-**Adressen** und das
+Binden auf alle Schnittstellen funktionieren vollständig.
+
+**Nicht am Gerät verifiziert.** Diese Fassung ist in CI geprüft — gegen
+Androids eigene Header für das echte Ziel, byteweise gegen die Strukturen, die
+der Kernel liest, und auf die Symbolliste, ohne die die Bibliothek lädt und
+nichts täte. Ob librespot danach bei Spotify ankommt und ob shairport-sync und
+nqptp sich finden, kann nur ein Gerät beantworten. Wenn du es ausprobierst und
+es klemmt, ist das Firmware-Log die Stelle, die es sagt.
+
 ## 2.53.0-fx.1
 
 ### Das Gerät sagt jetzt, welches emOS es gebootet hat
