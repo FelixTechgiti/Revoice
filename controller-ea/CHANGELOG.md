@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.60.0-fx.1
+
+### Die Diagnose misst jetzt den Weg, auf den es ankommt
+
+**Die gestern ausgelieferte Diagnose hat sich selbst in die Irre geführt**, und
+das ist eine Korrektur an mir, nicht an deinem Gerät.
+
+Das Gerät hat zwei Wege, Namen nachzuschlagen: den, den Spotify Connect und
+AirPlay nehmen, und einen älteren, den Amazons Werkzeuge nehmen. Meine Sonde
+hat `ping` benutzt — und `ping` nimmt den älteren. emOS beantwortet den erst ab
+0.7.0, also meldete die Anzeige „Abfrage gescheitert" auf einem Gerät, dessen
+Auflösung für Spotify möglicherweise völlig in Ordnung ist.
+
+Ab jetzt fragt die Sonde **direkt den Dienst**, in derselben Sprache, die
+Spotify Connect benutzt — und sie schreibt dazu, welchen der beiden Wege sie
+gemessen hat. Lässt sich der richtige Weg nicht messen (auf manchen Geräten
+fehlt das passende Hilfsprogramm), steht das dort ebenfalls, statt eine
+Vermutung als Ergebnis auszugeben.
+
+**Passend dazu gibt es emOS 0.7.0-fx.1**, das beide Wege beantwortet. Danach
+stimmt auch wieder, was ein `ping` auf dem Gerät sagt. Der Knopf dafür ist
+derselbe wie beim letzten Mal: Gerät → Updates → emOS.
+
+### AirPlay 2 wird nicht mehr grundlos angemahnt
+
+Die Diagnose hat einen Port geprüft, den diese Firmware bewusst nicht benutzt —
+damit hätte sie jedes funktionierende AirPlay-2-Gerät beschuldigt. Sie meldet
+ihn jetzt, beurteilt ihn aber nicht.
+
 ## 2.59.1-fx.1
 
 ### Der Updates-Reiter hat das ganze Dashboard mitgenommen
