@@ -3379,12 +3379,23 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     // this device" is not "the binary is missing", and an
                     // offline Echo must not be told its file is gone.
                     //
-                    // `not_needed` is the clock daemon's alone: the receiver
-                    // installed beside it is a classic build, so nqptp would
-                    // sit unused. Saying "not installed" there accuses a
-                    // device that is working exactly as it should — and the
-                    // install stays offered, because the AirPlay 2 binary is
-                    // very likely the next thing being pushed.
+                    // `not_needed` now has TWO sources and they mean opposite
+                    // things, so it cannot carry one sentence any more.
+                    //
+                    // For the clock daemon it is the receiver beside it being
+                    // a classic build, so nqptp would sit unused. Saying "not
+                    // installed" there accuses a device that is working
+                    // exactly as it should — and the install stays offered,
+                    // because the AirPlay 2 binary is very likely the next
+                    // thing being pushed.
+                    //
+                    // For the resolver shim it is the DEVICE saying it
+                    // resolves names without help, i.e. it is running FireOS
+                    // where netd answers. Nothing is pending there and the
+                    // install is not offered, so the AirPlay sentence would
+                    // be simply false — and a false explanation beside a
+                    // greyed-out button is worse than none, because it sends
+                    // somebody looking for an AirPlay setting to change.
                     //
                     // And `unknown` may no longer say "offline": for a
                     // connected device whose receiver has not re-registered
@@ -3395,7 +3406,9 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                                       ? ` — ${ep.reason_text}` : ''}`
                                 : ep.status === 'unsupported' ? 'Firmware has no such endpoint'
                                 : ep.status === 'not_needed'
-                                  ? 'Not needed — the installed AirPlay build is classic'
+                                  ? (ep.kind === 'gaishim'
+                                      ? 'Not needed — this device resolves names itself'
+                                      : 'Not needed — the installed AirPlay build is classic')
                                   : 'State unknown — the device has not reported';
                     return (
                       <div key={ep.kind} style={{ borderTop:'1px solid var(--hairline)', paddingTop:12, marginTop:12 }}>

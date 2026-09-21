@@ -455,7 +455,13 @@ func (n *Nqptp) session(ctx context.Context) error {
 	// value this process decided on is the value the daemon uses. Both halves
 	// of the clock interface must agree on the path; inheriting leaves that to
 	// whatever the supervisor's environment happened to hold.
-	cmd.Env = append(os.Environ(), ShmDirEnv+"="+n.shmDir())
+	// nqptp resolves `localhost` for its own control port, which on emOS goes
+	// to the router and comes back NXDOMAIN (#219) — and reaches bionic's
+	// getaddrinfo, which answers nothing there either (#263). The shim covers
+	// both: loopback is answered inside it, before any lookup.
+	res := endpoint.ResolverStatus()
+	endpoint.LogResolver(res)
+	cmd.Env = res.Env(append(os.Environ(), ShmDirEnv+"="+n.shmDir()))
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

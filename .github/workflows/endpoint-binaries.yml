@@ -28,7 +28,7 @@ on:
         # produces TWO binaries, because AirPlay 2 needs a second process —
         # nqptp, which does PTP on UDP 319/320 and publishes the clock
         # shairport-sync reads through shared memory.
-        options: [librespot, shairport-sync, shairport-sync-ap2, both]
+        options: [librespot, shairport-sync, shairport-sync-ap2, gaishim, both]
         default: librespot
         required: true
       ref:
@@ -73,6 +73,18 @@ jobs:
         working-directory: device/shairport
         run: ./build-ap2.sh
 
+      # In `both`, unlike the AirPlay 2 receiver, and for the opposite
+      # reason: this is not a second file competing for one destination, it
+      # is what BOTH endpoints need to resolve a name on emOS. Somebody
+      # building the pair a device normally runs wants it in the same
+      # artifact, and it costs seconds.
+      - name: Build the resolver shim
+        if: inputs.which == 'gaishim' || inputs.which == 'both'
+        working-directory: device/gaishim
+        run: ./build.sh
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
       # What the ELF actually is, before anyone installs it. The controller's
       # upload endpoint checks this too and refuses a host build — the likely
       # mistake being a compile that succeeded against the wrong target — but
@@ -86,7 +98,8 @@ jobs:
           for f in device/librespot/out/librespot \
                    device/shairport/out/shairport-sync \
                    device/shairport/out/shairport-sync-ap2 \
-                   device/shairport/out/nqptp; do
+                   device/shairport/out/nqptp \
+                   device/gaishim/out/gaishim.so; do
             [ -f "$f" ] || continue
             found=1
             echo "### \`$(basename "$f")\`" >> "$GITHUB_STEP_SUMMARY"
@@ -115,5 +128,6 @@ jobs:
           path: |
             device/librespot/out/*
             device/shairport/out/*
+            device/gaishim/out/*
           if-no-files-found: error
           retention-days: 30

@@ -1,4 +1,4 @@
-name: Endpoint Release (librespot + both shairport-syncs + nqptp)
+name: Endpoint Release (librespot + both shairport-syncs + nqptp + gaishim)
 
 # Publishes the two streaming endpoint binaries as release assets, so the
 # CONTROLLER can fetch and install them the way it fetches firmware — no file
@@ -85,6 +85,22 @@ jobs:
         working-directory: device/shairport
         run: ./build-ap2.sh
 
+      # The resolver shim, which is ours rather than upstream's and is five
+      # kilobytes against librespot's twenty megabytes. It is published here
+      # rather than left to a manual upload because it is a PRECONDITION of
+      # the two endpoints on emOS, not a choice beside them: a fleet that
+      # fetched librespot automatically and needed a dashboard upload before
+      # librespot could resolve a name would be a release that does not work.
+      #
+      # Its own build.sh runs the off-target checks and the ABI check first
+      # and fails the job on either, so a shim that would load and interpose
+      # nothing never reaches a release.
+      - name: Build the resolver shim
+        working-directory: device/gaishim
+        run: ./build.sh
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
       # ALL of them, or none. A release carrying some assets and not others
       # is one `em_endpoint_release.select()` refuses outright — deliberately,
       # so half a publish is never half adopted — which means a missing file
@@ -96,7 +112,8 @@ jobs:
           for f in device/librespot/out/librespot \
                    device/shairport/out/shairport-sync \
                    device/shairport/out/shairport-sync-ap2 \
-                   device/shairport/out/nqptp; do
+                   device/shairport/out/nqptp \
+                   device/gaishim/out/gaishim.so; do
             if [ ! -f "$f" ]; then
               echo "::error::$f was not produced — a release needs both"
               exit 1
@@ -174,7 +191,8 @@ jobs:
             for f in device/librespot/out/librespot \
                      device/shairport/out/shairport-sync \
                      device/shairport/out/shairport-sync-ap2 \
-                     device/shairport/out/nqptp; do
+                     device/shairport/out/nqptp \
+                     device/gaishim/out/gaishim.so; do
               echo
               echo "\`\`\`"
               echo "$(basename "$f"): $(file -b "$f")"
@@ -193,6 +211,7 @@ jobs:
             device/shairport/out/shairport-sync
             device/shairport/out/shairport-sync-ap2
             device/shairport/out/nqptp
+            device/gaishim/out/gaishim.so
           body_path: /tmp/endpoint-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

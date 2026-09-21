@@ -3685,3 +3685,110 @@ der Reflash-Route werden drei der acht Tests rot.
 **In CI verifiziert**: 1683 Controller-Tests bestanden. Kein Hinweis auf
 Missbrauch — das hier ist eine fehlende Absicherung, kein beobachteter
 Vorfall.
+
+## 2026-09-21 — bionic lehnt seinen eigenen Proxy ab, also lösen wir Namen jetzt selbst auf
+
+**Auf emOS löst `getaddrinfo` nichts auf und `gethostbyname` alles.** Beide
+gehen an `/dev/socket/dnsproxyd`, beide beantwortet dasselbe
+`dnsproxy_serve` — und librespot, shairport-sync und nqptp benutzen alle den
+Weg, der nicht funktioniert. Das ist der ganze Grund, warum Spotify Connect
+und AirPlay auf einem emOS-Gerät tot sind (#263), während jede Anzeige
+gesund aussieht.
+
+**Der Proxy ist nicht schuld, und das ist der Befund, der die Richtung
+entschieden hat.** Gemessen am 2026-09-21 mit den drei Werkzeugen aus #264 an
+G090L91180250AN1: Die Antwort des Proxys ist netds Serialisierung Byte für
+Byte, mit der richtigen Adresse. Amazons bionic weist sie ab — und weist
+**jede andere Form ab, die netd senden könnte**; acht wurden probiert. Hält
+man die Verbindung offen statt sie zu schließen, **blockiert** bionic, will
+also mehr pro Eintrag als AOSP android-5.1.1_r38. Ein Parser, der etwas will,
+das netd nie schreibt, lässt sich nicht dadurch zufriedenstellen, dass man
+netd ähnlicher wird.
+
+Damit gab es zwei Wege, und der erste ist kein Weg zu einem laufenden Gerät:
+`android_getaddrinfo_proxy` aus dem `/system/lib/libc.so` des Geräts
+disassemblieren. Das würde emOS für jeden bionic-Aufrufer reparieren — und
+emOS reist ausschließlich in einem Boot-Image, das jemand selbst
+zusammenbaut. Ein Gerät, das schon läuft, erreicht es nicht.
+
+**Also `device/gaishim/`**: eine knapp 5 KB große Bibliothek, die
+`getaddrinfo` selbst beantwortet, über `gethostbyname`. Die Firmware lädt sie
+per `LD_PRELOAD` in die drei Endpunkt-Prozesse, wenn die Basis emOS ist und
+die Datei da ist. Über Amazons Drahtformat muss danach nie wieder etwas
+bekannt sein.
+
+Nebenbei erledigt sie **#219 für diese drei Programme**, ohne emOS-Release:
+`localhost` wird in der Bibliothek beantwortet, vor jeder Auflösung. Genau
+daran stirbt nqptps Kontrollport auf einem Netz, dessen Router NXDOMAIN für
+diesen Namen liefert.
+
+### Was absichtlich fehlt
+
+Kein AAAA. `gethostbyname` auf dem Gerät beantwortet A-Records und sonst
+nichts, also wird eine ausdrückliche `AF_INET6`-**Namens**auflösung mit
+`EAI_ADDRFAMILY` abgelehnt, statt einen A-Record in einem v6-Sockaddr
+zurückzugeben. IPv6-**Literale** und die passive Wildcard sind vollständig da,
+weil sie keine Auflösung brauchen und ein Empfänger, der `::` bindet, das
+weiter können muss.
+
+### Drei stumme Fehler, und wie sie laut gemacht wurden
+
+Jeder davon hätte auf dem Gerät gleich ausgesehen: ein Programm, das startet,
+läuft und nie eine Verbindung aufbaut.
+
+1. **Das Strukturlayout.** Der Aufrufer wurde gegen Androids `netdb.h`
+   übersetzt, diese Bibliothek nicht. Die Feldreihenfolge ist BSDs, nicht
+   glibcs — `ai_canonname` steht **vor** `ai_addr`. Vertauscht übersetzt,
+   linkt und lädt es und reicht jedem Aufrufer einen Hostnamen, wo er einen
+   Sockaddr erwartet. `abicheck.c` nagelt jede Konstante gegen Androids
+   eigene Header fest, für das echte Ziel.
+2. **Die Sichtbarkeit.** Der erste Build exportierte **null Symbole**, lud
+   sauber und veränderte nichts. `build.sh` prüft die Exportliste jetzt, weil
+   genau das keine Meldung erzeugt.
+3. **Die Byte-Reihenfolge des Ports.** Ein Port in Host-Reihenfolge verbindet
+   sich mit *irgendetwas*. `gaishimcheck.c` prüft den Sockaddr byteweise.
+
+`gaishimcheck.c` bindet `gaishim.c` als Ganzes ein und ruft das echte
+`getaddrinfo`, aus dem Grund, aus dem die Prüfer in `emos/init` so gebaut
+sind: Ein Prüfer, der nachbaut, was er prüft, läuft vom Gerät weg.
+
+### Zwei bestehende Tests haben Lücken gefunden, bevor irgendwer sie gesucht hat
+
+`test_installing_either_receiver_restarts_the_one_process` verlangte einen
+`endpoint_restart`-Fall für die neue Art. Der richtige Fall startet **alle
+drei** Endpunkte neu, denn `LD_PRELOAD` wird beim `exec` gelesen und nie
+wieder: Ein laufender librespot kann die Bibliothek nicht mehr aufnehmen, und
+ohne das hätte die Installation Erfolg gemeldet, während die Endpunkte
+weiter jede Namensauflösung verfehlen.
+
+`test_the_release_workflow_publishes_every_kind` verlangte, dass
+`endpoint-release.yml` die Datei mitveröffentlicht.
+
+**Und daran hängt eine Reihenfolge, die bezahlt werden muss.** `select()`
+lehnt eine Release ab, der ein erwartetes Artefakt fehlt — absichtlich, damit
+eine halbe Veröffentlichung nie halb übernommen wird. Von diesem Commit an
+bis zu einer `endpoints-v*`-Release **mit** `gaishim.so` wird also jede
+bestehende Release übersprungen, und der automatische Abruf ruht auch für
+librespot und beide shairport-syncs. Installationen aus dem Dashboard sind
+die ganze Zeit unberührt, und was auf einem Gerät liegt, läuft weiter; es
+pausiert nur das automatische Aufgreifen eines **neuen** Endpunkt-Builds.
+Dieselbe Form wie der Add-on-Pin: Der Commit kommt zwangsläufig zuerst, und
+die einzige Frage ist, wie lange die Lücke dauert. Also gleich nach dem Merge
+eine Endpunkt-Release schneiden.
+
+Die Gegenoption, `in_release=False`, lehnt
+`test_every_kind_is_published_so_none_is_hand_installed` ab — zu Recht: Eine
+Art, die nie veröffentlicht wird, erreicht ein Gerät nur, wenn jemand eine
+Datei hochlädt, und „vorübergehend" ist die Art, wie das dauerhaft wird.
+
+### Was das Ganze nicht beantwortet
+
+**Nicht am Gerät verifiziert.** Kein Gerät hat bisher einen Endpunkt mit
+dieser Bibliothek gestartet. Was nur dort zu beantworten ist: ob librespot an
+`clienttoken.spotify.com` vorbeikommt, und ob shairport-sync und nqptp sich
+über `localhost` erreichen. **In CI verifiziert** ist der Rest — die
+Host-Prüfungen, die ABI-Prüfung, die Exportliste, 1687 Controller-Tests und
+die Go-Tests.
+
+#263 bleibt offen für die Disassemblierung. Die Endpunkte müssen nicht darauf
+warten.

@@ -53,3 +53,4 @@ device/tools/speaker_profile/*.wav
 # rather than a file in the tree.
 device/librespot/out/
 device/shairport/out/
+device/gaishim/out/

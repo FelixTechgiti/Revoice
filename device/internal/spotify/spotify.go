@@ -583,6 +583,15 @@ func (c *Client) supervise(ctx context.Context) {
 // session runs librespot once and pumps its output until it exits.
 func (c *Client) session(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, c.opts.Binary, c.args()...)
+	// librespot resolves a name before it does anything else, and on emOS
+	// bionic's getaddrinfo cannot (#263). The shim is preloaded here rather
+	// than once at Start because it is INSTALLED by the controller at any
+	// moment: reading it per session is what makes an install take effect on
+	// the next restart, which is 60 seconds away, instead of on the next
+	// reboot. Inert on FireOS, where netd answers.
+	res := endpoint.ResolverStatus()
+	endpoint.LogResolver(res)
+	cmd.Env = res.Env(os.Environ())
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

@@ -1946,6 +1946,47 @@ working, and fixing either alone changes only which error you get. Worth
 remembering when a fix "does not help": it may have moved the wall rather than
 failed.
 
+### And the names still did not resolve, because bionic refuses its own proxy
+
+**`getaddrinfo` on emOS answers nothing, and `gethostbyname` answers
+everything** (#263). Both go to `/dev/socket/dnsproxyd`, both are served by the
+same `dnsproxy_serve`, and librespot, shairport-sync and nqptp all use the one
+that fails — so Spotify Connect and AirPlay die at startup while every panel
+reads healthy.
+
+**The proxy is not at fault, and this is the rare case where matching netd
+harder is provably the wrong move.** Measured 2026-09-21 with
+`device/tools/dnsprobe` (#264): the reply is netd's serialisation byte for byte with
+the right address, and Amazon's bionic rejects it — along with every other
+shape netd could send, eight of which were tried. Held open rather than closed,
+bionic **blocks**, so it wants more per entry than AOSP android-5.1.1_r38 does.
+A parser that wants something netd never writes cannot be satisfied by
+resembling netd.
+
+So `device/gaishim/` answers `getaddrinfo` itself, over `gethostbyname`, and
+the firmware `LD_PRELOAD`s it into the three endpoint processes. Three
+consequences worth carrying:
+
+- **A fourth endpoint has to do the same.** The preload is applied at the
+  `exec`, in `internal/endpoint.Resolver.Env`, and a new subprocess that does
+  not call it inherits nothing — it will resolve no name on emOS and say
+  nothing about why.
+- **The gate is `base_os`, and never a version.** On FireOS netd answers and
+  the shim would replace a full resolver with a deliberately small one. An
+  UNKNOWN base reads as FireOS, for `em_platform.android_userspace`'s reason:
+  absence must not change what the existing fleet does.
+- **It is read per SESSION, not once at start.** The library is installed by
+  the controller at any moment, and re-statting per session is what makes an
+  install take effect on the next restart — 60 seconds — rather than the next
+  reboot.
+
+**This is the same shape as the loopback above, and lands on the other side of
+it.** There the init was the right home and the firmware's copy was the one
+that could reach a fielded device. Here emOS cannot be the home at all: nobody
+knows the wire format Amazon's bionic wants, and an emOS fix ships only in a
+boot image somebody has to assemble. #263 stays open for the disassembly; the
+endpoints do not have to wait for it.
+
 ### A peer found by NAME is a peer this device cannot find
 
 **`getaddrinfo("localhost")` fails on emOS**, and the general form is worth

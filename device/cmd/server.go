@@ -466,6 +466,27 @@ func main() {
 			// the clock daemon under a running one changes nothing anybody
 			// can hear — AirPlay 2 simply goes on playing out of sync.
 			return nqptp.Restart()
+		case "gaishim":
+			// The one kind that restarts EVERYTHING, because it is not an
+			// endpoint: it is the resolver both of them stand on, and
+			// LD_PRELOAD is read at exec and never again. A running
+			// librespot cannot pick the library up, so without this the
+			// install reports success and the endpoints go on failing every
+			// name lookup until something else restarts them.
+			//
+			// All three are asked and the results are OR-ed rather than
+			// AND-ed: a device with AirPlay off has nothing to restart
+			// there, and reporting the install as failed because a
+			// supervisor nobody enabled did not restart would be a false
+			// negative about the one that did.
+			restarted := spotifyClient.Restart()
+			if airplayClient.Restart() {
+				restarted = true
+			}
+			if nqptp.Restart() {
+				restarted = true
+			}
+			return restarted
 		}
 		log.Printf("[cmd] endpoint_restart for unknown kind %q — ignoring", kind)
 		return false
