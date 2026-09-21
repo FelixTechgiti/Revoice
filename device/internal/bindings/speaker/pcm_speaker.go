@@ -8,7 +8,6 @@ import (
 	"log"
 	"math"
 	"os"
-	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
