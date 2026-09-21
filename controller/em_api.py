@@ -4840,8 +4840,15 @@ async def _fetch_controller_release(force: bool = False) -> Optional[dict]:
         return _controller_cache or None
 
 
+@auth.require_auth
 async def _get_controller_release(request: web.Request) -> web.Response:
-    """GET /api/releases/controller"""
+    """GET /api/releases/controller
+
+    `require_auth` rather than admin, matching `_get_latest_release`: the
+    dashboard reads it on load for every signed-in user. Undecorated until
+    2026-09-21 — harmless beside the other three and fixed with them,
+    because "harmless" is a judgement that ages.
+    """
     data = await _fetch_controller_release()
     if data is None:
         # Fall back to the DB cache so a GitHub outage does not blank the
@@ -5409,8 +5416,13 @@ async def _sync_oww_assets(live, device_id: str, progress=None) -> dict:
     return {"ok": True, "pushed": pushed, "pruned": plan.prune, "problems": problems}
 
 
+@auth.require_admin
 async def _get_oww_assets(request: web.Request) -> web.Response:
-    """GET /api/devices/{id}/oww_assets — what is installed, and what is needed."""
+    """GET /api/devices/{id}/oww_assets — what is installed, and what is needed.
+
+    **Admin**, matching its POST sibling: it opens a shell on the device to
+    list what is installed there. Undecorated until 2026-09-21.
+    """
     device_id = request.match_info["id"]
     live = _live(device_id)
 
@@ -6735,9 +6747,19 @@ async def _emos_reflash_steps(live, device_id: str) -> None:
     await _shell_run(live, "busybox reboot || reboot", timeout=15.0)
 
 
+@auth.require_admin
 async def _get_device_emos(request: web.Request) -> web.Response:
     """
     GET /api/devices/{id}/emos
+
+    **Admin**, and it shipped with no decorator at all — found 2026-09-21 by
+    reaching it unauthenticated through Home Assistant's ingress while every
+    neighbouring route answered 401. It opens a shell on the device and runs
+    a ~26s probe, and it returns the device's emOS version, free space,
+    installed binaries and the init's own network log. Both halves of that
+    are admin-shaped: it makes somebody else's hardware do work, and it
+    reads an inventory. `_get_device_mdns_scan` is the nearest neighbour
+    that also probes, and it was already admin.
 
     What emOS this device is on, what the newest release is, and whether a
     network reflash is on offer — everything the Updates tab needs to show the
@@ -6847,9 +6869,17 @@ async def _get_device_emos(request: web.Request) -> web.Response:
     return _ok(out)
 
 
+@auth.require_admin
 async def _post_emos_reflash(request: web.Request) -> web.Response:
     """
     POST /api/devices/{id}/emos_reflash
+
+    **Admin**, and this one shipped undecorated too — the same omission as
+    the GET above and by far the worse of the two, because it WRITES THE
+    BOOT PARTITION. Every other route that can change a device (`_post_
+    debloat`, `_post_secure_link`, `_post_oww_assets`, the OTA) was already
+    admin; this one reflashes the device and was reachable by anyone who
+    could reach the port.
 
     Write the latest released emOS to a device that is already on emOS, over
     the network. The counterpart to the wizard, for the case the wizard's own
