@@ -12,6 +12,35 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.57.0-fx.1
+
+### Das Gerät prüft jetzt, ob die Namensauflösung wirklich auflöst
+
+**Nur für emOS-Geräte, weiterhin eine Diagnose.** Sie repariert Spotify und
+AirPlay nicht — sie sagt, woran es liegt.
+
+Die Prüfung aus 2.56.0-fx.1 beantwortete, ob das Gerät die Bibliothek laden
+kann. Auf einem echten Gerät gemessen lautet die Antwort: **ja, sie wird
+geladen.** Und Spotify scheitert trotzdem, mit unveränderter Meldung.
+
+Damit ist die nächste Frage, was die Bibliothek zurückgibt, wenn sie
+tatsächlich nach einem Namen gefragt wird — und das kann von außen niemand
+sehen. Also fragt sie sich jetzt selbst: Beim Start eines Endpunkts löst sie
+einmal den Namen auf, an dem Spotify scheitert, und schreibt das Ergebnis ins
+Log.
+
+Im Updates-Reiter stehen dadurch drei Zustände statt einem:
+
+- *Installiert, aber das Gerät konnte sie nicht laden*
+- *Installiert und geladen, aber es löst nichts auf*
+- *Installiert und löst Namen auf*
+
+**Ebenfalls behoben:** 2.56.0-fx.1 meldete auf diesem Gerät „konnte sie nicht
+laden", obwohl sie geladen wurde. Der Programmlader gibt beim Start
+routinemäßig Hinweise aus, die keine Fehler sind, und die Firmware las sie als
+solche. Wer 2.56.0-fx.1 aufgespielt hat, sollte diese Fassung nehmen — die
+Auskunft von dort war falsch.
+
 ## 2.56.0-fx.1
 
 ### Die Diagnose aus 2.55.0-fx.1 hat sich selbst falsch gemessen

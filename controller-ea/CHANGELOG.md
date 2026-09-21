@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.67.0-fx.1
+
+### Der Updates-Reiter unterscheidet „geladen" von „funktioniert"
+
+Gehört zu Firmware **2.57.0-fx.1** und den Endpunkt-Binärdateien **1.14.0**.
+
+Bisher stand dort „Installiert", sobald die Datei für die Namensauflösung auf
+dem Gerät lag. Auf einem echten Gerät hat sich gezeigt, dass das zu wenig ist:
+Die Datei lag da, wurde auch geladen — und löste trotzdem nichts auf.
+
+Meldet das Gerät jetzt das Ergebnis seiner Selbstprüfung, steht dort
+entsprechend *Installiert und löst Namen auf* oder *Installiert und geladen,
+aber es löst nichts auf* samt der Antwort, die die Bibliothek gegeben hat.
+Ältere Firmware sagt dazu nichts und wird unverändert angezeigt.
+
 ## 2.66.0-fx.1
 
 ### „Installiert" reicht nicht mehr als Auskunft über die Namensauflösung
