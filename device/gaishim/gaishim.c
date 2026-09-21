@@ -170,6 +170,12 @@ struct servent *getservbyname(const char *, const char *);
 #define GAISHIM_PTON inet_pton
 int inet_pton(int, const char *, void *);
 #endif
+#ifndef GAISHIM_GETENV
+#define GAISHIM_GETENV getenv
+#define GAISHIM_WRITE  write
+char *getenv(const char *);
+long  write(int, const void *, shim_size_t);
+#endif
 
 /* ── small helpers, so the shim imports no string functions ─────────────── */
 
@@ -555,3 +561,101 @@ GAISHIM_EXPORT int getaddrinfo(const char *node, const char *service,
 	*res = head;
 	return 0;
 }
+
+
+/* ── the self-test ───────────────────────────────────────────────────────────
+ *
+ * Set `GAISHIM_SELFTEST` to a hostname and this library, at load time, resolves
+ * it THROUGH ITS OWN getaddrinfo and writes one line to stderr. Inert
+ * otherwise: the variable is unset in normal operation and the constructor
+ * returns immediately.
+ *
+ * # Why it lives here and not in a tool
+ *
+ * The question that could not be answered from outside on 2026-09-21 is what
+ * `getaddrinfo` returns INSIDE an endpoint's own process. The shim is already
+ * loaded into exactly that process by exactly the linker under suspicion, so
+ * it is the only thing on the device that can answer without a second binary,
+ * a second delivery path and a second thing to keep in step.
+ *
+ * It does NOT prove interposition on its own — it proves what this code
+ * returns when the real bionic is underneath it. Read it beside the linker's
+ * own lines, which say whether the library was loaded at all.
+ */
+
+static void st_puts(const char *s)
+{
+	int n = 0;
+	while (s[n])
+		n++;
+	GAISHIM_WRITE(2, s, (shim_size_t)n);
+}
+
+static void st_num(long v)
+{
+	char b[24];
+	int i = 24;
+	int neg = v < 0;
+	unsigned long u = neg ? -(unsigned long)v : v;
+
+	if (!u) {
+		st_puts("0");
+		return;
+	}
+	while (u) {
+		b[--i] = (char)('0' + (u % 10));
+		u /= 10;
+	}
+	if (neg)
+		st_puts("-");
+	GAISHIM_WRITE(2, b + i, (shim_size_t)(24 - i));
+}
+
+/* The marker is matched by the firmware and must not drift. */
+#define SELFTEST_MARK "gaishim-selftest: "
+
+void gaishim_selftest(const char *host)
+{
+	struct addrinfo hints, *res = 0, *ai;
+	int rc, n = 0;
+
+	if (!host || !*host)
+		return;
+
+	s_zero(&hints, (int)sizeof hints);
+	hints.ai_family   = SHIM_AF_UNSPEC;
+	hints.ai_socktype = SHIM_SOCK_STREAM;
+
+	st_puts(SELFTEST_MARK);
+	st_puts(host);
+	st_puts(" rc=");
+	rc = getaddrinfo(host, "443", &hints, &res);
+	st_num(rc);
+
+	for (ai = res; ai; ai = ai->ai_next) {
+		unsigned char *a;
+		int i;
+		n++;
+		if (ai->ai_family != SHIM_AF_INET || !ai->ai_addr)
+			continue;
+		a = (unsigned char *)ai->ai_addr + 4;   /* sin_addr */
+		st_puts(" ip=");
+		for (i = 0; i < 4; i++) {
+			st_num(a[i]);
+			if (i < 3)
+				st_puts(".");
+		}
+	}
+	st_puts(" entries=");
+	st_num(n);
+	st_puts("\n");
+	if (res)
+		freeaddrinfo(res);
+}
+
+#ifndef GAISHIM_TEST
+__attribute__((constructor)) static void gaishim_boot(void)
+{
+	gaishim_selftest(GAISHIM_GETENV("GAISHIM_SELFTEST"));
+}
+#endif

@@ -894,3 +894,22 @@ def test_no_refusal_means_no_field():
         resolver_status = {"ok": True, "size": 4840, "needed": True}
 
     assert ebins.device_state(ebins.KINDS["gaishim"], Live())["preload_error"] is None
+
+
+def test_the_selftest_reaches_the_dashboard():
+    """Loaded is not working, and only the self-test can tell them apart.
+
+    Every other field here says where a file is. This one says what the
+    library returned for a real name inside the endpoint's own process — the
+    question that took a day and three firmware releases to become askable.
+    """
+    class Live:
+        capabilities = ["gai_shim"]
+        resolver_status = {"ok": True, "size": 5740, "needed": True,
+                           "selftest": "clienttoken.spotify.com rc=0 "
+                                       "ip=35.186.224.24 entries=1"}
+
+    st = ebins.device_state(ebins.KINDS["gaishim"], Live())
+    assert st["status"] == "installed"
+    assert "rc=0" in (st["selftest"] or "")
+    assert st["preload_error"] is None
