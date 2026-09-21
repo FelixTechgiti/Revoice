@@ -590,7 +590,7 @@ func (c *Client) session(ctx context.Context) error {
 	// the next restart, which is 60 seconds away, instead of on the next
 	// reboot. Inert on FireOS, where netd answers.
 	res := endpoint.ResolverStatus()
-	endpoint.LogResolver(res)
+	endpoint.LogResolver(res, c.opts.Binary)
 	cmd.Env = res.Env(os.Environ())
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

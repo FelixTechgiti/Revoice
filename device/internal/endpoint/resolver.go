@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"bytes"
 	"context"
 	"log"
 	"os"
@@ -158,8 +159,9 @@ func (r Resolver) Report() map[string]any {
 
 // ── whether the linker will actually take it ────────────────────────────────
 
-// PreloadProbe asks Android's dynamic linker to load the shim, and returns
-// its complaint — empty when the library loaded cleanly.
+// PreloadProbe asks Android's dynamic linker to load the shim INTO THE
+// PROGRAM THAT WILL ACTUALLY RUN IT, and returns its complaint — empty when
+// the library loaded cleanly.
 //
 // # Why this exists
 //
@@ -171,37 +173,67 @@ func (r Resolver) Report() map[string]any {
 // byte-identical error for four restarts, and nothing anywhere could say
 // which of three things was happening.
 //
-// So the firmware asks the question directly, once, and puts the answer where
-// somebody can read it.
+// # Why the endpoint's own binary, and nothing else
 //
-// # Why /system/bin/sh and not busybox
+// The first version of this probe ran `/system/bin/sh -c :`, on the reasoning
+// that it is dynamically linked where busybox is static. That was right about
+// busybox and wrong about the shell, and the device said so in one line:
 //
-// The probe has to be a DYNAMICALLY linked program, because a static one
-// never invokes the linker at all and would answer "fine" for a library that
-// cannot load. `/system/bin/busybox` on this device is static — the same trap
-// that cost half a day in #263, where it was used as a resolver instrument
-// and could not see the resolver. `sh -c :` is dynamic, does nothing and
-// exits immediately.
-func PreloadProbe(path string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//	CANNOT LINK EXECUTABLE DEPENDENCIES: "/data/local/bin/gaishim.so"
+//	is 32-bit instead of 64-bit
+//
+// `/system/bin/sh` on biscuit is aarch64, exactly as `/system/bin/ping` is —
+// the trap #263 had already written down and this walked into one level up.
+// A 64-bit probe cannot answer for a 32-bit endpoint in either direction: it
+// rejects a correct library, and it would accept one built for the wrong ABI.
+//
+// So the only instrument that answers the question is the binary whose
+// `exec` the answer is about. It is passed in rather than chosen here,
+// because the caller is the one that knows which file it is about to run —
+// a device may have the classic receiver or the AirPlay 2 one, at different
+// paths.
+func PreloadProbe(shim, binary string) string {
+	if binary == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, probeShell, "-c", ":")
-	cmd.Env = append(os.Environ(), PreloadVar+"="+path)
-	// Combined, because the linker's warning goes to stderr while a shell
-	// that failed for some other reason may say so on stdout, and both are
-	// the answer to "why did this not work".
-	out, err := cmd.CombinedOutput()
-	msg := strings.TrimSpace(string(out))
-	if msg == "" && err != nil {
-		// The probe itself could not run. Reported rather than swallowed:
-		// "no answer" must not read as "loaded cleanly".
-		return "probe could not run: " + err.Error()
+	cmd := exec.CommandContext(ctx, binary, "--version")
+	cmd.Env = append(os.Environ(), PreloadVar+"="+shim)
+	var errbuf bytes.Buffer
+	cmd.Stderr = &errbuf
+	// stdout is discarded on purpose: `--version` prints there and says
+	// nothing about linking, while every linker message goes to stderr.
+	err := cmd.Run()
+
+	msg := linkerLines(errbuf.String())
+	if msg == "" && err != nil && ctx.Err() != nil {
+		// A probe that timed out has not answered. Reported rather than
+		// swallowed: failure to LOOK is not evidence of success.
+		return "probe timed out running " + binary
 	}
 	return msg
 }
 
-var probeShell = "/system/bin/sh"
+var probeTimeout = 10 * time.Second
+
+// The linker's own lines and nothing else. A program that prints its own
+// warnings to stderr must not read as a refused preload — the question is
+// what the LINKER said, and it announces itself.
+func linkerLines(stderr string) string {
+	var keep []string
+	for _, line := range strings.Split(stderr, "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" {
+			continue
+		}
+		if strings.Contains(l, "linker:") || strings.Contains(l, "CANNOT LINK") {
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "; ")
+}
 
 // ── saying so, once ─────────────────────────────────────────────────────────
 
@@ -230,7 +262,7 @@ func PreloadRefusal() string {
 // session would bury the log in the one condition where somebody is reading
 // it. A line per change still reports the install the moment it lands, which
 // is the event somebody is waiting for.
-func LogResolver(r Resolver) {
+func LogResolver(r Resolver, binary string) {
 	state := "off"
 	msg := ""
 	switch {
@@ -266,7 +298,7 @@ func LogResolver(r Resolver) {
 	// transition, rather than left to be inferred from an endpoint that keeps
 	// failing. One process spawn per state change, not per restart.
 	if state == "active" {
-		refusal := resolverProbe(r.Path)
+		refusal := resolverProbe(r.Path, binary)
 		logMu.Lock()
 		lastRefusal = refusal
 		logMu.Unlock()

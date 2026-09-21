@@ -460,7 +460,7 @@ func (n *Nqptp) session(ctx context.Context) error {
 	// getaddrinfo, which answers nothing there either (#263). The shim covers
 	// both: loopback is answered inside it, before any lookup.
 	res := endpoint.ResolverStatus()
-	endpoint.LogResolver(res)
+	endpoint.LogResolver(res, n.Path)
 	cmd.Env = res.Env(append(os.Environ(), ShmDirEnv+"="+n.shmDir()))
 
 	stdout, err := cmd.StdoutPipe()

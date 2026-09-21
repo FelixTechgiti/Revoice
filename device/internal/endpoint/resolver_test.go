@@ -212,7 +212,7 @@ func stubProbe(t *testing.T, answer string) *int {
 	t.Helper()
 	calls := 0
 	old := resolverProbe
-	resolverProbe = func(string) string { calls++; return answer }
+	resolverProbe = func(string, string) string { calls++; return answer }
 	t.Cleanup(func() {
 		resolverProbe = old
 		logMu.Lock()
@@ -229,7 +229,7 @@ func TestARefusedPreloadIsReported(t *testing.T) {
 	stub(t, platform.EmOS, present(), nil)
 	stubProbe(t, `WARNING: linker: could not load library "gaishim.so"`)
 
-	LogResolver(ResolverStatus())
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
 	if PreloadRefusal() == "" {
 		t.Fatal("the linker's complaint was not kept")
 	}
@@ -247,7 +247,7 @@ func TestACleanLoadCarriesNoError(t *testing.T) {
 	stub(t, platform.EmOS, present(), nil)
 	stubProbe(t, "")
 
-	LogResolver(ResolverStatus())
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
 	if PreloadRefusal() != "" {
 		t.Errorf("clean load reported a refusal: %q", PreloadRefusal())
 	}
@@ -263,7 +263,7 @@ func TestTheProbeRunsOncePerStateChange(t *testing.T) {
 	calls := stubProbe(t, "")
 
 	for i := 0; i < 5; i++ {
-		LogResolver(ResolverStatus())
+		LogResolver(ResolverStatus(), "/data/local/bin/librespot")
 	}
 	if *calls != 1 {
 		t.Errorf("probe ran %d times across five identical states, want 1", *calls)
@@ -276,20 +276,53 @@ func TestTheProbeIsNotRunWhenTheFileIsAbsent(t *testing.T) {
 	stub(t, platform.EmOS, nil, errors.New("gone"))
 	calls := stubProbe(t, "irrelevant")
 
-	LogResolver(ResolverStatus())
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
 	if *calls != 0 {
 		t.Errorf("probe ran %d times with no file installed, want 0", *calls)
 	}
 }
 
-// Failure to LOOK is not evidence of success. A probe that cannot run at all
-// must not read as "the linker accepted it".
-func TestAProbeThatCannotRunIsNotSilence(t *testing.T) {
-	old := probeShell
-	probeShell = "/nonexistent/sh"
-	t.Cleanup(func() { probeShell = old })
+// The lesson of 2026-09-21, in a test: the probe must be pointed at a binary,
+// and the caller is the only one who knows which. With none, it answers
+// nothing rather than guessing — the first version guessed `/system/bin/sh`,
+// which is aarch64 on this board and rejected a perfectly good 32-bit
+// library.
+func TestNoBinaryMeansNoVerdict(t *testing.T) {
+	if got := PreloadProbe("/data/local/bin/gaishim.so", ""); got != "" {
+		t.Errorf("with no binary to probe the answer must be empty, got %q", got)
+	}
+}
 
-	if got := PreloadProbe("/data/local/bin/gaishim.so"); got == "" {
-		t.Error("a probe that could not run returned empty, which reads as a clean load")
+// Only the LINKER's lines are a verdict about linking. A program that writes
+// its own warnings to stderr must not be read as a refused preload.
+func TestOnlyTheLinkersOwnLinesCount(t *testing.T) {
+	for _, tc := range []struct {
+		name, stderr, want string
+	}{
+		{"nothing at all", "", ""},
+		{"the program's own noise",
+			"warning: config file missing\nusing defaults\n", ""},
+		{"a hard refusal",
+			`CANNOT LINK EXECUTABLE DEPENDENCIES: "/x/gaishim.so" is 32-bit instead of 64-bit`,
+			`CANNOT LINK EXECUTABLE DEPENDENCIES: "/x/gaishim.so" is 32-bit instead of 64-bit`},
+		{"a soft refusal beside the program's noise",
+			"librespot: starting\nWARNING: linker: could not load library \"gaishim.so\"\n",
+			`WARNING: linker: could not load library "gaishim.so"`},
+	} {
+		if got := linkerLines(tc.stderr); got != tc.want {
+			t.Errorf("%s: linkerLines = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A probe against a binary that cannot even be executed answers nothing about
+// the linker, and must not answer "clean".
+func TestATimedOutProbeIsNotSilence(t *testing.T) {
+	old := probeTimeout
+	probeTimeout = time.Nanosecond
+	t.Cleanup(func() { probeTimeout = old })
+
+	if got := PreloadProbe("/x/gaishim.so", "/bin/sh"); got == "" {
+		t.Error("a timed-out probe returned empty, which reads as a clean load")
 	}
 }

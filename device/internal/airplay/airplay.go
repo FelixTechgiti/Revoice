@@ -830,7 +830,7 @@ func (c *Client) session(ctx context.Context) error {
 	// can install the library at any moment, and the next restart should pick
 	// it up rather than the next reboot.
 	res := endpoint.ResolverStatus()
-	endpoint.LogResolver(res)
+	endpoint.LogResolver(res, c.binary())
 	cmd.Env = res.Env(append(os.Environ(), ShmDirEnv+"="+ShmDir()))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
