@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.61.0-fx.1
+
+### Der Schalter für den Lautsprecherschutz an der Klinkenbuchse
+
+**Diese Version allein tut nichts** — sie zeigt den Schalter, und wirken kann
+er erst mit Firmware 2.52.0-fx.1 auf dem Gerät. Ohne sie steht er deaktiviert
+da und sagt, warum.
+
+Der Lautsprecherschutz im Echo nimmt tiefe Frequenzen heraus, die der kleine
+interne Treiber nicht liefern kann — praktisch alles unter 160 Hz, gemessen
+−28,6 dB bei 31,5 Hz. Mit einem Kabel in der Kopfhörerbuchse liegt dieser
+Treiber gar nicht mehr im Signalweg, der Schutz filtert dann also nur noch
+den Bass weg, den ein angeschlossener Verstärker sehr wohl wiedergeben könnte.
+
+Neu unter Gerät → Konfiguration → Wiedergabe → Erweitert: **Schutz am
+Klinkenausgang aussetzen**, ab Werk aus. Warum aus und nicht automatisch,
+steht in den Firmware-Notizen zu 2.52.0-fx.1 und kurz gesagt daran, dass eine
+Beobachtung an der Hardware nie nachgemessen wurde — darum ist der Schalter
+zugleich die Prüfung, und der Hinweistext daneben sagt, wie sie geht.
+
+### Warum der Schalter bei manchen Geräten grau ist
+
+Er braucht zwei Dinge, die der Controller beide nicht ersetzen kann: Firmware,
+die ihren Klang selbst formt, und ein Gerät, das die Buchse erkennt. Der
+Controller erfährt von keinem Gerät, ob dort ein Stecker steckt — er könnte
+den Schalter also niemals selbst umsetzen, auch nicht für ältere Firmware.
+Statt eines Schalters, der speichert und nichts bewirkt, steht dort die
+Begründung.
+
+### Sonst
+
+Nichts, was du merkst. Für Geräte ohne Kabel in der Buchse ändert sich nichts,
+mit Firmware wie ohne.
+
 ## 2.60.0-fx.1
 
 ### Die Diagnose misst jetzt den Weg, auf den es ankommt

@@ -12,6 +12,62 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.52.0-fx.1
+
+### Der Lautsprecherschutz lässt sich für die Klinkenbuchse abschalten
+
+**Nur interessant, wenn du den Echo über die Kopfhörerbuchse an einen
+Verstärker oder an Aktivboxen angeschlossen hast. Sonst ändert dieses Update
+für dich nichts — die neue Einstellung ist ab Werk aus.**
+
+Der Lautsprecherschutz nimmt tiefe Frequenzen heraus, die der kleine Treiber
+im Echo nicht liefern kann. Das ist richtig, solange dieser Treiber spielt.
+Steckt ein Kabel in der Buchse, liegt er gar nicht mehr im Signalweg — die
+Schaltkontakte der Buchse trennen ihn —, und der Schutz filtert dann nur noch
+den Bass weg, den deine Anlage sehr wohl könnte.
+
+Gemessen an der Kette selbst, eingeschwungener Sinus:
+
+| Frequenz | Dämpfung durch den Schutz |
+|---:|---:|
+| 31,5 Hz | −28,6 dB |
+| 63 Hz | −19,0 dB |
+| 160 Hz | −1,9 dB |
+
+Also praktisch alles unter 160 Hz. Wer das an einer guten Anlage hört,
+beschreibt es als „kein dynamischer Umfang, klingt nur nach Mitten", und das
+ist eine genaue Beschreibung dieser Kurve.
+
+### Was du tun musst
+
+Nichts, wenn du keine Klinke benutzt.
+
+Sonst: Gerät → Konfiguration → Wiedergabe → Erweitert → **Schutz am
+Klinkenausgang aussetzen**. Der Schalter wirkt sofort, ohne Neustart, und nur
+solange etwas eingesteckt ist — ziehst du das Kabel, ist der Schutz wieder da.
+
+### Warum es eine Einstellung ist und nicht automatisch passiert
+
+Weil eine Sache nicht nachgemessen ist. Am Gerät wurde einmal beobachtet, dass
+die Regelung für den internen Verstärker auf „aus" stand, während der interne
+Lautsprecher hörbar spielte — und seit der Korrektur der Klinkenverstärkung
+hat das niemand wiederholt. Falls diese Regelung den internen Treiber nicht
+wirklich abschaltet, spielt er mit Stecker weiter mit, und ihm ungefilterten
+Bass zu schicken wäre nicht gut für ihn.
+
+Automatisch umzuschalten hieße, das auf jedem Gerät zu tun, gestützt auf eine
+Annahme, die niemand geprüft hat. Als Schalter kostet es dich einen Klick und
+alle anderen nichts.
+
+**Und der Schalter ist zugleich die Prüfung**: schalte ihn ein, mach die
+externen Boxen aus, spiel Musik ab und hör auf den Echo selbst. Kommt daraus
+Bass, dann schaltet die Regelung den internen Treiber nicht ab — dann bitte
+wieder ausschalten und in Issue #254 Bescheid geben.
+
+Der Limiter bleibt in beiden Fällen an. Er trug bei normalem Pegel ohnehin
+nichts zum Problem bei und ist das Einzige, was verhindert, dass die
+EQ-Regler im Dashboard übersteuern.
+
 ## 2.51.0-fx.1
 
 ### AirPlay 2 kann jetzt überhaupt starten: es gab kein 127.0.0.1
