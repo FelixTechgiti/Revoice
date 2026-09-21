@@ -3400,7 +3400,14 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     // And `unknown` may no longer say "offline": for a
                     // connected device whose receiver has not re-registered
                     // since it was replaced, offline is simply false.
-                    const label = ep.status === 'installed' ? 'Installed'
+                    // Installed and REFUSED is the state that reads healthy
+                    // everywhere else: the file is present, the md5 matches,
+                    // and the endpoints are running without it. Saying only
+                    // "Installed" here is how that stayed invisible for four
+                    // restarts on 2026-09-21.
+                    const label = ep.preload_error
+                                ? `Installed, but the device could not load it`
+                                : ep.status === 'installed' ? 'Installed'
                                 : ep.status === 'missing'
                                   ? `Not installed${ep.reason_text && ep.reason_text !== 'not installed'
                                       ? ` — ${ep.reason_text}` : ''}`

@@ -1,10 +1,13 @@
 package endpoint
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wilbowes/EchoMuse/internal/platform"
 )
@@ -145,16 +148,80 @@ func (r Resolver) Report() map[string]any {
 	} else {
 		rep["reason"] = r.Reason
 	}
+	// Present AND refused is a fourth state the two booleans cannot express,
+	// and it is the one that looks healthy from every side.
+	if refusal := PreloadRefusal(); refusal != "" {
+		rep["preload_error"] = refusal
+	}
 	return rep
 }
+
+// ── whether the linker will actually take it ────────────────────────────────
+
+// PreloadProbe asks Android's dynamic linker to load the shim, and returns
+// its complaint — empty when the library loaded cleanly.
+//
+// # Why this exists
+//
+// A REFUSED PRELOAD IS SILENT. The linker writes a warning, drops the
+// library and runs the program anyway, so an endpoint that cannot load the
+// shim behaves in every observable way like one that never had it: it starts,
+// it fails to resolve, it exits, it retries. Measured on 2026-09-21 — the
+// shim was installed, md5-verified, and librespot went on failing with a
+// byte-identical error for four restarts, and nothing anywhere could say
+// which of three things was happening.
+//
+// So the firmware asks the question directly, once, and puts the answer where
+// somebody can read it.
+//
+// # Why /system/bin/sh and not busybox
+//
+// The probe has to be a DYNAMICALLY linked program, because a static one
+// never invokes the linker at all and would answer "fine" for a library that
+// cannot load. `/system/bin/busybox` on this device is static — the same trap
+// that cost half a day in #263, where it was used as a resolver instrument
+// and could not see the resolver. `sh -c :` is dynamic, does nothing and
+// exits immediately.
+func PreloadProbe(path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, probeShell, "-c", ":")
+	cmd.Env = append(os.Environ(), PreloadVar+"="+path)
+	// Combined, because the linker's warning goes to stderr while a shell
+	// that failed for some other reason may say so on stdout, and both are
+	// the answer to "why did this not work".
+	out, err := cmd.CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+	if msg == "" && err != nil {
+		// The probe itself could not run. Reported rather than swallowed:
+		// "no answer" must not read as "loaded cleanly".
+		return "probe could not run: " + err.Error()
+	}
+	return msg
+}
+
+var probeShell = "/system/bin/sh"
 
 // ── saying so, once ─────────────────────────────────────────────────────────
 
 var (
-	logMu   sync.Mutex
-	logLast string
-	logAny  bool
+	logMu       sync.Mutex
+	logLast     string
+	logAny      bool
+	lastRefusal string
 )
+
+// Swapped by tests; the real linker on a device.
+var resolverProbe = PreloadProbe
+
+// PreloadRefusal is the linker's last complaint about the shim, or empty.
+// Read by Report so the controller sees it without a shell session.
+func PreloadRefusal() string {
+	logMu.Lock()
+	defer logMu.Unlock()
+	return lastRefusal
+}
 
 // LogResolver writes one line when the shim's state CHANGES, and nothing on
 // the restarts in between.
@@ -172,8 +239,6 @@ func LogResolver(r Resolver) {
 		msg = "resolver: FireOS libc resolves names itself; gaishim not used"
 	case r.Present:
 		state = "active"
-		msg = "resolver: gaishim.so preloaded into the endpoints (" +
-			r.Path + ")"
 	default:
 		state = "missing:" + r.Reason
 		// The actionable case, and the one that is otherwise invisible:
@@ -185,13 +250,34 @@ func LogResolver(r Resolver) {
 	}
 
 	logMu.Lock()
-	defer logMu.Unlock()
 	if logAny && logLast == state {
+		logMu.Unlock()
 		return
 	}
 	logAny, logLast = true, state
+	logMu.Unlock()
+
 	if state == "not_needed" {
 		return // true of most of the fleet; saying it once is noise
+	}
+
+	// The file being present is not the same as the linker accepting it, and
+	// the difference is invisible at run time — so it is asked HERE, on the
+	// transition, rather than left to be inferred from an endpoint that keeps
+	// failing. One process spawn per state change, not per restart.
+	if state == "active" {
+		refusal := resolverProbe(r.Path)
+		logMu.Lock()
+		lastRefusal = refusal
+		logMu.Unlock()
+		if refusal != "" {
+			msg = "resolver: the linker REFUSED " + r.Path +
+				" — the endpoints are running without it and cannot " +
+				"resolve any name: " + refusal
+		} else {
+			msg = "resolver: gaishim.so preloaded into the endpoints (" +
+				r.Path + "), linker accepted it"
+		}
 	}
 	log.Print(msg)
 }

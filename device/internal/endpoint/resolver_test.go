@@ -205,3 +205,91 @@ func TestShimPathIsBesideTheEndpoints(t *testing.T) {
 			"must be changed with it", ShimPath)
 	}
 }
+
+// ── the refusal, which is the whole point of the probe ──────────────────────
+
+func stubProbe(t *testing.T, answer string) *int {
+	t.Helper()
+	calls := 0
+	old := resolverProbe
+	resolverProbe = func(string) string { calls++; return answer }
+	t.Cleanup(func() {
+		resolverProbe = old
+		logMu.Lock()
+		lastRefusal = ""
+		logMu.Unlock()
+	})
+	return &calls
+}
+
+// The state this exists for: the file is there, the linker will not take it,
+// and every other signal reads healthy. Measured on 2026-09-21, when exactly
+// that could not be told apart from two other explanations.
+func TestARefusedPreloadIsReported(t *testing.T) {
+	stub(t, platform.EmOS, present(), nil)
+	stubProbe(t, `WARNING: linker: could not load library "gaishim.so"`)
+
+	LogResolver(ResolverStatus())
+	if PreloadRefusal() == "" {
+		t.Fatal("the linker's complaint was not kept")
+	}
+	rep := ResolverStatus().Report()
+	if rep["preload_error"] == nil {
+		t.Error("Report must carry preload_error — `ok: true` alone says the " +
+			"file is there, which is exactly the misleading half")
+	}
+	if rep["ok"] != true {
+		t.Error("the file IS present; ok must stay true and the refusal ride beside it")
+	}
+}
+
+func TestACleanLoadCarriesNoError(t *testing.T) {
+	stub(t, platform.EmOS, present(), nil)
+	stubProbe(t, "")
+
+	LogResolver(ResolverStatus())
+	if PreloadRefusal() != "" {
+		t.Errorf("clean load reported a refusal: %q", PreloadRefusal())
+	}
+	if _, ok := ResolverStatus().Report()["preload_error"]; ok {
+		t.Error("a clean load must add no preload_error key at all")
+	}
+}
+
+// One spawn per state change, not one per endpoint restart. librespot restarts
+// every 60s while it is failing, which is precisely when this would be asked.
+func TestTheProbeRunsOncePerStateChange(t *testing.T) {
+	stub(t, platform.EmOS, present(), nil)
+	calls := stubProbe(t, "")
+
+	for i := 0; i < 5; i++ {
+		LogResolver(ResolverStatus())
+	}
+	if *calls != 1 {
+		t.Errorf("probe ran %d times across five identical states, want 1", *calls)
+	}
+}
+
+// A device that does not have the file must not be asked whether the linker
+// likes it — there is nothing to load, and the answer would be noise.
+func TestTheProbeIsNotRunWhenTheFileIsAbsent(t *testing.T) {
+	stub(t, platform.EmOS, nil, errors.New("gone"))
+	calls := stubProbe(t, "irrelevant")
+
+	LogResolver(ResolverStatus())
+	if *calls != 0 {
+		t.Errorf("probe ran %d times with no file installed, want 0", *calls)
+	}
+}
+
+// Failure to LOOK is not evidence of success. A probe that cannot run at all
+// must not read as "the linker accepted it".
+func TestAProbeThatCannotRunIsNotSilence(t *testing.T) {
+	old := probeShell
+	probeShell = "/nonexistent/sh"
+	t.Cleanup(func() { probeShell = old })
+
+	if got := PreloadProbe("/data/local/bin/gaishim.so"); got == "" {
+		t.Error("a probe that could not run returned empty, which reads as a clean load")
+	}
+}
