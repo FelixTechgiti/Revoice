@@ -3222,7 +3222,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                       to disagree about the same device. */}
                   {emos.diag && (
                     <div style={{ marginTop:14, paddingTop:12, borderTop:'1px solid var(--line)' }}>
-                      <div style={{ ...label, marginBottom:6 }}>{t('diagTitle')}</div>
+                      <div style={{ fontSize:9, color:'var(--muted)', marginBottom:6 }}>{t('diagTitle')}</div>
                       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10,
                                     color: emos.diagSummary === 'ok' ? 'var(--muted)' : 'var(--warn)',
                                     lineHeight:1.6, textWrap:'pretty' }}>
@@ -3230,7 +3230,11 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                       </div>
                       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:8, lineHeight:1.7 }}>
                         {t('diagDns')}: {t('diagDns_' + emos.diag.dns)}
-                        {' · '}{t('diagPorts')}: {emos.diag.ports.length
+                        {/* Defensive on a field the server always sends:
+                            this panel renders inside the device window, and
+                            anything that throws here takes the WHOLE
+                            dashboard with it rather than one line. */}
+                        {' · '}{t('diagPorts')}: {(emos.diag.ports || []).length
                           ? emos.diag.ports.join(', ')
                           : t('diagNone')}
                         {' · '}{diagAirplayLine(emos.diag)}
@@ -3243,7 +3247,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                       {/* emOS's own account of its boot, verbatim and
                           newest last. It is the only place a proxy that
                           could not bind ever says so. */}
-                      {emos.diag.netlog && emos.diag.netlog.length > 0 && (
+                      {(emos.diag.netlog || []).length > 0 && (
                         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--empty)', marginTop:6, lineHeight:1.6, whiteSpace:'pre-wrap', wordBreak:'break-word' }}>
                           {emos.diag.netlog.join('\n')}
                         </div>

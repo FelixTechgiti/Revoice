@@ -78,10 +78,17 @@ const server = createServer(async (req, res) => {
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const port = server.address().port;
 
+// Chromium refuses to start as root without --no-sandbox, which is every
+// container. Opt-in rather than always-on: the sandbox is worth keeping where
+// there is one, and a person running this on their own machine should not
+// silently lose it.
+const NO_SANDBOX = process.env.CHROME_NO_SANDBOX === '1';
+
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: 'new',
-  args: ['--force-color-profile=srgb', '--font-render-hinting=none'],
+  args: ['--force-color-profile=srgb', '--font-render-hinting=none',
+         ...(NO_SANDBOX ? ['--no-sandbox', '--disable-setuid-sandbox'] : [])],
 });
 
 // Click the row whose name starts with `name`. The rows carry no id — they
@@ -155,6 +162,14 @@ const SHOTS = [
   // in the dashboard, so it is the one where four words left behind are
   // hardest to notice by reading the diff.
   { name: 'device-de', page: 'dark.html', w: 1440, h: 1100, open: 'Lounge', lang: 'de' },
+  // The Updates tab of a device window. Added after a `{ ...label }` spread
+  // of a name that pane's component does not have took the WHOLE dashboard
+  // down the moment the tab was opened (2026-09-20) — a blank page that no
+  // other shot could see, because none of them opened this tab.
+  { name: 'updates',  page: 'dark.html',  w: 1440, h: 1200, open: 'Lounge',
+    click: 'Updates' },
+  { name: 'updates-de', page: 'dark.html', w: 1440, h: 1200, open: 'Lounge',
+    click: 'Updates', lang: 'de' },
   { name: 'approve',  page: 'light.html', w: 1440, h: 900,  open: 'G090LF1180570XYZ' },
   // The muted device's own window, which is the only place the mark is
   // drawn at 44px. The fleet shots cover it at 34.

@@ -89,6 +89,137 @@ if (missing.length) {
   console.log(`ok  every module-private is defined (${used.size} referenced)`);
 }
 
+// ── A style spread of a name that is not in scope where it is used ──────────
+//
+// `{ ...label, marginBottom:6 }` throws `ReferenceError: label is not defined`
+// at RENDER, which unmounts the whole React tree — the dashboard vanishes the
+// moment somebody opens the tab containing it. Shipped 2026-09-20 in the emOS
+// panel, where `label` is a local const in three OTHER components: the name
+// reads as ordinary, the build resolves no identifier, the token test only
+// looks at `var()`, and the harness never opens that tab.
+//
+// **A file-wide search would not have caught it**, because `Detail` does
+// declare a `const label` — inside a callback nested four levels down. So
+// this walks BLOCKS: a spread is satisfied only by a declaration in a block
+// that is still open where the spread appears, plus the parameters of each
+// of those blocks. Crude where JavaScript is subtle (no hoisting, no
+// strings), and it errs towards accepting: what it has to catch is a name
+// that exists in the file and not at the point of use.
+function scopeProblems(src) {
+  const bad = [];
+  // Each frame: the names a block introduced. `params` are pulled from the
+  // `(...)` immediately before the brace, which covers `({ device, token })`
+  // and `(u, c) =>` alike without parsing either.
+  const stack = [new Set()];
+  const declRe = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)/y;
+  const spreadRe = /\{\s*\.\.\.([a-z][\w$]*)\b/y;
+  let fn = "top level";
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === "{") {
+      const before = src.slice(Math.max(0, i - 400), i);
+      const params = (before.match(/\(([^()]*)\)\s*(?:=>\s*)?$/) || ["", ""])[1];
+      const names = new Set(
+        [...params.matchAll(/([A-Za-z_$][\w$]*)/g)].map((m) => m[1]));
+      stack.push(names);
+      continue;
+    }
+    if (c === "}") {
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    const at = /[A-Za-z_$]/.test(c) ? i : -1;
+    if (at === 0 || (at > 0 && !/[\w$.]/.test(src[at - 1]))) {
+      declRe.lastIndex = at;
+      const d = declRe.exec(src);
+      if (d) stack[stack.length - 1].add(d[1]);
+      if (src.startsWith("function ", at) || src.startsWith("function(", at)) {
+        const m = /^function\s+([A-Za-z_$][\w$]*)/.exec(src.slice(at));
+        if (m) fn = m[1];
+      }
+    }
+    if (c === "{") continue;
+    spreadRe.lastIndex = i;
+    const m = spreadRe.exec(src);
+    if (m && src[i] === "{") { /* handled above */ }
+    if (m && i > 0 && src[i] === "{") continue;
+  }
+  return bad;
+}
+
+// The walk above has to see the spread at the same moment it knows the stack,
+// so it is done in one pass here rather than inside the helper.
+function spreadsOutOfScope(src) {
+  const bad = [];
+  const stack = [new Set(MODULE_CONSTS)];
+  let fn = "top level";
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (/[A-Za-z_$]/.test(c) && (i === 0 || !/[\w$.'"]/.test(src[i - 1]))) {
+      const rest = src.slice(i, i + 200);
+      const d = /^(?:const|let|var)\s+([A-Za-z_$][\w$]*)/.exec(rest);
+      if (d) stack[stack.length - 1].add(d[1]);
+      const f = /^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/.exec(rest);
+      if (f) fn = f[1];
+    }
+    if (c === "{") {
+      // What this block introduces: the parameters of the function whose
+      // body it is. Three shapes, because all three are used in this file —
+      // `({ device, token })`, `(u, c) =>` and the bare `r => ({ ...r })`,
+      // whose parameter is in scope INSIDE the object it spreads.
+      const before = src.slice(Math.max(0, i - 400), i);
+      const params = (
+        before.match(/\(([^()]*)\)\s*(?:=>\s*)?\(?\s*$/)
+        || before.match(/\b([A-Za-z_$][\w$]*)\s*=>\s*\(?\s*$/)
+        || ["", ""])[1];
+      const frame = new Set(
+        [...params.matchAll(/([A-Za-z_$][\w$]*)/g)].map((m) => m[1]));
+      const spread = /^\{\s*\.\.\.([a-z][\w$]*)\b/.exec(src.slice(i, i + 40));
+      if (spread) {
+        const name = spread[1];
+        // An arrow with an EXPRESSION body opens no block, so its parameters
+        // never reach the stack — `(stroke, extra) => <circle {...extra}/>`
+        // and `d => cond ? { ...d } : d` are both in scope and both invisible
+        // to a block walk. Every arrow in the preceding window contributes
+        // its parameters.
+        const window_ = src.slice(Math.max(0, i - 300), i);
+        const arrowed = new Set();
+        for (const a of window_.matchAll(
+               /(?:\(([^()]*)\)|\b([A-Za-z_$][\w$]*))\s*=>/g)) {
+          for (const n of (a[1] || a[2] || "").matchAll(/([A-Za-z_$][\w$]*)/g))
+            arrowed.add(n[1]);
+        }
+        // `frame` counts: the spread is inside the body it belongs to.
+        const inScope = frame.has(name) || arrowed.has(name)
+          || stack.some((s) => s.has(name));
+        if (!inScope) bad.push(`${name} (in ${fn})`);
+      }
+      stack.push(frame);
+      continue;
+    }
+    if (c === "}" && stack.length > 1) stack.pop();
+  }
+  return bad;
+}
+
+const MODULE_CONSTS = new Set(
+  [...code.matchAll(/^const\s+([A-Za-z_$][\w$]*)\s*=/gm)].map((m) => m[1]),
+);
+
+const outOfScope = spreadsOutOfScope(code);
+
+if (outOfScope.length) {
+  failed = 1;
+  console.error(
+    `FAIL dashboard.jsx spreads ${outOfScope.length} name(s) that are not in `
+    + `scope where they are used:\n` + outOfScope.map((n) => `  ${n}`).join("\n")
+    + `\n\nThat is a ReferenceError at render, which takes the whole `
+    + `dashboard down rather than the one panel.`,
+  );
+} else {
+  console.log("ok  every style spread names something in scope");
+}
+
 // The check above is a net; this is the specific thing it was cast for. A
 // regex that stopped matching would report success on an empty set, so one
 // name that MUST be found keeps the net honest.

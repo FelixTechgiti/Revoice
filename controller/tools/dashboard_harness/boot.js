@@ -57,6 +57,28 @@
     }),
   ];
 
+  // The emOS panel's answer, which is a SUB-path of /api/devices and would
+  // otherwise be served the device list by the prefix match below — the panel
+  // would then read `.diag` off an array and render nothing, which is exactly
+  // the state a harness is supposed to make visible rather than imitate.
+  const EMOS = {
+    connected: true, baseOs: 'emos', current: '0.6.0-fx.1',
+    latest: '0.6.0-fx.1', comparable: true, available: false,
+    goodImage: true, freeMb: 334, eligible: true, reason: null,
+    reasonText: null,
+    diagSummary: 'dns_no_socket',
+    diag: {
+      dnsSocket: false, dns: 'no_socket',
+      dnsDetail: "ping: bad address 'apresolve.spotify.com'",
+      ports: [5000, 36000], airplayListening: true, airplay2Listening: false,
+      spotifyListening: true, ap2Installed: true, classicInstalled: true,
+      nqptpInstalled: false, nqptpRunning: null,
+      netlog: ['[  12345] wlan0 up 192.168.178.140',
+               '[  12900] dnsproxyd: could not bind /dev/socket/dnsproxyd'],
+      airplayWanted: true, airplay2Wanted: true, spotifyWanted: true,
+    },
+  };
+
   const ROUTES = {
     '/api/devices': DEVICES,
     '/api/system/status': {
@@ -73,6 +95,12 @@
   window.fetch = function (input, init) {
     const url = typeof input === 'string' ? input : input.url;
     const path = '/' + String(url).replace(/^.*?\/(api\/)/, '$1');
+    // Checked before the prefix loop, for the reason EMOS is declared above.
+    if (path.endsWith('/emos')) {
+      return Promise.resolve(new Response(JSON.stringify(EMOS), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      }));
+    }
     for (const key of Object.keys(ROUTES)) {
       if (path.startsWith(key)) {
         return Promise.resolve(new Response(JSON.stringify(ROUTES[key]), {
