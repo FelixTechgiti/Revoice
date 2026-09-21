@@ -46,6 +46,43 @@ existing token for a known device, the config is keyed by `device_id`, and the
 device re-registers by itself. The only thing in the way was one refusal in
 the browser.
 
+## Reaching a device without a person at it
+
+**A session can drive a fielded device end to end, and knowing that is the
+difference between a diagnosis and a paragraph asking someone to try
+something.** The path is three hops, all of them already there for other
+reasons:
+
+1. **Into the controller.** Where the controller runs as a Home Assistant
+   add-on, Supervisor's ingress proxy reaches it. `POST /api/auth/ingress` is
+   deliberately public and returns `{token, role}`: Supervisor strips any
+   client-supplied `X-Remote-User-*` header and adds its own, so their
+   presence IS the proof of an authenticated HA session. The token then rides
+   as `Authorization: Bearer <token>`.
+2. **Onto the device.** `POST /api/devices/{id}/exec` runs one shell command
+   over the shell plane and returns its output. Admin only, logged with the
+   user who ran it, and serialised per device by the same lock as the OTA.
+3. **Anything that needs a binary.** Gzip, base64, `printf` it into a file
+   over `exec`, decode on the device, and **compare md5 of the DECOMPRESSED
+   file on both ends** — a single mistyped base64 character produces a file of
+   exactly the right length. `device/tools/mdnsprobe` and
+   `device/tools/dnsprobe` are built for this trip: no libc, a few KB.
+
+Three things that cost a measurement each, all on 2026-09-21:
+
+- **Pick the instrument by what it links, not by what it does.**
+  `/system/bin/busybox` is statically linked with its own resolver and never
+  touches bionic, so `busybox ping` says nothing about the device's real
+  resolver — and `/system/bin/ping` is aarch64, so it does not answer for the
+  32-bit endpoints either. Half a day went to a resolver bug that the first
+  tool to hand could not see.
+- **A command that can block takes the exec timeout with it**, and anything
+  after it in the same command never runs. Whatever has to be undone —
+  a moved socket, a stopped service — belongs in its own call.
+- **`pkill -f <name>` matches the shell running the script**, because the
+  name is in its command line too. It kills itself, and the run reads as a
+  hang in whatever was being measured.
+
 ## Running the controller
 
 **Bare metal (Python 3.12):**
