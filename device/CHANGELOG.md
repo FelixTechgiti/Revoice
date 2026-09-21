@@ -12,6 +12,30 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.56.0-fx.1
+
+### Die Diagnose aus 2.55.0-fx.1 hat sich selbst falsch gemessen
+
+**Nur für emOS-Geräte. Wer 2.55.0-fx.1 aufgespielt hat, braucht diese
+Fassung — die Auskunft von dort war falsch.**
+
+2.55.0-fx.1 prüft, ob das Gerät die Bibliothek für die Namensauflösung laden
+kann. Dafür lädt es sie testweise in ein Programm. Das gewählte Programm war
+die Systemkonsole — und die ist auf dem Echo 64-bittig, während die
+Bibliothek 32-bittig ist, so wie Spotify und AirPlay es sind.
+
+Das Ergebnis war deshalb immer dasselbe: *abgelehnt, weil 32-bit statt
+64-bit*. Eine korrekte Bibliothek, von einem Prüfling abgelehnt, der gar
+nicht gefragt werden durfte.
+
+Geprüft wird jetzt mit dem Programm, um das es tatsächlich geht — librespot
+beziehungsweise dem AirPlay-Empfänger, den dieses Gerät startet. Und es
+zählen nur die Meldungen des Programmladers: Ein Endpunkt, der aus eigenem
+Antrieb eine Warnung schreibt, wird nicht mehr als Ladefehler gelesen.
+
+**Was weiterhin offen ist:** ob die Bibliothek in Spotify und AirPlay geladen
+wird. Die Antwort aus 2.55.0-fx.1 war keine; diese Fassung holt die richtige.
+
 ## 2.55.0-fx.1
 
 ### Das Gerät sagt jetzt, ob es die Namensauflösung überhaupt laden konnte
