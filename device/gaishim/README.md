@@ -15,8 +15,7 @@ bionic's `getaddrinfo` and its `gethostbyname` both go to
 `emos/init/init.c`, and only `gethostbyname` works.
 
 The proxy is not at fault. Measured on 2026-09-21 with `device/tools/dnsprobe`
-(#264, not merged at the time of writing — take that path as a reference to the
-PR if the directory is not in your tree),
+(#264),
 on G090L91180250AN1 under emOS 0.7.0-fx.1:
 
 - the proxy's reply is netd's serialisation **byte for byte**, with the right
