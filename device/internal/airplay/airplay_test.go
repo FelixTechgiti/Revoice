@@ -97,7 +97,7 @@ func TestAMissingBinaryIsReportedNotIgnored(t *testing.T) {
 }
 
 func TestReportDistinguishesTheFaults(t *testing.T) {
-	rep := Report(false)
+	rep := Report(false, "")
 	if rep["binary"] != BinaryPath {
 		t.Fatalf("report does not name the path: %v", rep)
 	}
@@ -114,7 +114,7 @@ func TestReportDistinguishesTheFaults(t *testing.T) {
 // Reading one file's state off a report about the other is how a device with
 // a classic receiver was told its AirPlay 2 clock was already installed.
 func TestReportAnswersForBothReceiversSeparately(t *testing.T) {
-	rep := Report(false)
+	rep := Report(false, "")
 	for _, key := range []string{"classic", "ap2"} {
 		sub, ok := rep[key].(map[string]any)
 		if !ok {
@@ -571,5 +571,76 @@ func TestRenderConfigNamesTheInterface(t *testing.T) {
 	want := fmt.Sprintf("  interface = %q;\n", netfilter.Iface)
 	if !strings.Contains(got, want) {
 		t.Fatalf("config does not name the interface; want %q in:\n%s", want, got)
+	}
+}
+
+func TestTheFlavourDescribesWhatIsRunning(t *testing.T) {
+	// #326. The panel said "klassisches AirPlay" while `shairport-sync-ap2`
+	// and `nqptp` were both running and `_airplay._tcp` was on the air with a
+	// public key — measured on hardware 2026-09-22, all in the same minute.
+	// The report asked ResolveBinary what the SETTING selects, so the two
+	// disagreed for as long as the process lived: SetPreferAirPlay2 restarts
+	// only on a change.
+	//
+	// BinaryPath and AP2BinaryPath are constants, so this drives the fields
+	// that do not depend on either file existing — which is the whole of what
+	// went wrong: WHICH file was described, and whether the gap was named.
+	rep := Report(false, AP2BinaryPath)
+	if rep["flavour_of"] != AP2BinaryPath {
+		t.Fatalf("described %v, wanted the RUNNING file %s",
+			rep["flavour_of"], AP2BinaryPath)
+	}
+	if rep["flavour_is"] != "running" {
+		t.Fatalf("flavour_is = %v, wanted \"running\"", rep["flavour_is"])
+	}
+	if rep["setting_differs"] != true {
+		t.Fatal("the gap between the setting and the running file is not " +
+			"reported, so a consumer has to compare paths to notice it")
+	}
+	// `binary` still answers about the SETTING — the install panel reads it,
+	// and "asked for AirPlay 2 and the file is not there" is a different
+	// question from "what is playing".
+	if rep["binary"] != BinaryPath {
+		t.Fatalf("binary = %v, wanted the selected file %s",
+			rep["binary"], BinaryPath)
+	}
+}
+
+func TestWithNothingRunningTheSelectedFileIsDescribed(t *testing.T) {
+	rep := Report(false, "")
+	if rep["flavour_of"] != BinaryPath {
+		t.Fatalf("described %v, wanted %s", rep["flavour_of"], BinaryPath)
+	}
+	if rep["flavour_is"] != "selected" {
+		t.Fatalf("flavour_is = %v, wanted \"selected\" — with nothing running "+
+			"there is nothing to describe and saying so is the honest answer",
+			rep["flavour_is"])
+	}
+	if rep["setting_differs"] != false {
+		t.Fatal("a device with nothing running cannot have a setting that " +
+			"differs from what it runs")
+	}
+}
+
+func TestRunningTheSelectedFileIsNotAGap(t *testing.T) {
+	// The comparison is against the RESOLVED path, not the raw setting, and
+	// that is deliberate: a device asked for AirPlay 2 whose binary has not
+	// arrived yet runs the classic one by design, and calling that a gap
+	// would put a warning on every device waiting for an install.
+	//
+	// Neither file exists on the host, so ResolveBinary falls back to the
+	// classic path either way — which is exactly the pair this asserts.
+	rep := Report(false, BinaryPath)
+	if rep["setting_differs"] != false {
+		t.Fatalf("setting_differs is true while the running file IS the "+
+			"resolved one (%v) — every device would report a gap it does "+
+			"not have", rep["binary"])
+	}
+}
+
+func TestRunningBinaryIsEmptyUntilSomethingRuns(t *testing.T) {
+	c := New(Options{}, nil, nil)
+	if got := c.RunningBinary(); got != "" {
+		t.Fatalf("RunningBinary() = %q before anything started", got)
 	}
 }
