@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.72.0-fx.1
+
+### Geräteeinstellungen lassen sich wieder speichern
+
+**Wer den Spotify- oder AirPlay-Namen eines Geräts nicht speichern konnte, ist
+davon betroffen.** Der eingetippte Name war nach dem Neuladen der Seite weg, und
+seit kurzem meldete der Browser stattdessen, der Speichervorgang würde drei
+Einstellungen löschen, von denen man noch nie gehört hat.
+
+Dahinter stand eine Liste, die es zweimal gibt: einmal im Controller und einmal
+im Dashboard. Drei Einträge waren nur auf der einen Seite nachgetragen worden.
+Es handelt sich um Werte, die der Controller selbst schreibt — die Ruhefarbe des
+Rings kommt aus Home Assistant, die Lautstärke aus jeder Meldung des Geräts —
+und für die es im Dashboard folglich gar kein Bedienfeld gibt. Das Formular
+konnte sie also nie mitschicken, und der Server verstand ihr Fehlen als
+Löschung.
+
+Sobald ein Gerät einmal benutzt worden war, ließ sich seine Konfiguration damit
+nie wieder speichern.
+
+Beide Seiten sind korrigiert: die Liste im Dashboard ist vollständig, und der
+Server zählt Werte, die ein Formular gar nicht enthalten kann, nicht mehr als
+gelöscht.
+
+### Die Angabe zur AirPlay-Fassung stimmt jetzt
+
+Gehört zu Firmware **2.62.0-fx.1**. Die Anzeige nennt die tatsächlich laufende
+Fassung und sagt ausdrücklich dazu, wenn die Einstellung eine andere verlangt.
+
 ## 2.71.0-fx.1
 
 ### Das emOS-Update lässt sich wieder auf FireOS-6-Geräten installieren

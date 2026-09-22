@@ -12,6 +12,56 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.62.0-fx.1
+
+### Der Lautsprecher kommt von selbst zurück, wenn er aus den Listen verschwindet
+
+**Das ist die Fortsetzung von 2.61.0-fx.1, und dort war die Reparatur eingebaut
+und konnte nicht auslösen.**
+
+Das Gerät verliert nach einer Weile die Fähigkeit, Gruppennachrichten im Netz zu
+empfangen — und ohne die findet es kein Telefon mehr, weder für AirPlay noch für
+Spotify. Die eingebaute Selbsthilfe merkt das daran, dass nichts mehr ankommt.
+Nur zählte sie dafür jedes eingehende Paket auf diesem Kanal mit, auch solche,
+die direkt an das Gerät gerichtet sind. Davon kommen ein, zwei pro Minute an,
+und das reichte, damit sie das Gerät für gesund hielt.
+
+Gemessen am 22.09.2026: neun Pakete in knapp sechs Minuten, während das Gerät
+auf keine einzige Anfrage antwortete und vierzehn andere Geräte im Netz jede
+beantworteten. In einer Stunde Taubheit hat die Reparatur kein einziges Mal
+angeschlagen.
+
+Jetzt wird nur noch gezählt, was tatsächlich fehlt. Merkt das Gerät, dass seit
+einigen Minuten nichts mehr ankommt, meldet es sich neu an — und ist danach
+wieder auffindbar.
+
+**Während Musik läuft, passiert das nicht.** Eine laufende Wiedergabe ist von dem
+Fehler nicht betroffen, und die Reparatur würde sie unterbrechen.
+
+### Die Angabe zur AirPlay-Fassung stimmt jetzt
+
+Im Zustands-Reiter stand, welche Fassung die *Einstellung* auswählt — nicht
+welche tatsächlich läuft. Die beiden können auseinanderliegen, weil ein Wechsel
+erst beim nächsten Neustart des Empfängers greift. Auf einem Gerät, das
+nachweislich AirPlay 2 fuhr, stand dort „klassisches AirPlay".
+
+Das war mehr als ein falsches Wort: Es war die einzige Stelle, an der man es
+hätte ablesen können, und sie widersprach dem, was das Gerät im Netz ankündigte.
+
+Jetzt beschreibt die Anzeige die laufende Fassung. Liegt die Einstellung
+daneben, steht das ausdrücklich dabei — mit dem Hinweis, dass sie beim nächsten
+Neustart des Empfängers greift.
+
+### Eine Regel aus 2.61.0-fx.1 war wirkungslos ausgeliefert
+
+Die Regel, mit der das Gerät die Nachfragen des Routers beantworten darf, wurde
+in der vorigen Fassung zwar mitgeliefert, aber nie gesetzt. Sie stand auf der
+falschen von zwei Listen. Auf keinem Gerät war sie in Kraft.
+
+Das ist jetzt behoben. Ob sie den Fehler oben ganz verhindert, ist weiterhin
+offen — auf dem Router, an dem gemessen wurde, kommen diese Nachfragen selten.
+Die Reparatur greift so oder so.
+
 ## 2.61.0-fx.1
 
 ### AirPlay 2 kann eine Verbindung endlich annehmen
