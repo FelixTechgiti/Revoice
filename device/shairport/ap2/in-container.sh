@@ -208,6 +208,42 @@ say "ffmpeg (trimmed)"
 git clone --depth 1 --branch n7.1.5 https://github.com/FFmpeg/FFmpeg ffmpeg
 (
     cd ffmpeg
+    # Stop ffmpeg finding the NDK's media libraries, because no configure flag
+    # can. `libandroid.so` and `libmediandk.so` do not exist on a FireOS
+    # /system, and a binary that needs them dies at exec with
+    #
+    #   CANNOT LINK EXECUTABLE "shairport-sync-ap2": library "libandroid.so" not found
+    #
+    # `--disable-android` and `--disable-mediandk` are not the answer and were
+    # tried (#297): neither name is in any of configure's *_LIST variables, so
+    # they are not even valid options, and the detection is UNCONDITIONAL --
+    # two bare `check_lib` calls that run whatever the command line said:
+    #
+    #   check_lib android  android/native_window.h ANativeWindow_acquire -landroid
+    #   check_lib mediandk "stdint.h media/NdkMediaFormat.h" AMediaFormat_new -lmediandk
+    #
+    # and `check_lib` opens with `disable $name` before re-enabling on success,
+    # so an explicit disable would be overwritten by the probe even if it could
+    # be expressed. Deleting the two lines is what actually decides it.
+    #
+    # It cascades correctly rather than leaving a half-configured tree:
+    # `mediacodec_deps="android mediandk"`, so mediacodec switches off with
+    # them and `libavcodec/mediacodec.o` is never compiled. That matters --
+    # patching the .pc files instead would leave those objects in
+    # `libavcodec.a` and trade a runtime failure for an undefined symbol.
+    #
+    # Asserted rather than assumed: the release workflow reads every published
+    # binary's NEEDED list against what a FireOS /system carries, which is how
+    # the previous attempt was caught before it reached a device.
+    # Checked BEFORE the edit, not after: a future ffmpeg that renames or moves
+    # these probes would let `sed` match nothing, succeed, and quietly restore
+    # the bug. The count is the assertion; the deletion is the easy part.
+    found=$(grep -cE '^check_lib (android|mediandk) ' configure)
+    if [ "$found" != 2 ]; then
+        echo "ffmpeg configure has $found of the 2 expected NDK probes — the patch below no longer matches, and the binary would ship needing libandroid.so again (#297)" >&2
+        exit 1
+    fi
+    sed -i '/^check_lib android /d; /^check_lib mediandk /d' configure
     ./configure \
         --prefix="$PREFIX" \
         --enable-cross-compile \
