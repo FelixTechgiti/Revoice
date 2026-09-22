@@ -12,6 +12,76 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.61.0-fx.1
+
+### AirPlay 2 kann eine Verbindung endlich annehmen
+
+**Wer AirPlay 2 benutzt, braucht dieses Update — vorher konnte es nicht
+funktionieren.** Bisher sah es so aus: Der Lautsprecher erscheint in der Liste,
+man tippt ihn an, es passiert nichts, und kurz darauf ist er verschwunden.
+
+Dahinter steckten mehrere getrennte Fehler. Zwei davon sind hier behoben, ein
+dritter in `endpoints-v1.20.0`.
+
+Für jede AirPlay-2-Sitzung öffnet der Empfänger zusätzliche Verbindungen und
+nennt dem Telefon, unter welchen Nummern es ihn erreicht. Diese Nummern wählte
+bisher das Betriebssystem frei — und damit konnte die Firewall des Geräts sie
+nicht kennen. Das Telefon rief also an einer Tür an, die niemand geöffnet
+hatte. Jetzt stammen sie aus einem festen Bereich, den die Firewall benennt.
+
+Dazu kommt die andere Hälfte der mDNS-Regel aus emOS 0.9.0-fx.1: Anfragen aus
+dem Netz erreichen das Gerät jetzt überhaupt erst. Die beiden Updates gehören
+zusammen; einzeln bringt keines den vollen Nutzen.
+
+### Der Lautsprecher verschwindet nicht mehr nach ein paar Minuten
+
+**Das betrifft Spotify Connect genauso wie AirPlay.** Wer kennt, dass das Gerät
+erst da ist, dann weg, und nach einem Neustart wieder da — das ist dieser
+Fehler.
+
+Der Router merkt sich, welche Geräte Gruppennachrichten hören wollen, und fragt
+das regelmäßig nach. Diese Nachfrage ist selbst eine Gruppennachricht. Hat der
+Router einmal aufgehört, das Gerät zu beliefern, kommt ausgerechnet die eine
+Frage nicht mehr an, die alles wieder in Gang setzen würde. Der Zustand hält
+sich dann selbst am Leben, bis irgendetwas neu startet — weshalb ein Neustart
+immer geholfen hat.
+
+Die Firmware erkennt das jetzt daran, dass tatsächlich nichts mehr ankommt, und
+meldet sich von sich aus neu an. Gemessen: vor der Neuanmeldung null Pakete in
+zwanzig Sekunden, danach 579.
+
+**Während Musik läuft, passiert das nicht.** Eine laufende Wiedergabe ist von
+dem Fehler gar nicht betroffen, und die Reparatur würde sie unterbrechen — sie
+wartet, bis die Musik zu Ende ist.
+
+Dazu darf das Gerät jetzt die Nachfragen des Routers überhaupt beantworten;
+bisher verwarf die Firewall sie. Ob das den Fehler ganz verhindert, ist offen —
+auf dem Router, an dem gemessen wurde, kommen diese Nachfragen selten. Die
+Reparatur oben greift so oder so.
+
+### Die AirPlay-Uhr überlebt jetzt einen Neustart ihres Taktgebers
+
+**Das erklärt AirPlay-2-Sitzungen, die ohne erkennbaren Grund nicht zustande
+kamen, obwohl vorher alles lief.** AirPlay 2 braucht einen zweiten Dienst, der
+die Uhrzeit vorgibt. Startete dieser Dienst aus irgendeinem Grund neu, las der
+Empfänger danach eine Uhr weiter, die niemand mehr stellte — und konnte das
+nicht bemerken, weil ein stehengebliebener Wert sich für ihn wie ein besonders
+stabiler liest.
+
+Gefunden hat man das nur zufällig; gemeldet wurde es an keiner Stelle. Ab dieser
+Fassung wird der Empfänger mit seinem Taktgeber zusammen neu gestartet.
+
+### Was zusätzlich nötig ist
+
+Die passenden Endpunkt-Programme kommen mit `endpoints-v1.20.0`. Darin steckt
+der dritte Fehler: Das Gerät kündigte sich als AirPlay-2-Empfänger an und
+gleichzeitig, auf dem Dienst, der die Musik überträgt, als AirPlay 1 — mit
+widersprüchlichen Angaben darüber, was es kann. Am Netz gemessen und behoben.
+
+Ob damit alles zusammen reicht, ist noch nicht an einem Gerät nachgewiesen; die
+drei Fehler sind einzeln belegt, ihr Zusammenspiel nicht. Wer das Update
+einspielt und AirPlay 2 ausprobiert, liefert genau den fehlenden Beleg.
+
 ## 2.60.0-fx.1
 
 ### Spotify Connect und AirPlay erscheinen wieder
