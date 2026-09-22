@@ -287,6 +287,58 @@ func TestEveryRuleConstructorIsInAll(t *testing.T) {
 	}
 }
 
+func TestMDNSRuleNamesTheDESTINATIONPort(t *testing.T) {
+	// #298: emOS allowed `udp --sport 5353` and nothing else, so the device
+	// could HEAR mDNS and never be ASKED. The two differ by one word and by
+	// whether Spotify Connect and AirPlay work at all, and counters.go already
+	// carries the same distinction for reading a table back.
+	spec := strings.Join(MDNSRule().spec(), " ")
+	if !strings.Contains(spec, "--dport 5353") {
+		t.Fatalf("mDNS rule does not name the destination port: %s", spec)
+	}
+	if strings.Contains(spec, "--sport") {
+		t.Fatalf("mDNS rule names a SOURCE port, which is the direction that "+
+			"was already open and is not the one queries arrive on: %s", spec)
+	}
+	if !strings.Contains(spec, "-i "+Iface) {
+		t.Fatalf("mDNS rule does not name an interface: %s", spec)
+	}
+}
+
+func TestSingleRuleConstructorsAreInAll(t *testing.T) {
+	// The `func XRules() []Rule` guard above cannot see a constructor that
+	// returns ONE rule, and two of them now do. Same failure if one is
+	// forgotten: Sync never removes it, so the port outlives the service.
+	src, err := os.ReadFile("netfilter.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func All() []Rule {")
+	end := strings.Index(body[start:], "\n}")
+	all := body[start : start+end]
+
+	ctors := regexp.MustCompile(`func (\w+Rule)\(\) Rule`).FindAllStringSubmatch(body, -1)
+	if len(ctors) < 2 {
+		t.Fatalf("found %d single-rule constructors — the guard is looking at "+
+			"the wrong file", len(ctors))
+	}
+	for _, m := range ctors {
+		if !strings.Contains(all, m[1]+"()") {
+			t.Fatalf("%s() is not in All(), so Sync can never remove it", m[1])
+		}
+	}
+}
+
+func TestDisablingEverythingClosesMDNSToo(t *testing.T) {
+	f := newFake()
+	Sync(f.run, append(AirPlayRules(), MDNSRule()))
+	Sync(f.run, nil)
+	if f.count(MDNSRule()) != 0 {
+		t.Fatal("inbound mDNS left open with nothing advertising")
+	}
+}
+
 func TestTurningTheClockDaemonOffClosesItsPorts(t *testing.T) {
 	// The behaviour the omission cost, driven rather than read.
 	f := newFake()
