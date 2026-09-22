@@ -158,6 +158,14 @@ type Options struct {
 	// needs a config value rather than a code change — the same seam
 	// internal/airplay has for AirPlay 2.
 	SourceRate int
+	// ZeroconfAddr overrides the address librespot announces on. Empty means
+	// "ask the interface", which is what a device does; it is here for tests
+	// and for a device that needs to name something else.
+	//
+	// The old comment said empty means "let librespot enumerate". It does not:
+	// enumeration is the broken step (#298), so empty falls back to
+	// netfilter.IfaceIPv4 rather than to librespot's own guess.
+	ZeroconfAddr string
 	// ExtraArgs are appended verbatim, for a device that needs something
 	// this package does not model.
 	ExtraArgs []string
@@ -483,6 +491,10 @@ func (c *Client) name() string {
 //     re-authorising after every reboot.
 //   - `--disable-discovery` is deliberately NOT passed: zeroconf discovery is
 //     how the speaker appears in the app without a login.
+//
+// Overridable so args() can be tested without a radio.
+var ifaceIPv4 = netfilter.IfaceIPv4
+
 func (c *Client) args() []string {
 	a := []string{
 		"--name", c.name(),
@@ -497,6 +509,19 @@ func (c *Client) args() []string {
 		// which is unfirewallable; internal/netfilter opens exactly this one
 		// and reads it from the same constant.
 		"--zeroconf-port", fmt.Sprint(netfilter.SpotifyZeroconfPort),
+	}
+	// Same failure and same remedy as the AirPlay side, and librespot's
+	// libmdns carries the matching string: `could not get list of interfaces:`.
+	// It takes an ADDRESS where shairport takes a name, so this is empty until
+	// the device has one and has to be re-supplied if the lease changes —
+	// which is why it is an option rather than a constant here.
+	// Resolved HERE rather than at construction: the client is built before
+	// the radio has an address, and librespot is started later, so asking at
+	// construction time would pass the empty string for ever.
+	if addr := c.opts.ZeroconfAddr; addr != "" {
+		a = append(a, "--zeroconf-interface", addr)
+	} else if addr := ifaceIPv4(); addr != "" {
+		a = append(a, "--zeroconf-interface", addr)
 	}
 	// Player events, and only when somebody is reading them. c.onevent is set
 	// by start() once the FIFO and the script are actually on disk, so a
