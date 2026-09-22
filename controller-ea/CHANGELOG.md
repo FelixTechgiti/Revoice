@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.69.0-fx.1
+
+### Das Protokoll sagt jetzt, wenn die Namensauflösung nicht arbeitet
+
+**Nur für emOS-Geräte, und nur eine Diagnose.**
+
+Bisher schrieb ausschließlich das Gerät selbst eine Zeile darüber, ob die
+Bibliothek für die Namensauflösung nutzbar ist — einmal, beim Start seiner
+Endpunkte. Das ist genau der Moment, in dem die Verbindung zum Controller noch
+nicht steht, also kam die Zeile nirgends an. Und weil sich danach nichts mehr
+ändert, wurde sie kein zweites Mal geschrieben.
+
+Der Bericht des Geräts kommt aber ohnehin bei jeder Anmeldung an. Der
+Controller schreibt ihn jetzt selbst ins Protokoll — und nur dann, wenn es
+etwas zu sagen gibt: Ein Gerät, dessen Namensauflösung arbeitet, taucht dort
+gar nicht auf.
+
+Drei Fälle werden als Warnung gemeldet: die Bibliothek fehlt oder wurde vom
+Programmlader abgelehnt, sie ist geladen und löst trotzdem nichts auf, oder
+sie ist geladen und hat sich nicht geäußert. Der letzte Fall ist Absicht —
+„keine Antwort" ist kein Erfolg, und ältere Firmware kann diese Frage gar
+nicht beantworten.
+
+Eine neue Firmware ist dafür nicht nötig.
+
 ## 2.68.0-fx.1
 
 ### Der Updates-Reiter sagte „hat nichts gemeldet", obwohl das Gerät meldete
