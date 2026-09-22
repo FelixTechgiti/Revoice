@@ -30,6 +30,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 static long live_blocks;
 static void *chk_malloc(unsigned long n) { live_blocks++; return malloc(n); }
@@ -45,6 +47,15 @@ static int              stub_pton(int, const char *, void *);
  * process start on the host and resolve a name through the stubs before any
  * test has set them up. `gaishim_selftest` itself is still driven below, by
  * hand, which is the part worth checking. */
+/* No resolv.conf here. The build host has a real one, and without this the
+ * checker does REAL DNS for the made-up names below — which answers NXDOMAIN,
+ * which dns_lookup correctly reports as a definitive "no such name", so the
+ * stubbed resolver is never reached and eleven tests fail for the right
+ * reason about the wrong thing. With no nameservers the lookup answers
+ * "could not ask" and falls through to the stub, which is what the tests are
+ * about. The wire format itself is checked directly, further down. */
+#define GAISHIM_RESOLV "/nonexistent/gaishim-test-resolv.conf"
+
 #define GAISHIM_TEST
 
 #define malloc           chk_malloc
@@ -399,6 +410,85 @@ int main(void)
 		freeaddrinfo(res2);
 	}
 	freeaddrinfo(res);
+
+	/* ── the wire format, where a mistake answers the WRONG question ─── */
+	//
+	// A truncated or mis-encoded query asks about a different name and gets a
+	// confident answer; a sloppy parser returns an address that belongs to
+	// something else. Neither shows up as a failure on the device — the
+	// endpoint simply connects somewhere unexpected or not at all.
+	{
+		unsigned char q[512];
+		int n = dns_build_query(q, (int)sizeof q, "a.example.com", 0x1234);
+		static const unsigned char want[] = {
+			0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0,
+			1, 'a', 7, 'e','x','a','m','p','l','e', 3, 'c','o','m', 0,
+			0, 1, 0, 1,
+		};
+		ok(n == (int)sizeof want, "query length");
+		ok(n == (int)sizeof want && memcmp(q, want, sizeof want) == 0,
+		   "query is encoded label by label, with RD set and QTYPE A");
+
+		char longlabel[80];
+		memset(longlabel, 'x', sizeof longlabel);
+		longlabel[64] = 0;
+		ok(dns_build_query(q, (int)sizeof q, longlabel, 1) < 0,
+		   "a label over 63 bytes is refused, not truncated");
+		ok(dns_build_query(q, 8, "a.example.com", 1) < 0,
+		   "a name that does not fit is refused");
+	}
+
+	{
+		/* One answer, name given as a compression pointer — which is what a
+		 * real server sends and what a hand-rolled parser gets wrong. */
+		static const unsigned char reply[] = {
+			0x12, 0x34, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0,
+			1, 'a', 7, 'e','x','a','m','p','l','e', 3, 'c','o','m', 0,
+			0, 1, 0, 1,
+			0xc0, 0x0c,                      /* pointer to the question */
+			0x00, 0x01, 0x00, 0x01,          /* A, IN */
+			0x00, 0x00, 0x00, 0x3c,          /* TTL */
+			0x00, 0x04, 35, 186, 224, 24,
+		};
+		unsigned char out[SHIM_MAX_ADDRS][4];
+		int n = dns_parse_a(reply, (int)sizeof reply, 0x1234, out, SHIM_MAX_ADDRS);
+		ok(n == 1, "one A record is read");
+		ok(n == 1 && out[0][0] == 35 && out[0][1] == 186 &&
+		   out[0][2] == 224 && out[0][3] == 24,
+		   "the address is the one in the packet");
+
+		ok(dns_parse_a(reply, (int)sizeof reply, 0x9999, out, SHIM_MAX_ADDRS) < 0,
+		   "a reply whose id does not match is refused");
+		ok(dns_parse_a(reply, 8, 0x1234, out, SHIM_MAX_ADDRS) < 0,
+		   "a truncated reply is refused");
+
+		unsigned char nx[sizeof reply];
+		memcpy(nx, reply, sizeof reply);
+		nx[3] = 0x83;                        /* RCODE 3 — NXDOMAIN */
+		ok(dns_parse_a(nx, (int)sizeof reply, 0x1234, out, SHIM_MAX_ADDRS) == 0,
+		   "NXDOMAIN is an answer (0), not a failure (-1) — it must not be retried");
+	}
+
+	{
+		/* The file emOS writes, and the shapes it can take. */
+		const char *path = "/tmp/gaishim-test-resolv.conf";
+		FILE *f = fopen(path, "w");
+		unsigned char srv[3][4];
+		int n;
+		ok(f != NULL, "temp resolv.conf opened");
+		if (f) {
+			fputs("# comment\n  nameserver 192.168.178.1\n"
+			      "nameserver 1.1.1.1\nsearch lan\n", f);
+			fclose(f);
+		}
+		n = dns_servers_from(path, srv, 3);
+		ok(n == 2, "both nameservers are found, comments and search ignored");
+		ok(n >= 1 && srv[0][0] == 192 && srv[0][3] == 1,
+		   "the first nameserver is parsed, leading whitespace and all");
+		ok(dns_servers_from("/nonexistent/nope", srv, 3) == 0,
+		   "a missing resolv.conf is zero servers, not a crash");
+		remove(path);
+	}
 
 	/* ── the self-test, which is what the device will report ─────────── */
 	//
