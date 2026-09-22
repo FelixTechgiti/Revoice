@@ -389,3 +389,27 @@ func TestATimedOutProbeIsNotSilence(t *testing.T) {
 		t.Error("a timed-out probe returned empty, which reads as a clean load")
 	}
 }
+
+// The gap that cost a measurement on 2026-09-22: a REPLACED shim is still
+// "installed", so a dedup on presence alone never asks again — the verdict on
+// record kept describing the previous file.
+func TestAReplacedShimIsProbedAgain(t *testing.T) {
+	stub(t, platform.EmOS, fakeInfo{mode: 0o644, size: 5756}, nil)
+	calls := stubProbe(t, "")
+
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
+	if *calls != 1 {
+		t.Fatalf("same file probed %d times, want 1", *calls)
+	}
+
+	// A different file at the same path — the case an install produces.
+	resolverStat = func(string) (os.FileInfo, error) {
+		return fakeInfo{mode: 0o644, size: 6044}, nil
+	}
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
+	if *calls != 2 {
+		t.Errorf("a replaced shim was probed %d times, want 2 — the verdict "+
+			"would still describe the old file", *calls)
+	}
+}
