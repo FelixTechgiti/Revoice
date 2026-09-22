@@ -9820,7 +9820,17 @@ Object.entries(CONFIG_SECTIONS).forEach(([sid, keys]) => {
 });
 // Mirror of em_config_sections.STATE_KEYS — always the device's own,
 // never fleet-inherited, whatever the section scoping says.
-const STATE_KEYS = ['startupVolume'];
+//
+// **This list had ONE of the four for months, and that made a used device's
+// config unsaveable (#325).** idleRing, idleRingBrightness and idleEffect were
+// added on the server and never here, so effectiveConfig dropped them, the
+// form never carried them, and the per-device POST looked to the server like a
+// body deleting three stored settings — refused with a 409 naming keys the
+// user has no control for. Whatever they had typed was gone on the next load.
+//
+// Two hand-kept copies of one list, and nothing compared them.
+// tests/test_config_guard.py now does.
+const STATE_KEYS = ['startupVolume', 'idleRing', 'idleRingBrightness', 'idleEffect'];
 
 // Effective config = fleet, with the device's own values layered over it for
 // the sections it overrides. This must FILTER rather than blind-merge

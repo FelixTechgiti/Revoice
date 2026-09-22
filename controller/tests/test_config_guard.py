@@ -110,8 +110,15 @@ def test_result_is_sorted_for_a_stable_error_message():
 ])
 def test_both_write_paths_are_guarded(path, handler):
     """
-    Both endpoints replace rather than merge, so both need the check. A
-    guard on only one would leave the identical trap open next door.
+    Both endpoints still run the check, and both still refuse.
+
+    **The reason given here used to be "both endpoints replace rather than
+    merge", and that was only ever true of the global one.** The per-device
+    handler merges — `{**current, **values}` — so nothing in scope is lost by
+    omission there. The check stays on both because a refusal is cheap and a
+    silent clobber is not, but the per-device path also excludes STATE_KEYS,
+    which is what #325 was: keys the dashboard has no field for, counted as
+    deletions, making a used device's config unsaveable for good.
     """
     src = (CONTROLLER / "em_api.py").read_text()
     m = re.search(rf"async def {handler}\(.*?(?=\nasync def )", src, re.S)
@@ -213,3 +220,105 @@ def test_read_endpoint_status_is_a_plain_helper_not_a_route_handler():
         "_read_endpoint_status has picked up a decorator — it is a pure "
         "helper, and taking one means the handler below it lost it."
     )
+
+
+# ── #325: keys a body cannot contain are not keys it deletes ─────────────────
+#
+# A device whose ring colour had ever been set could not have its config saved
+# from the dashboard again. Every attempt was refused with
+#
+#   This body would delete 3 existing setting(s): idleEffect, idleRing,
+#   idleRingBrightness.
+#
+# and whatever the user had typed was gone on the next reload. Reported from a
+# live dashboard 2026-09-22 by somebody who had entered an AirPlay name several
+# times over several days.
+#
+# The two halves were each correct and composed into a trap. STATE_KEYS are the
+# keys a user never sets — em_config_sections says they are "deliberately not
+# on a dashboard Stage", and the controller writes them itself from a Home
+# Assistant light change and from every volume_state report. And the per-device
+# handler put them unconditionally in scope for the DROP check. So the moment
+# one was stored it was permanently absent from every future body and
+# permanently counted as a deletion.
+
+def _handler_body(src: str, handler: str) -> str:
+    """One handler's source, the same way test_both_write_paths_are_guarded
+    slices it."""
+    m = re.search(rf"async def {handler}\(.*?(?=\nasync def )", src, re.S)
+    assert m, f"could not locate {handler}"
+    return m.group(0)
+
+
+def _state_keys():
+    """The real set, read from the module, so this cannot drift from it."""
+    src = CONTROLLER / "em_config_sections.py"
+    ns: dict = {}
+    exec(compile(src.read_text(), str(src), "exec"), ns)
+    return ns["STATE_KEYS"]
+
+
+def test_the_dashboard_mirror_of_state_keys_is_complete():
+    """The drift that caused #325, pinned.
+
+    The dashboard keeps its own copy of STATE_KEYS and says so in a comment.
+    It had `['startupVolume']` while the server had four; the three ring keys
+    were added on one side only. effectiveConfig then dropped them, the form
+    never carried them, and every per-device save was refused as a body
+    deleting three settings the user has no control for.
+
+    Two hand-kept copies of one list is the shape. Comparing them is the only
+    thing that can notice.
+    """
+    dash = (CONTROLLER / "static" / "dashboard.jsx").read_text()
+    m = re.search(r"const STATE_KEYS = \[(.*?)\];", dash, re.S)
+    assert m, "the dashboard's STATE_KEYS mirror is gone — was it renamed?"
+    mirrored = set(re.findall(r"'([^']+)'", m.group(1)))
+    assert mirrored == set(_state_keys()), (
+        "the dashboard's STATE_KEYS and em_config_sections.STATE_KEYS have "
+        f"drifted: dashboard has {sorted(mirrored)}, server has "
+        f"{sorted(_state_keys())} — see #325")
+
+
+def test_a_stored_ring_colour_does_not_block_a_save():
+    """The exact shape reported: three state keys stored, none in the body."""
+    stored = {"idleEffect": "breathe", "idleRing": "#ff8800",
+              "idleRingBrightness": 40, "airplayName": ""}
+    body = {"airplayName": "Testgeraet"}
+    in_scope = set(stored) | set(body)
+    stored_in_scope = {k: v for k, v in stored.items()
+                       if k in in_scope and k not in _state_keys()}
+    assert dropped_keys(body, stored_in_scope) == [], (
+        "a save is refused because of keys the dashboard has no field for")
+
+
+def test_a_real_user_setting_is_still_caught():
+    """The exclusion is narrow: only STATE_KEYS, and only those."""
+    stored = {"idleRing": "#ff8800", "owwThreshold": 0.5, "airplayName": "X"}
+    body = {"airplayName": "Y"}
+    in_scope = set(stored) | set(body)
+    stored_in_scope = {k: v for k, v in stored.items()
+                       if k in in_scope and k not in _state_keys()}
+    assert dropped_keys(body, stored_in_scope) == ["owwThreshold"]
+
+
+def test_the_device_path_excludes_state_keys_and_the_global_path_does_not():
+    """Where the exclusion lives, and where it must not.
+
+    `_post_global_config` writes the body straight through — it really does
+    replace — so a state key missing from a fleet body really would be lost
+    there. The per-device handler merges (`{**current, **values}`), which is
+    what makes the exclusion safe on that side and only that side.
+    """
+    src = (CONTROLLER / "em_api.py").read_text()
+    dev = _handler_body(src, "_post_device_config")
+    glob = _handler_body(src, "_post_global_config")
+    assert "STATE_KEYS" in dev and "not in sections_mod.STATE_KEYS" in dev, (
+        "the per-device drop check no longer excludes STATE_KEYS — #325 is back")
+    assert "STATE_KEYS" not in glob, (
+        "the global handler has grown a STATE_KEYS exclusion. That path "
+        "REPLACES the stored dict, so a state key missing from the body is "
+        "really lost there and the guard is the only thing that says so.")
+    assert "{**current, **values}" in dev, (
+        "the per-device handler no longer merges, so excluding STATE_KEYS "
+        "from its drop check would let a save delete them for real")
