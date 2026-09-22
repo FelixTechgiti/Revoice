@@ -170,12 +170,38 @@ struct servent *getservbyname(const char *, const char *);
 #define GAISHIM_PTON inet_pton
 int inet_pton(int, const char *, void *);
 #endif
+#ifndef GAISHIM_RESOLV
+#define GAISHIM_RESOLV "/etc/resolv.conf"
+#endif
+
 #ifndef GAISHIM_GETENV
 #define GAISHIM_GETENV getenv
 #define GAISHIM_WRITE  write
 char *getenv(const char *);
 long  write(int, const void *, shim_size_t);
 #endif
+
+/* The socket and file calls the resolver below needs. All ordinary bionic,
+ * and all measured working from a 32-bit endpoint process on this device —
+ * `socket` and `connect` were the first things ruled out in #263.
+ *
+ * Declared here rather than included, for this file's usual reason: it must
+ * describe the process it is LOADED INTO. The off-target checker builds
+ * against the host's headers instead, which is why these are guarded. */
+#ifndef GAISHIM_TEST
+int  socket(int, int, int);
+int  setsockopt(int, int, int, const void *, unsigned int);
+long sendto(int, const void *, shim_size_t, int, const void *, unsigned int);
+long recv(int, void *, shim_size_t, int);
+int  close(int);
+int  open(const char *, int, ...);
+long read(int, void *, shim_size_t);
+#endif
+
+#define SHIM_SOCK_DGRAM_T   2
+#define SHIM_SOL_SOCKET     1
+#define SHIM_SO_RCVTIMEO   20
+#define SHIM_O_RDONLY       0
 
 /* ── small helpers, so the shim imports no string functions ─────────────── */
 
@@ -385,6 +411,237 @@ static void loopback_result(int want_family, int name_family,
 	}
 }
 
+/* ── resolving without bionic at all ─────────────────────────────────────────
+ *
+ * The shim was built on `gethostbyname` because that call was measured working
+ * where `getaddrinfo` was not. On 2026-09-22 the device answered that it is
+ * not enough: the library loads into librespot, is interposed, and its own
+ * lookup returns EAI_NODATA — which is what this file returns when
+ * `gethostbyname` gives nothing.
+ *
+ * So the last dependency on Amazon's resolver goes too. emOS already writes
+ * `/etc/resolv.conf` and asks the nameserver over UDP itself
+ * (`dns_lookup_a` in `emos/init/init.c`); this is the same conversation from
+ * inside the endpoint's process. Nothing here touches `/dev/socket/dnsproxyd`,
+ * bionic's resolver, or any Amazon code path.
+ *
+ * THIS IS A SECOND IMPLEMENTATION OF emOS's, and that is a real cost rather
+ * than an oversight. The right shape is one implementation in a header both
+ * include; it was not done here because `init.c` is PID 1 on a device that is
+ * recovered by hand, and refactoring it is not a change to make in the same
+ * breath as a fix. When it is extracted, these two go together.
+ *
+ * `gethostbyname` stays as a FALLBACK, for the case this cannot ask at all —
+ * no resolv.conf, or no nameserver in it.
+ */
+
+static shim_uint16_t rd16(const unsigned char *p)
+{
+	return (shim_uint16_t)(((unsigned)p[0] << 8) | p[1]);
+}
+
+/* The nameservers, from the file emOS writes. Dotted quads only, which is what
+ * it puts there. */
+static int dns_servers_from(const char *path, unsigned char out[][4], int max)
+{
+	char buf[512];
+	int fd, n, i = 0, count = 0;
+
+	fd = open(path, SHIM_O_RDONLY);
+	if (fd < 0)
+		return 0;
+	n = (int)read(fd, buf, sizeof buf - 1);
+	close(fd);
+	if (n <= 0)
+		return 0;
+	buf[n] = 0;
+
+	while (i < n && count < max) {
+		int start = i, j;
+		char ip[64];
+		int iplen = 0;
+		while (i < n && buf[i] != '\n')
+			i++;
+		buf[i] = 0;
+		j = start;
+		while (buf[j] == ' ' || buf[j] == '\t')
+			j++;
+		if (buf[j] == 'n' && buf[j+1] == 'a' && buf[j+2] == 'm' &&
+		    buf[j+3] == 'e' && buf[j+4] == 's' && buf[j+5] == 'e' &&
+		    buf[j+6] == 'r' && buf[j+7] == 'v' && buf[j+8] == 'e' &&
+		    buf[j+9] == 'r') {
+			j += 10;
+			while (buf[j] == ' ' || buf[j] == '\t')
+				j++;
+			while (buf[j] && buf[j] != ' ' && buf[j] != '\t' &&
+			       iplen < (int)sizeof ip - 1)
+				ip[iplen++] = buf[j++];
+			ip[iplen] = 0;
+			if (iplen && GAISHIM_PTON(SHIM_AF_INET, ip, out[count]) == 1)
+				count++;
+		}
+		i++;
+	}
+	return count;
+}
+
+/* Encode `name` as DNS labels. Returns the message length, or -1 for a name
+ * that cannot be encoded — a label over 63 bytes, or one that would not fit.
+ * Refusing is right: a truncated name asks about something else and gets a
+ * confident answer to the wrong question. */
+static int dns_build_query(unsigned char *buf, int cap, const char *name,
+                           unsigned id)
+{
+	int n = 12, lab;
+	const char *p = name;
+
+	if (cap < 12)
+		return -1;
+	s_zero(buf, 12);
+	buf[0] = (unsigned char)(id >> 8);
+	buf[1] = (unsigned char)(id & 0xff);
+	buf[2] = 0x01;                     /* RD; we are not a resolver */
+	buf[5] = 1;                        /* QDCOUNT */
+
+	while (*p) {
+		const char *dot = p;
+		while (*dot && *dot != '.')
+			dot++;
+		lab = (int)(dot - p);
+		if (lab == 0 || lab > 63 || n + lab + 1 > cap - 4)
+			return -1;
+		buf[n++] = (unsigned char)lab;
+		s_copy((char *)buf + n, p, lab);
+		n += lab;
+		p = *dot ? dot + 1 : dot;
+	}
+	if (n + 5 > cap)
+		return -1;
+	buf[n++] = 0;                      /* root label */
+	buf[n++] = 0; buf[n++] = 1;        /* QTYPE  A */
+	buf[n++] = 0; buf[n++] = 1;        /* QCLASS IN */
+	return n;
+}
+
+/* Step over one name, following a compression pointer once. Returns the
+ * offset after the name, or -1 on anything malformed. */
+static int dns_skip_name(const unsigned char *m, int len, int off)
+{
+	int guard = 0;
+	while (off >= 0 && off < len) {
+		unsigned c = m[off];
+		if (c == 0)
+			return off + 1;
+		if ((c & 0xc0) == 0xc0)
+			return (off + 2 <= len) ? off + 2 : -1;
+		off += 1 + (int)c;
+		if (++guard > 128)
+			return -1;
+	}
+	return -1;
+}
+
+/* A records out of a reply. Returns how many were written, 0 for a
+ * well-formed answer with none (NXDOMAIN or no A), -1 for anything we cannot
+ * trust. The three are kept apart because the caller must not retry a real
+ * answer, and must not accept a malformed one. */
+static int dns_parse_a(const unsigned char *m, int len, unsigned id,
+                       unsigned char out[][4], int max)
+{
+	int off, i, count = 0, qd, an;
+
+	if (len < 12)
+		return -1;
+	if ((((unsigned)m[0] << 8) | m[1]) != id)
+		return -1;
+	if ((m[2] & 0x80) == 0)            /* not a response */
+		return -1;
+	if ((m[3] & 0x0f) != 0)            /* RCODE — NXDOMAIN and friends */
+		return 0;
+	qd = rd16(m + 4);
+	an = rd16(m + 6);
+
+	off = 12;
+	for (i = 0; i < qd; i++) {
+		off = dns_skip_name(m, len, off);
+		if (off < 0 || off + 4 > len)
+			return -1;
+		off += 4;
+	}
+	for (i = 0; i < an && count < max; i++) {
+		int type, rdlen;
+		off = dns_skip_name(m, len, off);
+		if (off < 0 || off + 10 > len)
+			return -1;
+		type  = rd16(m + off);
+		rdlen = rd16(m + off + 8);
+		off += 10;
+		if (off + rdlen > len)
+			return -1;
+		if (type == 1 && rdlen == 4)
+			s_copy((char *)out[count++], (const char *)(m + off), 4);
+		off += rdlen;
+	}
+	return count;
+}
+
+/* One query per server, twice round. Returns addresses written, 0 for a
+ * definitive "no such name", -1 when no server could be asked at all — only
+ * the last of those is worth falling back from. */
+static int dns_lookup(const char *name, unsigned char out[][4], int max)
+{
+	unsigned char servers[3][4], q[512], r[1500];
+	int ns = dns_servers_from(GAISHIM_RESOLV, servers, 3);
+	int qlen, try_, s;
+	static unsigned seq;
+	unsigned id;
+
+	if (ns == 0)
+		return -1;
+	/* Enough to reject a stale or spoofed reply on our own socket; this is
+	 * a stub resolver on a LAN, not a recursive one. */
+	id = (unsigned)((shim_size_t)(void *)&servers ^ (++seq << 3)) & 0xffff;
+	qlen = dns_build_query(q, (int)sizeof q, name, id);
+	if (qlen < 0)
+		return -1;
+
+	for (try_ = 0; try_ < 2; try_++) {
+		for (s = 0; s < ns; s++) {
+			struct shim_sockaddr_in to;
+			int tv[2];
+			int fd = socket(SHIM_AF_INET, SHIM_SOCK_DGRAM_T, 0);
+			if (fd < 0)
+				continue;
+			tv[0] = 2; tv[1] = 0;      /* struct timeval, 32-bit target */
+			setsockopt(fd, SHIM_SOL_SOCKET, SHIM_SO_RCVTIMEO,
+			           tv, (unsigned int)sizeof tv);
+
+			s_zero(&to, (int)sizeof to);
+			to.sin_family = SHIM_AF_INET;
+			to.sin_port   = hton16(53);
+			s_copy((char *)&to.sin_addr, (const char *)servers[s], 4);
+
+			if (sendto(fd, q, (shim_size_t)qlen, 0, (void *)&to,
+			           (unsigned int)sizeof to) == qlen) {
+				long got = recv(fd, r, sizeof r, 0);
+				if (got > 0) {
+					int n = dns_parse_a(r, (int)got, id, out, max);
+					close(fd);
+					if (n > 0)
+						return n;
+					/* A well-formed NXDOMAIN is an ANSWER. Asking the
+					 * next server would produce the same one. */
+					if (n == 0)
+						return 0;
+					continue;
+				}
+			}
+			close(fd);
+		}
+	}
+	return -1;
+}
+
 static int name_resolve(const char *node, int want_family, int want_canon,
                         struct shim_result *r)
 {
@@ -396,6 +653,38 @@ static int name_resolve(const char *node, int want_family, int want_canon,
 	if (want_family == SHIM_AF_INET6)
 		return SHIM_EAI_ADDRFAMILY;
 
+	/* Ask the nameserver ourselves first. This is the whole point of the
+	 * library now: on emOS neither of bionic's two resolver entry points can
+	 * be relied on, and the address is one UDP exchange away. */
+	{
+		unsigned char addrs[SHIM_MAX_ADDRS][4];
+		int n = dns_lookup(node, addrs, SHIM_MAX_ADDRS);
+		if (n > 0) {
+			s_zero(r, (int)sizeof *r);
+			r->family = SHIM_AF_INET;
+			for (i = 0; i < n; i++)
+				s_copy((char *)r->addr[i], (const char *)addrs[i], 4);
+			r->count = n;
+			if (want_canon) {
+				int len = s_len(node);
+				if (len > 255)
+					len = 255;
+				s_copy(r->canon, node, len);
+				r->canon[len] = 0;
+				r->have_canon = 1;
+			}
+			return 0;
+		}
+		/* A definitive "no such name" is an ANSWER and must not be
+		 * retried through a second resolver that would give the same
+		 * one — or, worse, a different one. */
+		if (n == 0)
+			return SHIM_EAI_NODATA;
+	}
+
+	/* Only when we could not ask at all: no resolv.conf, or nothing in it.
+	 * That is the case on a platform that is not emOS, where bionic's own
+	 * resolver is the right answer. */
 	he = GAISHIM_RESOLVER(node);
 	if (!he || !he->h_addr_list || !he->h_addr_list[0])
 		return SHIM_EAI_NODATA;
