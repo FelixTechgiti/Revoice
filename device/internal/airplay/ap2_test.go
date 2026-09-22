@@ -1,11 +1,13 @@
 package airplay
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wilbowes/EchoMuse/internal/netfilter"
 )
@@ -296,5 +298,43 @@ func TestSessionPortsAreNotTheClassicRTPRange(t *testing.T) {
 	if netfilter.AirPlay2SessionCount < 4 {
 		t.Fatalf("a session binds four sockets and the range holds %d",
 			netfilter.AirPlay2SessionCount)
+	}
+}
+
+func TestNqptpRestartTakesTheReceiverWithIt(t *testing.T) {
+	// #312. nqptp unlinks the clock record when it exits, and a mapping
+	// already held survives the unlink — so a shairport-sync that is not
+	// restarted with it reads an orphaned inode for the rest of its life,
+	// while the new nqptp writes to a different file. Neither end reports it,
+	// and the reader cannot notice: its retry loop compares two copies of the
+	// record until they agree, and a frozen record agrees on the first try.
+	fired := make(chan struct{}, 4)
+	n := &Nqptp{Path: "/bin/true", OnRestart: func() { fired <- struct{}{} }}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go n.supervise(ctx)
+
+	select {
+	case <-fired:
+	case <-time.After(10 * time.Second):
+		t.Fatal("nqptp exited and restarted without taking the receiver with " +
+			"it — the receiver is now reading a clock nobody writes")
+	}
+}
+
+func TestASupervisorWithNoHookStillRuns(t *testing.T) {
+	// The hook is optional, and a nil one must not panic the supervise loop —
+	// it runs for the life of the process and takes the clock daemon with it.
+	n := &Nqptp{Path: "/bin/true"}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { n.supervise(ctx); close(done) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("supervise did not return after its context was cancelled")
 	}
 }

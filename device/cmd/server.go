@@ -439,6 +439,16 @@ func main() {
 	dataClient.MusicPlane().Register(musicplane.AirPlay, func(why musicplane.Reason) {
 		airplayClient.Leave(string(why))
 	})
+	// nqptp's exit unlinks the clock record, and a mapping already held
+	// survives the unlink — so a receiver that is not restarted with it reads
+	// an orphaned inode while the new nqptp writes to a different file, and
+	// neither end reports it (#312). Set here rather than beside the var,
+	// because this is where the receiver exists.
+	nqptp.OnRestart = func() {
+		if airplayClient.Running() {
+			airplayClient.Restart()
+		}
+	}
 	applyAirplayConfig(airplayClient, s)
 	applyFirewall()
 	// The busy predicate is passed in rather than reached for: startNetworkRepair
