@@ -50,15 +50,35 @@
  * responder thread a stop and a start — bounded by mdnsd_stop's 500ms poll —
  * at a moment that is already a session boundary.
  *
- * # What is deliberately NOT changed
+ * # Both services' TXT records come from the caller
  *
- * The primary service's TXT records are still built from mdns.h's
- * MDNS_RECORD_* macros rather than from the `txt_records` argument, exactly
- * as upstream does. The two sets are not the same — the macros carry `am=`,
- * `vs=`, `sf=`, `fv=` and `tp=`, which `build_bonjour_strings` does not put in
- * the array — so using the argument would quietly change what classic AirPlay
- * advertises. This file is here to ADD the second service, not to renegotiate
- * the first.
+ * `_raop._tcp` is registered from the `txt_records` argument and
+ * `_airplay._tcp` from `secondary_txt_records`, with mdns.h's MDNS_RECORD_*
+ * macros kept only as the fallback for a caller that passes none.
+ *
+ * **This paragraph said the opposite until #310, and the reason it gave was
+ * checkable and wrong.** It claimed the macros carry `am=`, `vs=`, `sf=`,
+ * `fv=` and `tp=` while `build_bonjour_strings` does not put them in the
+ * array, so that using the argument would quietly change what classic AirPlay
+ * advertises. `build_bonjour_strings` puts all five in the array, in both of
+ * its branches, and upstream's own comment on the classic one says what it is
+ * for:
+ *
+ *     #else
+ *       // here, just replicate what happens in mdns.h when using those #defines
+ *
+ * So for a classic build the argument and the macros are the same strings by
+ * construction and this changes nothing. For an AirPlay 2 build they are not:
+ * the argument carries `ft=`, `pk=`, `tp=UDP` and `vs=366.0`, and the macros
+ * carry `vs=105.1`, `tp=TCP,UDP`, `txtvers=1` and `ek=1` — so a device
+ * advertised `_airplay._tcp` with a public key and `_raop._tcp` as an AirPlay
+ * 1 receiver, was offered by every client, and could negotiate no session.
+ * Measured on the air 2026-09-22.
+ *
+ * The caution was real and aimed at the wrong risk. What it was protecting —
+ * that this file adds the second service rather than renegotiating the first
+ * — is still true, and is now true because the first service says what
+ * shairport-sync says rather than what this file decides.
  */
 
 #include <ifaddrs.h>
@@ -303,20 +323,23 @@ static int bring_up(void) {
     return -1;
   }
 
-  /* The primary service's records, upstream's set verbatim — see the header
-   * comment for why the passed-in txt_records are not used. These are built
-   * here rather than returned from a helper because the macros are not
-   * constant expressions (config.password decides the last one), so they
-   * cannot initialise anything with static storage. */
+  /* The primary service's records come from the caller — see the header
+   * comment. The mdns.h macros remain as the fallback for a caller that
+   * passed none, so a NULL argument is a service with upstream's records
+   * rather than a service with no TXT record at all. They are built here
+   * rather than returned from a helper because the macros are not constant
+   * expressions (config.password decides the last one), so they cannot
+   * initialise anything with static storage. */
   char *txt_without[] = {MDNS_RECORD_WITHOUT_METADATA, NULL};
 #ifdef CONFIG_METADATA
   char *txt_with[] = {MDNS_RECORD_WITH_METADATA, NULL};
 #endif
-  char **primary = txt_without;
+  char **fallback = txt_without;
 #ifdef CONFIG_METADATA
   if (config.metadata_enabled)
-    primary = txt_with;
+    fallback = txt_with;
 #endif
+  char **primary = (ad.primary != NULL) ? ad.primary : fallback;
 
   if (register_one(ad.ap1name, config.regtype, (const char **)primary) != 0) {
     mdnsd_stop(svr);
@@ -354,12 +377,11 @@ static void tear_down(void) {
 
 static int mdns_tinysvcmdns_register(char *ap1name, char *ap2name, int port, char **txt_records,
                                      char **secondary_txt_records) {
-  (void)txt_records; /* see the header comment */
   int rc;
 
   pthread_mutex_lock(&ad_lock);
   tear_down(); /* mdns_register is called once, but make it idempotent */
-  if (em_ad_set(&ad, ap1name, ap2name, port, secondary_txt_records) != 0) {
+  if (em_ad_set(&ad, ap1name, ap2name, port, txt_records, secondary_txt_records) != 0) {
     warn("tinysvcmdns: out of memory building the advertisement");
     pthread_mutex_unlock(&ad_lock);
     return -1;
@@ -370,7 +392,6 @@ static int mdns_tinysvcmdns_register(char *ap1name, char *ap2name, int port, cha
 }
 
 static int mdns_tinysvcmdns_update(char **txt_records, char **secondary_txt_records) {
-  (void)txt_records;
   int rc;
 
   pthread_mutex_lock(&ad_lock);
@@ -384,7 +405,7 @@ static int mdns_tinysvcmdns_update(char **txt_records, char **secondary_txt_reco
     return -1;
   }
 
-  if (em_ad_update(&ad, secondary_txt_records) != 0) {
+  if (em_ad_update(&ad, txt_records, secondary_txt_records) != 0) {
     warn("tinysvcmdns: out of memory updating the advertisement; keeping the old records");
     pthread_mutex_unlock(&ad_lock);
     return -1;

@@ -30,20 +30,21 @@ struct em_ad {
   char *ap1name;    /* "XXXXXXXXXXXX@Kitchen" -> _raop._tcp    */
   char *ap2name;    /* "Kitchen"              -> _airplay._tcp */
   int port;
+  char **primary;   /* owned deep copy, NULL-terminated; _raop._tcp's TXT   */
   char **secondary; /* owned deep copy, NULL-terminated; NULL when classic */
 };
 
-/* Replace everything. Any of ap2name/secondary may be NULL (a classic build
- * passes both). 0 on success, -1 on allocation failure with the struct left
- * empty rather than half-populated. */
+/* Replace everything. Any of ap2name/primary/secondary may be NULL (a classic
+ * build passes no ap2name and no secondary set). 0 on success, -1 on
+ * allocation failure with the struct left empty rather than half-populated. */
 int em_ad_set(struct em_ad *ad, const char *ap1name, const char *ap2name, int port,
-              char **secondary);
+              char **primary, char **secondary);
 
-/* Merge an update. `secondary == NULL` KEEPS the current set rather than
- * clearing it: shairport calls mdns_update(NULL, secondary) for the AirPlay 2
- * records and would otherwise silently retire the ones it did not resend.
- * 0 on success, -1 on allocation failure with the previous set still intact. */
-int em_ad_update(struct em_ad *ad, char **secondary);
+/* Merge an update. A NULL half KEEPS the current set rather than clearing it:
+ * shairport calls mdns_update(NULL, secondary) for the AirPlay 2 records and
+ * would otherwise silently retire the ones it did not resend. 0 on success,
+ * -1 on allocation failure with the previous sets still intact. */
+int em_ad_update(struct em_ad *ad, char **primary, char **secondary);
 
 void em_ad_free(struct em_ad *ad);
 
