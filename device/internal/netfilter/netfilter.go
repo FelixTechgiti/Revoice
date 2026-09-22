@@ -277,6 +277,39 @@ func MDNSRule() Rule {
 		Why: "mDNS queries, so Spotify and AirPlay can be asked as well as heard"}
 }
 
+// IGMPProto is IGMP by NUMBER, because the devices this runs on have no
+// /etc/protocols and their iptables answers `unknown protocol "igmp"` — checked
+// on hardware 2026-09-22.
+const IGMPProto = "2"
+
+// IGMPRule lets the device answer the router's membership queries.
+//
+// IGMP is how a multicast membership is KEPT. The router asks periodically who
+// still wants each group; a station that does not answer is dropped from the
+// switch's snooping table, and then the group stops being delivered to it —
+// which is #142, a device that works for a few minutes after anything joins
+// and then hears nothing.
+//
+// A default-deny INPUT chain drops IGMP, because it is neither TCP, UDP nor
+// ICMP and nothing had ever named it. So a device that depends on multicast
+// was silently unable to keep its membership.
+//
+// **Whether this is what CAUSES #142 is not established, and the honest
+// version is worth keeping**: with this rule added by hand, exactly ONE IGMP
+// packet arrived in an hour while mDNS went from 44,217 to 47,473 — so the
+// queries are rare on that router, and one of them being dropped is a
+// plausible cause rather than a measured one. What IS measured is the repair
+// in internal/mcast, which re-joins and works. This is the cheaper half:
+// answering a query keeps the membership that the re-join would otherwise have
+// to restore.
+//
+// It names no port because IGMP HAS none — the protocol number is the whole of
+// what can be narrowed, the same position ICMP is in.
+func IGMPRule() Rule {
+	return Rule{Proto: IGMPProto,
+		Why: "IGMP membership queries, so the router keeps delivering multicast"}
+}
+
 // PingRule lets the device answer a ping.
 //
 // FireOS accepts only RELATED,ESTABLISHED ICMP, so an echo request — which is
@@ -291,9 +324,13 @@ func PingRule() Rule {
 // spec is the fully-specified rule, without the -I/-C/-D verb.
 func (r Rule) spec() []string {
 	a := []string{"INPUT", "-i", iface, "-p", r.Proto}
-	if r.Proto == "icmp" {
+	switch {
+	case r.Proto == "icmp":
 		a = append(a, "--icmp-type", "echo-request")
-	} else if r.Port != "" {
+	case r.Proto == IGMPProto:
+		// Nothing to narrow: IGMP carries no ports, and iptables has no
+		// `-m 2` match module to add. The protocol number IS the narrowing.
+	case r.Port != "":
 		a = append(a, "-m", r.Proto, "--dport", r.Port)
 	}
 	return append(a, "-j", "ACCEPT")
@@ -346,6 +383,7 @@ func All() []Rule {
 	out = append(out, NqptpRules()...)
 	out = append(out, AirPlay2SessionRules()...)
 	out = append(out, MDNSRule())
+	out = append(out, IGMPRule())
 	return append(out, PingRule())
 }
 

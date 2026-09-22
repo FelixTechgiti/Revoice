@@ -2238,6 +2238,24 @@ static pid_t dnsproxy_start(void)
  *     port was closed by both halves believing the other had it. Both now
  *     write it; a duplicate ACCEPT costs one exec.
  *
+ *   - IGMP (protocol 2): the router's membership queries. IGMP is how a
+ *     multicast membership is KEPT — a station that never answers is dropped
+ *     from the switch's snooping table, and the group then stops being
+ *     delivered to it. A default-deny chain drops IGMP, because it is neither
+ *     TCP, UDP nor ICMP and nothing had ever named it, so a device that
+ *     depends on multicast could not keep its own membership.
+ *
+ *     By NUMBER, because there is no /etc/protocols here and iptables answers
+ *     `unknown protocol "igmp"` — checked on hardware.
+ *
+ *     Whether this is what CAUSES #142 is not established and should not be
+ *     written as though it were: with the rule added by hand, exactly one IGMP
+ *     packet arrived in an hour while mDNS went from 44,217 to 47,473. The
+ *     queries are rare on that router, so one of them being dropped is a
+ *     plausible cause rather than a measured one. The measured repair is the
+ *     re-join in device/internal/mcast; this is the cheaper half that would
+ *     stop it needing one.
+ *
  * ICMP is allowed deliberately. It is not attack surface in any meaningful
  * sense and ping is the cheapest way to tell whether a device is alive — the
  * diagnostic value outweighs the theoretical purity of dropping it. Remove
@@ -2258,14 +2276,20 @@ static void firewall(void)
         "  $T -P INPUT DROP; "
         "  $T -P FORWARD DROP; "
         "done; "
-        /* Positions 5 and 6, not 4 and 5: the -A rules above are now four, so
-         * inserting at 4 would land BEFORE the mDNS query rule rather than
-         * after it. Order does not change the outcome here — every rule is an
-         * ACCEPT and none overlaps — but a position that silently means
-         * something else after an edit is how the next line gets put in the
-         * wrong place. */
-        "iptables -I INPUT 5 -p udp --sport 67 --dport 68 -j ACCEPT; "
-        "iptables -I INPUT 6 -p icmp -j ACCEPT; "
+        /* Positions 5 to 7, because the -A rules above are now four. Order
+         * does not change the outcome here — every rule is an ACCEPT and none
+         * overlaps — but a position that silently means something else after
+         * an edit is how the next line gets put in the wrong place, and this
+         * number has now been wrong once already.
+         *
+         * IGMP is here rather than in the loop because protocol 2 means
+         * nothing on IPv6: MLD is what keeps a v6 membership and it rides
+         * ICMPv6, which the last line already allows. A `-p 2` in ip6tables
+         * would be a rule that can never match, which is worse than no rule —
+         * it reads as cover that is not there. */
+        "iptables -I INPUT 5 -p 2 -j ACCEPT; "
+        "iptables -I INPUT 6 -p udp --sport 67 --dport 68 -j ACCEPT; "
+        "iptables -I INPUT 7 -p icmp -j ACCEPT; "
         "ip6tables -I INPUT 5 -p icmpv6 -j ACCEPT", NULL };
     int st = run_wait(fw);
     netlog("firewall applied status=%d\n", st);

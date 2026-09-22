@@ -102,12 +102,35 @@ func TestEveryRuleNamesAnInterfaceAndATarget(t *testing.T) {
 
 func TestEveryNonIcmpRuleHasAPort(t *testing.T) {
 	for _, r := range All() {
-		if r.Proto == "icmp" {
+		// ICMP and IGMP have no ports to name, so the protocol is the whole
+		// of what can be narrowed. Every other protocol does have them, and a
+		// rule that omits one is not a narrow rule — it is the removal of a
+		// firewall for that protocol.
+		if r.Proto == "icmp" || r.Proto == IGMPProto {
 			continue
 		}
 		if !regexp.MustCompile(`^\d+(:\d+)?$`).MatchString(r.Port) {
 			t.Fatalf("port %q is not a number or a range", r.Port)
 		}
+	}
+}
+
+func TestTheIGMPRuleIsNarrowAndNamesTheInterface(t *testing.T) {
+	spec := strings.Join(IGMPRule().spec(), " ")
+	if !strings.Contains(spec, "-p "+IGMPProto+" ") {
+		t.Fatalf("IGMP rule does not name protocol %s: %s", IGMPProto, spec)
+	}
+	// By name it would be refused: these devices have no /etc/protocols and
+	// their iptables answers `unknown protocol "igmp"`, measured on hardware.
+	if strings.Contains(spec, "igmp") {
+		t.Fatalf("IGMP named by name rather than by number: %s", spec)
+	}
+	if !strings.Contains(spec, "-i "+Iface) {
+		t.Fatalf("IGMP rule does not name an interface, so it is not narrow: %s", spec)
+	}
+	if strings.Contains(spec, "-m ") {
+		t.Fatalf("IGMP rule carries a match module, which iptables has none of "+
+			"for protocol %s: %s", IGMPProto, spec)
 	}
 }
 
