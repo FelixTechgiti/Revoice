@@ -375,3 +375,39 @@ func TestAHealthyProberNeverRepairs(t *testing.T) {
 		t.Fatalf("restarted the endpoints %d times on a healthy device", n)
 	}
 }
+
+func TestNoRuleMeansNoRepair(t *testing.T) {
+	// The counter only exists where `internal/netfilter` has written the mDNS
+	// rule, and there is firmware and emOS in the field without it (#298). A
+	// missing rule must read as "cannot tell", never as silence — reading it
+	// as silence would restart both endpoints every ten minutes for the life
+	// of the process on every device that has not been updated yet, which is
+	// a worse fault than the one being repaired and would arrive as part of
+	// the fix for it.
+	n := 0
+	p := &Prober{
+		Sample: func() Reading { return Reading{Found: false} },
+		Repair: func() { n++ },
+	}
+	run(p, time.Unix(0, 0), 60*time.Minute, time.Minute)
+	if n != 0 {
+		t.Fatalf("restarted the endpoints %d times on a device whose mDNS rule "+
+			"could not be read at all", n)
+	}
+	if p.Tracker.Deaf() {
+		t.Fatal("an unreadable counter was recorded as deafness")
+	}
+}
+
+func TestAFailedReadIsNotSilence(t *testing.T) {
+	n := 0
+	p := &Prober{
+		Sample: func() Reading { return Reading{Err: errors.New("iptables: not found")} },
+		Repair: func() { n++ },
+	}
+	run(p, time.Unix(0, 0), 60*time.Minute, time.Minute)
+	if n != 0 {
+		t.Fatalf("restarted the endpoints %d times because the firewall could "+
+			"not be read", n)
+	}
+}
