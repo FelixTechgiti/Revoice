@@ -12,6 +12,28 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.59.0-fx.1
+
+### Die Prüfung der Namensauflösung fiel manchmal ganz aus
+
+**Nur für emOS-Geräte, weiterhin eine Diagnose.**
+
+Das Gerät prüft, ob es die Bibliothek für die Namensauflösung benutzen kann,
+und meldet das Ergebnis. Diese Prüfung wird von drei Stellen aus angestoßen —
+Spotify, AirPlay und dessen Zeitgeber — und sie einigen sich darauf, sie nur
+einmal zu machen.
+
+Die Einigung fand aber statt, **bevor** gemessen wurde. Kam eine Stelle zuerst
+an, die gar nichts prüfen konnte, hakte sie die Sache ab, und die Stelle, die
+es gekonnt hätte, kam nie dran. Das Gerät meldete dann „keine Auskunft" über
+eine Bibliothek, die auf dieselbe Frage kurz zuvor geantwortet hatte.
+
+Ab jetzt zählt das Urteil für ein bestimmtes Programm, und wer nichts prüfen
+kann, hakt auch nichts ab.
+
+Zusätzlich steht im Bericht, **welches** Programm geprüft wurde. Ohne das
+sahen „geprüft und schwieg" und „konnte nichts prüfen" gleich aus.
+
 ## 2.58.0-fx.1
 
 ### Eine ausgetauschte Namensauflösung wurde nicht neu geprüft

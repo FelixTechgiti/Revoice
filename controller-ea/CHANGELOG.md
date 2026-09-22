@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.70.0-fx.1
+
+### Im Updates-Reiter steht jetzt, welches Programm geprüft wurde
+
+Gehört zu Firmware **2.59.0-fx.1**.
+
+Meldet ein Gerät, dass es zur Namensauflösung keine Auskunft geben kann, stand
+dort bisher nur das. Es gibt dafür aber zwei sehr verschiedene Gründe: Die
+Prüfung lief und das Ergebnis blieb aus, oder es gab gar kein Programm zu
+prüfen. Beides ergab denselben Satz.
+
+Jetzt wird das geprüfte Programm mitgenannt, beziehungsweise dass keines
+geprüft wurde.
+
 ## 2.69.0-fx.1
 
 ### Das Protokoll sagt jetzt, wenn die Namensauflösung nicht arbeitet
