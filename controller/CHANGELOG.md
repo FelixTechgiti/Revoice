@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.71.0-fx.1
+
+### Das emOS-Update lässt sich wieder auf FireOS-6-Geräten installieren
+
+**Wer ein Gerät mit FireOS 6 hat, braucht dieses Update, bevor er emOS
+aktualisieren kann.** Auf FireOS 5 war nichts betroffen.
+
+Der Versuch brach mit einer Meldung ab, die in die Irre führte: Die vom Gerät
+gelesenen Daten seien nicht gültig kodiert. Tatsächlich waren es gar keine
+Daten. Um den Anfang des Speicherbereichs zu lesen, benutzt der Controller ein
+kleines Hilfsprogramm des Geräts — und auf FireOS 6 gibt es davon eine andere
+Ausführung, die den verlangten Schalter nicht kennt. Ihre Fehlermeldung landete
+an der Stelle, an der die Daten erwartet wurden.
+
+Auf FireOS 5 lief derselbe Vorgang durch, weil dort eine dritte Ausführung
+desselben Programms mitgeliefert wird. Welche davon antwortet, hängt am Gerät,
+nicht am Befehl — der Controller benennt jetzt überall ausdrücklich die
+gewünschte.
+
+**Nichts wurde dabei geschrieben.** Der Abbruch erfolgte vor dem ersten Byte,
+und der Speicherbereich des Geräts ist unverändert. Nach diesem Update kann das
+emOS-Update einfach erneut angestoßen werden.
+
+### Die Platzprüfung vor einem emOS-Update lief nie
+
+Dieselbe Ursache, aber ohne Fehlermeldung. Vor dem Schreiben prüft der
+Controller, ob auf dem Gerät genug Platz frei ist. Der Befehl dafür lieferte auf
+FireOS 6 überhaupt kein Ergebnis, und ein ausbleibendes Ergebnis wird
+absichtlich nicht als „zu wenig Platz" gewertet — die Prüfung war also
+wirkungslos, auf genau der Plattform, für die es sie gibt.
+
+Sie arbeitet jetzt. Am Gerät nachgemessen: 1031 MB frei, und das ist auch das,
+was das Gerät selbst meldet.
+
 ## 2.70.0-fx.1
 
 ### Im Updates-Reiter steht jetzt, welches Programm geprüft wurde
