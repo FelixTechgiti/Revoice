@@ -210,6 +210,19 @@ type Client struct {
 	// it selects is resolved per SESSION rather than held, so turning the
 	// setting on and restarting is the whole of a switch — see binary().
 	preferAP2 bool
+
+	// runningBin is the file this client actually exec'd, empty while nothing
+	// runs. The SETTING is above and the two can differ for as long as the
+	// process lives: SetPreferAirPlay2 restarts only on a change, so a device
+	// that started one flavour and now reads the other setting keeps running
+	// the first (#326).
+	//
+	// Held rather than re-resolved, and that is the opposite of binary()'s
+	// rule for a reason: binary() answers "what would I exec now", which must
+	// follow the setting; this answers "what IS executing", which cannot be
+	// derived from anything current — the only record of it is the moment it
+	// was started.
+	runningBin string
 }
 
 // New wires a client. It starts nothing.
@@ -281,14 +294,45 @@ func (c *Client) Available() (bool, error) {
 // reason: a capability says what the FIRMWARE can do, and when the answer to
 // "why is this off" is a missing file, nobody can tell that from a broken
 // feature without a shell session on the user's own hardware.
-func Report(preferAP2 bool) map[string]any {
+func Report(preferAP2 bool, running string) map[string]any {
 	choice := ResolveBinary(BinaryPath, AP2BinaryPath, preferAP2)
+
+	// **The flavour describes what is RUNNING, and it used to describe what
+	// the setting selects (#326).** Those are different files whenever the
+	// setting has changed under a live receiver: SetPreferAirPlay2 restarts
+	// only on a change, so a device that came up as AirPlay 2 and now reads
+	// the classic setting goes on serving AirPlay 2 — and the panel, built
+	// from the setting, called it classic for as long as that lasted.
+	//
+	// Measured on hardware 2026-09-22: `shairport-sync-ap2` and `nqptp` both
+	// running, `_airplay._tcp` on the air with a public key, and the dashboard
+	// saying "klassisches AirPlay" in the same minute. It cost the owner of
+	// those devices a day of not being able to answer "is this AirPlay 2?".
+	//
+	// With nothing running there is nothing to describe, so the selected file
+	// is the honest answer — and `flavour_is` says which question was
+	// answered, because "what it would run" and "what it is running" must
+	// never again be readable as the same statement.
+	describe, isRunning := choice.Path, false
+	if running != "" {
+		describe, isRunning = running, true
+	}
 
 	rep := map[string]any{"binary": choice.Path, "selected": choice.Reason}
 	fileReport(rep, choice.Path)
 	if rep["ok"] == true {
-		describeFlavour(rep, choice.Path)
+		describeFlavour(rep, describe)
 	}
+	rep["flavour_of"] = describe
+	if isRunning {
+		rep["flavour_is"] = "running"
+	} else {
+		rep["flavour_is"] = "selected"
+	}
+	// The gap itself, named rather than left to be inferred from two paths.
+	// A consumer that only wants "is anything wrong here" must not have to
+	// compare strings to find out.
+	rep["setting_differs"] = isRunning && running != choice.Path
 
 	// Each FILE reports separately, because the top level now answers about
 	// whichever one was selected and the controller has a kind per file.
@@ -648,6 +692,18 @@ func (c *Client) kill() {
 	}
 }
 
+// RunningBinary is the receiver file currently executing, or "" when none is.
+//
+// Deliberately NOT binary(): that one answers what the setting selects, and
+// the whole of #326 is that the two can disagree while both are live. A panel
+// labelled "AirPlay flavour" is read as a statement about the speaker, so it
+// has to be built from this.
+func (c *Client) RunningBinary() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.runningBin
+}
+
 func (c *Client) name() string {
 	if c.opts.Name != "" {
 		return c.opts.Name
@@ -871,6 +927,7 @@ func (c *Client) session(ctx context.Context) error {
 
 	c.mu.Lock()
 	c.proc = cmd.Process
+	c.runningBin = cmd.Path
 	c.startedAt = time.Now()
 	c.restarts++
 	c.mu.Unlock()
@@ -881,6 +938,7 @@ func (c *Client) session(ctx context.Context) error {
 	err = cmd.Wait()
 	c.mu.Lock()
 	c.proc = nil
+	c.runningBin = ""
 	// Kept whatever it says, including nil: "exited cleanly" and "exit status
 	// 1 every minute for two hours" are both answers, and blanking the field
 	// on a clean exit would make the second one look like the first between

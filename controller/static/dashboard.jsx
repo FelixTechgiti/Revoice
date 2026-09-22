@@ -2835,6 +2835,12 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     : ap2.clock === 'down'    ? `${t('devAirplay2ClockDown')} (${ap2.restarts})`
                     : ap2.clock === 'absent'  ? t('devAirplay2NoClock')
                     :                           t('devAirplay2ClockUnknown');
+                  // The gap gets its own clause rather than replacing the
+                  // verdict: what is PLAYING is still the headline, and the
+                  // setting only says what the next restart will bring.
+                  const ap2Full = ap2 && ap2.settingDiffers
+                    ? `${ap2Text} — ${t('devAirplayFlavourPending')}`
+                    : ap2Text;
                   const ap2Tone = !ap2 || ap2.flavour !== 'airplay2' ? 'var(--muted)'
                     : ap2.clock === 'ok' ? 'var(--ok)' : 'var(--warn)';
                   return (
@@ -2847,7 +2853,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                         <div>
                           {ap && row(t('devAirplay'), ap,
                                      ap.startsWith('running') ? 'var(--ok)' : 'var(--warn)')}
-                          {ap2Text && row(t('devAirplayFlavour'), ap2Text, ap2Tone)}
+                          {ap2Text && row(t('devAirplayFlavour'), ap2Full, ap2Tone)}
                         </div>
                       </div>
                     </Panel>
@@ -5017,8 +5023,16 @@ function airplay2Line(airplayStatus, health, capable, receiverHealth) {
       ? null
       : !!receiverHealth.alive;
 
+  // The SETTING selects one file and the device may be running the other, for
+  // as long as the process lives — SetPreferAirPlay2 restarts only on a
+  // change. The device names that gap itself (#326) rather than leaving the
+  // panel to compare paths; absent on firmware that predates it, which reads
+  // as no gap and is the right answer for firmware that cannot have one.
+  const settingDiffers = st.setting_differs === true;
+
   if (st.flavour !== 'airplay2') {
-    return { flavour: st.flavour, clock: null, restarts: 0, receiverRunning };
+    return { flavour: st.flavour, clock: null, restarts: 0, receiverRunning,
+             settingDiffers };
   }
 
   // Installed is not running, and here the two answers come from different
@@ -5026,19 +5040,23 @@ function airplay2Line(airplayStatus, health, capable, receiverHealth) {
   // tick. A file that is absent settles it without waiting for a tick.
   const installed = !!(st.nqptp && st.nqptp.ok);
   if (!installed) {
-    return { flavour: 'airplay2', clock: 'absent', restarts: 0, receiverRunning };
+    return { flavour: 'airplay2', clock: 'absent', restarts: 0, receiverRunning,
+             settingDiffers };
   }
   if (!capable || !health) {
-    return { flavour: 'airplay2', clock: 'unknown', restarts: 0, receiverRunning };
+    return { flavour: 'airplay2', clock: 'unknown', restarts: 0, receiverRunning,
+             settingDiffers };
   }
   if (!health.enabled) {
-    return { flavour: 'airplay2', clock: 'absent', restarts: 0, receiverRunning };
+    return { flavour: 'airplay2', clock: 'absent', restarts: 0, receiverRunning,
+             settingDiffers };
   }
   return {
     flavour: 'airplay2',
     clock: health.alive ? 'ok' : 'down',
     restarts: health.restarts || 0,
     receiverRunning,
+    settingDiffers,
   };
 }
 

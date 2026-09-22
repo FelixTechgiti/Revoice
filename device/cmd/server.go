@@ -439,6 +439,12 @@ func main() {
 	dataClient.MusicPlane().Register(musicplane.AirPlay, func(why musicplane.Reason) {
 		airplayClient.Leave(string(why))
 	})
+	// What the AirPlay panel describes. Set here because this is where the
+	// receiver's client exists; without it the report falls back to the
+	// SETTING, which is the state #326 reported as "classic AirPlay" on a
+	// device running the AirPlay 2 binary.
+	client.AirPlayRunningBinary = airplayClient.RunningBinary
+
 	// nqptp's exit unlinks the clock record, and a mapping already held
 	// survives the unlink — so a receiver that is not restarted with it reads
 	// an orphaned inode while the new nqptp writes to a different file, and
