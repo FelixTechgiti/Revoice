@@ -1590,8 +1590,18 @@ func firewallWant() []netfilter.Rule {
 	if len(want) > 0 {
 		want = append(want, netfilter.MDNSRule())
 	}
-	// Unconditional: a device nobody can ping is a device that reads as "off
-	// the network" when it is not, and an afternoon went into that mistake.
+	// Unconditional, both of them.
+	//
+	// IGMP because a multicast membership is KEPT by answering the router's
+	// queries, and the device needs one whether or not an endpoint is enabled
+	// — it finds its controller over mDNS. It was added to netfilter.All() in
+	// #319 and never added HERE, which is not "missing" but self-deleting:
+	// All() is what Sync removes from, so the rule was actively taken back off
+	// any device where something else had set it (#323).
+	//
+	// Ping because a device nobody can ping is a device that reads as "off the
+	// network" when it is not, and an afternoon went into that mistake.
+	want = append(want, netfilter.IGMPRule())
 	want = append(want, netfilter.PingRule())
 	return want
 }

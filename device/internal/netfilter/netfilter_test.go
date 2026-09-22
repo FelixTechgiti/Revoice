@@ -3,6 +3,7 @@ package netfilter
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -370,6 +371,57 @@ func TestTurningTheClockDaemonOffClosesItsPorts(t *testing.T) {
 	for _, r := range NqptpRules() {
 		if f.count(r) != 0 {
 			t.Fatalf("PTP port left open with no daemon behind it: %s", r)
+		}
+	}
+}
+
+func TestEveryRuleInAllIsAlsoWanted(t *testing.T) {
+	// The MIRROR of TestEveryRuleConstructorIsInAll, and the direction nobody
+	// had. That one says: what gets written must be removable. This one says:
+	// what is removable must get written.
+	//
+	// Both matter, and the second is the sneakier. A constructor in All() with
+	// no caller in firewallWant() is not a rule that is merely absent — Sync
+	// makes exactly `want` present and everything in All() that is not in
+	// `want` ABSENT, so the rule deletes itself off any device where something
+	// else put it. That is what #323 was: IGMPRule shipped in All() alone, so
+	// the hardening in #319 reached no device and quietly undid a hand-set
+	// rule during diagnosis.
+	//
+	// cmd/server.go is read as text because `cmd` cannot be imported here at
+	// all — it pulls in cgo bindings for the device's audio hardware. Same
+	// posture as the guard above, one directory over.
+	src, err := os.ReadFile(filepath.Join("..", "..", "cmd", "server.go"))
+	if err != nil {
+		t.Fatalf("cannot read cmd/server.go, so the two lists cannot be "+
+			"compared: %v", err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func firewallWant() []netfilter.Rule {")
+	if start < 0 {
+		t.Fatal("firewallWant() is gone — Sync has nothing to install")
+	}
+	end := strings.Index(body[start:], "\n}")
+	if end < 0 {
+		t.Fatal("could not find the end of firewallWant()")
+	}
+	want := body[start : start+end]
+
+	self, err := os.ReadFile("netfilter.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctors := regexp.MustCompile(`func (\w+Rules?)\(\) (?:\[\]Rule|Rule)`).
+		FindAllStringSubmatch(string(self), -1)
+	if len(ctors) < 4 {
+		t.Fatalf("found %d rule constructors — the guard is not looking at "+
+			"the right file", len(ctors))
+	}
+	for _, m := range ctors {
+		if !strings.Contains(want, "netfilter."+m[1]+"()") {
+			t.Fatalf("%s() is in netfilter.go but firewallWant() never asks "+
+				"for it. If it is also in All(), Sync will DELETE it from "+
+				"every device — that is #323, not a missing feature.", m[1])
 		}
 	}
 }
