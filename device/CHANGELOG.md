@@ -12,6 +12,41 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.60.0-fx.1
+
+### Spotify Connect und AirPlay erscheinen wieder
+
+**Nur für emOS-Geräte.** Auf FireOS war beides nie betroffen.
+
+Ein emOS-Gerät war in Spotify und in AirPlay schlicht nicht zu sehen. Das
+Merkwürdige daran: Von innen sah alles gesund aus. Die Dienste liefen, hatten
+ihre Netzwerkanschlüsse offen, waren der richtigen Multicast-Gruppe
+beigetreten und beantworteten sogar Anfragen, die man ihnen direkt schickte.
+Nur *melden* taten sie sich nie — und ohne diese Meldung findet sie kein
+Telefon und kein Lautsprecher-Menü.
+
+Der Grund liegt unter beiden Programmen: Sie fragen das System, welche
+Netzwerkschnittstellen es gibt, und bekommen unter emOS keine brauchbare
+Antwort. Ein Dienst, der nicht weiß, auf welchem Weg er erreichbar ist, meldet
+sich gar nicht erst — still, ohne Fehlermeldung, mit einwandfrei aussehenden
+Anschlüssen.
+
+Am 22.09.2026 gemessen: Auf eine AirPlay-Anfrage im Netz antworteten zwanzig
+Geräte, das Echo nicht. Mit der Angabe, welche Schnittstelle es benutzen soll,
+war es binnen Sekunden da.
+
+Ab dieser Fassung sagt die Firmware beiden Diensten, auf welcher Schnittstelle
+sie antworten sollen. Sie muss sie nicht mehr selbst suchen.
+
+### Was du merkst
+
+- **Der Dot taucht in Spotify Connect und in AirPlay auf** — als Ausgabegerät
+  im Telefon, im Spotify-Menü und auf dem Mac.
+- **AirPlay 2 bleibt vorerst aus** auf Geräten mit FireOS 6: Dessen Empfänger
+  startet dort aus einem anderen Grund nicht und wird getrennt behoben. Das
+  klassische AirPlay funktioniert.
+- Auf FireOS ändert sich nichts.
+
 ## 2.59.0-fx.1
 
 ### Die Prüfung der Namensauflösung fiel manchmal ganz aus
