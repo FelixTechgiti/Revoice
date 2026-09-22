@@ -247,12 +247,17 @@ def read_back_cmd(length: int) -> str:
     """The device-side command that reads back exactly what we wrote.
 
     `bs=1 count=N` would be exact and unbearably slow on this hardware, so:
-    whole 64K blocks through dd, and the length trimmed with `head -c`, which
-    busybox has and which costs one pipe.
+    whole 64K blocks through dd, and the length trimmed with `busybox head -c`,
+    which costs one pipe.
+
+    **The `busybox` was missing here until #320, and this docstring was why it
+    looked right**: it said "which busybox has", and busybox does have it — but
+    the command said only `head`, and on FireOS 6 a bare `head` is toybox,
+    which has no `-c`. The reasoning named the right tool and the code did not.
     """
     blocks = (length + 65535) // 65536
     return (f"busybox dd if={BOOT_DEV} bs=65536 count={blocks} 2>/dev/null "
-            f"| head -c {length} | busybox md5sum | cut -d' ' -f1")
+            f"| busybox head -c {length} | busybox md5sum | cut -d' ' -f1")
 
 
 # Its own sentinel rather than PROBE_MARK's: this probe runs at the worst
@@ -456,8 +461,19 @@ def probe_cmd() -> str:
     """
     return (f"[ -f {GOOD_IMG} ] && echo GOOD:yes || echo GOOD:no; "
             f"echo \"VER:$(sed -n 's/^VERSION=//p' /etc/os-release 2>/dev/null "
-            f"| tr -d '\\\"')\"; "
-            f"echo DF:$(df -m /data 2>/dev/null | tail -1); "
+            f"| busybox tr -d '\\\"')\"; "
+            # Both named, and both for #320. `df` is toybox on FireOS 6 and has
+            # no `-m` at all (`usage: df [-HPkh]`), so this printed nothing and
+            # the free-space check silently never ran. `tail` is worse: toybox
+            # `tail -1` does not refuse the obsolescent count, it IGNORES it
+            # and prints the whole stream — so even with df fixed, the parser
+            # would have been handed a header row.
+            #
+            # Verified on hardware 2026-09-22, this exact pipeline:
+            #   busybox df -m /data | busybox tail -1
+            #     -> "     1224   178   1031  15% /data"
+            #   free_from_df(...) -> 1031, and df's own Available is 1031.
+            f"echo DF:$(busybox df -m /data 2>/dev/null | busybox tail -1); "
             f"echo {PROBE_MARK}")
 
 
