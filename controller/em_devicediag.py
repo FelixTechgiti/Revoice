@@ -93,9 +93,12 @@ def diag_cmd() -> str:
         # below takes the OTHER of bionic's two paths — see GAI_PROBE — so
         # this is the one that answers for librespot and shairport-sync.
         f"echo \"GAI:$(printf 'getaddrinfo {DNS_PROBE_HOST} ^ 0 0 0 0 0 0\\0' "
-        f"| busybox nc -U /dev/socket/dnsproxyd 2>&1 | head -c 4)\"; "
+        # `busybox head`, not `head`: a bare name is toybox on FireOS 6 and has
+        # no `-c` (#320). This one does not fail loudly — it would return a
+        # wrong answer about DNS on exactly the platform #263 is open for.
+        f"| busybox nc -U /dev/socket/dnsproxyd 2>&1 | busybox head -c 4)\"; "
         f"echo \"PING:$(/system/bin/ping -c 1 -w 2 {DNS_PROBE_HOST} 2>&1 "
-        f"| head -1)\"; "
+        f"| busybox head -1)\"; "
         f"echo \"PORTS:$(busybox netstat -ltn 2>/dev/null "
         f"| busybox awk '{{print $4}}' | busybox tr '\\n' ' ')\"; "
         f"echo \"AP2:$([ -f {AP2_BINARY} ] && echo yes || echo no)\"; "

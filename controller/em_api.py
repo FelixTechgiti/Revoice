@@ -2915,8 +2915,21 @@ async def _pull_range_from_device(ws, path: str, offset: int, length: int,
     # it was the emOS network reflash, on its first attempt against hardware.
     #
     # The general rule: a flag is not supported because the tool is.
+    #
+    # **And a tool is not the one you mean because its name is on PATH** —
+    # the same failure one level down, hit on the very next device (#320).
+    # `head` was written bare here; on FireOS 6 that resolves to
+    # /system/bin/head, which is toybox, whose head has no `-c` at all. It
+    # answers `head: not integer: c` on stderr, the shell plane is not a pty
+    # so that lands in the same stream as the data, and b64decode then refuses
+    # a body that is an error message — reported as an unreadable partition.
+    #
+    # FireOS 5 ships toolbox, FireOS 6 ships toybox, emOS puts ours in /sbin,
+    # and /system is mounted under all of them. Which binary answers a bare
+    # name is a property of the DEVICE. So every tool in a device command is
+    # named, and tests/test_device_cmd_guard.py keeps it that way.
     read = (f"dd if={_sh_quote(path)} bs={PULL_CHUNK} skip={skip} "
-            f"count={count} 2>/dev/null | head -c {length}")
+            f"count={count} 2>/dev/null | busybox head -c {length}")
     cmd = (f"echo {_PULL_BEGIN}; "
            f"{read} | busybox base64 | busybox tr -d '\\n'; echo; "
            f"echo {_PULL_EOB}; "
