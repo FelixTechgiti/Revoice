@@ -188,6 +188,33 @@ type Nqptp struct {
 	Path   string
 	ShmDir string
 
+	// OnRestart is called after nqptp has exited, before the replacement is
+	// started. Its one job is to restart shairport-sync, and that is not
+	// tidiness — it is the difference between an AirPlay 2 receiver with a
+	// clock and one that silently has none.
+	//
+	// nqptp unlinks /dev/revoice-shm/nqptp when it exits and the replacement
+	// creates a new file. A mapping already held survives the unlink — that is
+	// what POSIX shared memory is for — so shairport-sync goes on reading the
+	// ORPHANED inode while the new nqptp writes to a fresh one, for as long as
+	// it lives. Measured 2026-09-22 (#312):
+	//
+	//	nqptp-Inode:     76920
+	//	shairport mappt: r--s 00:01 63845  /dev/revoice-shm/nqptp (deleted)
+	//
+	// Nothing reports it at either end, and the reader cannot notice: the
+	// retry loop in ptp-utilities.c reads the record twice and compares the
+	// copies until they agree, so a frozen record agrees on the first try,
+	// every time, and reads as a perfectly stable clock.
+	//
+	// Restarting the reader is the whole repair, and it needs no ordering
+	// against the new nqptp: shairport-sync retries shm_open every 50ms
+	// forever until the name exists, so it may start first.
+	//
+	// Called in a goroutine, because the caller's restart blocks and this runs
+	// on the supervise loop.
+	OnRestart func()
+
 	mu        sync.Mutex
 	running   bool
 	cancel    context.CancelFunc
@@ -447,6 +474,16 @@ func (n *Nqptp) supervise(ctx context.Context) {
 			// permanent until something else lets go, and a single line at
 			// the top of an uptime is a line nobody finds.
 			log.Printf("[airplay] nqptp exited: %v", err)
+		}
+		// The reader has to come with it, or it keeps a mapping of the file
+		// this exit just unlinked and reads a clock nobody writes. See
+		// OnRestart.
+		if n.OnRestart != nil {
+			log.Printf("[airplay] nqptp is being restarted, so the AirPlay " +
+				"receiver goes with it — its mapping is of the shared memory " +
+				"this exit unlinked, and nothing at either end would report " +
+				"it reading a clock that has stopped.")
+			go n.OnRestart()
 		}
 		if time.Since(start) > 30*time.Second {
 			backoff = restartMin
