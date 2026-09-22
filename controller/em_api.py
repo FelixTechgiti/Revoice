@@ -1482,8 +1482,25 @@ async def _post_device_config(request: web.Request) -> web.Response:
     # but scoped: only keys that REMAIN in scope can be accidentally dropped.
     # Keys leaving scope are being deliberately handed back to the fleet, and
     # flagging those would make every legitimate un-override a 409.
+    #
+    # **STATE_KEYS are excluded, and leaving them in made a device's config
+    # unsaveable for good (#325).** They are the keys a user never sets — the
+    # ring's resting colour comes from a Home Assistant light, startupVolume
+    # from every volume_state report — and em_config_sections says plainly
+    # that they are "deliberately not on a dashboard Stage". So the dashboard
+    # has no field for them and no body it sends can ever contain one.
+    #
+    # They are in `in_scope` above so a body MAY carry one, which is how the
+    # volume round trip persists. Counting them as DELETED when it does not is
+    # the other thing entirely: the moment anything wrote a ring colour, every
+    # later save from the UI was refused with a 409 naming keys the user has
+    # never heard of, and whatever they had typed was gone on the next reload.
+    #
+    # The general rule: a key that a body cannot contain is not a key that
+    # body is deleting.
     stored = await loop.run_in_executor(None, db.get_device_config, device_id)
-    stored_in_scope = {k: v for k, v in stored.items() if k in in_scope}
+    stored_in_scope = {k: v for k, v in stored.items()
+                       if k in in_scope and k not in sections_mod.STATE_KEYS}
     dropped = _dropped_keys(body, stored_in_scope)
     if dropped and not explicit_replace:
         return _error(
