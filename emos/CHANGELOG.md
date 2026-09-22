@@ -27,6 +27,18 @@ Fassung schreiben beide Hälften die Regel selbst.
 Nichts ist zu tun außer dem Update. Es lohnt sich nur zusammen mit der Firmware
 2.61.0-fx.1 — die andere Hälfte der Regel steckt dort.
 
+### Der Router darf wieder nachfragen
+
+Ein Router fragt in Abständen nach, welche Geräte bestimmte Gruppennachrichten
+noch hören wollen. Wer nicht antwortet, wird nicht mehr beliefert. Diese
+Nachfragen verwarf die Firewall bisher, weil sie zu keiner der Kategorien
+gehören, die jemand aufgezählt hatte.
+
+Ob das der Grund dafür ist, dass Geräte nach einigen Minuten aus den Pickern
+verschwanden, ist nicht belegt — auf dem Router, an dem gemessen wurde, kommen
+diese Nachfragen selten. Die Firmware repariert den Zustand ohnehin von selbst;
+dies ist die billigere Hälfte, die ihn seltener entstehen lässt.
+
 ## 0.8.0-fx.1
 
 ### emOS bringt seinen eigenen busybox mit

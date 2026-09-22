@@ -54,6 +54,11 @@ zwanzig Sekunden, danach 579.
 dem Fehler gar nicht betroffen, und die Reparatur würde sie unterbrechen — sie
 wartet, bis die Musik zu Ende ist.
 
+Dazu darf das Gerät jetzt die Nachfragen des Routers überhaupt beantworten;
+bisher verwarf die Firewall sie. Ob das den Fehler ganz verhindert, ist offen —
+auf dem Router, an dem gemessen wurde, kommen diese Nachfragen selten. Die
+Reparatur oben greift so oder so.
+
 ### Die AirPlay-Uhr überlebt jetzt einen Neustart ihres Taktgebers
 
 **Das erklärt AirPlay-2-Sitzungen, die ohne erkennbaren Grund nicht zustande
