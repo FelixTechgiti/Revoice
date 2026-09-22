@@ -12,6 +12,29 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.58.0-fx.1
+
+### Eine ausgetauschte Namensauflösung wurde nicht neu geprüft
+
+**Nur für emOS-Geräte, weiterhin eine Diagnose.**
+
+Das Gerät prüft seit 2.55.0-fx.1, ob es die Bibliothek für die
+Namensauflösung laden und benutzen kann. Diese Prüfung lief bei jeder
+*Zustandsänderung* — und „die Datei liegt da" blieb dieselbe Aussage, auch
+wenn der Controller inzwischen eine **andere** Datei dorthin geschrieben
+hatte.
+
+Genau das ist aber der Normalfall: Der Controller tauscht die Bibliothek im
+laufenden Betrieb aus. Das Ergebnis war ein Urteil, das nicht falsch war,
+sondern veraltet — und wie eine Aussage über den gerade installierten Stand
+aussah. Das ist die unangenehmere Sorte.
+
+Die Prüfung läuft jetzt auch, wenn sich die Datei ändert.
+
+**Was weiterhin offen ist:** warum Spotify und AirPlay auf emOS keine Namen
+auflösen. Diese Fassung sorgt dafür, dass die Antwort im Protokoll den
+aktuellen Stand beschreibt.
+
 ## 2.57.0-fx.1
 
 ### Das Gerät prüft jetzt, ob die Namensauflösung wirklich auflöst
