@@ -158,6 +158,12 @@ func (r Resolver) Report() map[string]any {
 	if st := SelfTest(); st != "" {
 		rep["selftest"] = st
 	}
+	// WHICH binary the verdict is about. Without it, "no self-test" is
+	// unreadable from the controller: it cannot tell a probe that ran and
+	// stayed silent from one that never had a binary to run.
+	if b := ProbedBinary(); b != "" {
+		rep["probed"] = b
+	}
 	return rep
 }
 
@@ -285,6 +291,7 @@ var (
 	logAny       bool
 	lastRefusal  string
 	lastSelfTest string
+	lastProbed   string
 )
 
 // Swapped by tests; the real linker on a device.
@@ -304,6 +311,13 @@ func SelfTest() string {
 	logMu.Lock()
 	defer logMu.Unlock()
 	return lastSelfTest
+}
+
+// ProbedBinary is the program the last verdict is about.
+func ProbedBinary() string {
+	logMu.Lock()
+	defer logMu.Unlock()
+	return lastProbed
 }
 
 // LogResolver writes one line when the shim's state CHANGES, and nothing on
@@ -342,12 +356,26 @@ func LogResolver(r Resolver, binary string) {
 			"any name until it is installed (see #263)"
 	}
 
+	// The BINARY is part of the key, and a probe that cannot run does not
+	// claim the state at all. Both halves are the same lesson, measured on
+	// 2026-09-22: three endpoint supervisors share this dedup, and the first
+	// one to arrive decided it. One of them had no binary to probe with, so
+	// it recorded "seen" without measuring anything — and the supervisor that
+	// could measure was then skipped as a repeat. The device reported "no
+	// self-test" for a library that answers perfectly well when asked.
+	//
+	// A verdict is about (state, binary). Failing to look is not a verdict.
+	key := state + "\x00" + binary
+	if strings.HasPrefix(state, "active:") && binary == "" {
+		return
+	}
+
 	logMu.Lock()
-	if logAny && logLast == state {
+	if logAny && logLast == key {
 		logMu.Unlock()
 		return
 	}
-	logAny, logLast = true, state
+	logAny, logLast = true, key
 	logMu.Unlock()
 
 	if strings.HasPrefix(state, "not_needed") {
@@ -361,7 +389,7 @@ func LogResolver(r Resolver, binary string) {
 	if strings.HasPrefix(state, "active:") {
 		refusal, selftest := resolverProbe(r.Path, binary)
 		logMu.Lock()
-		lastRefusal, lastSelfTest = refusal, selftest
+		lastRefusal, lastSelfTest, lastProbed = refusal, selftest, binary
 		logMu.Unlock()
 		switch {
 		case refusal != "":

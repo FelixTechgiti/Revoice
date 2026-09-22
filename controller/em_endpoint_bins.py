@@ -516,6 +516,7 @@ def device_state(k: Kind, live, db_path: str | None = None) -> dict:
         # rather than merely existing — everything else above says where a
         # file is.
         "selftest":      (st or {}).get("selftest"),
+        "probed":        (st or {}).get("probed"),
         "stored":        have,
         "matches_store": matches,
         # A sub-kind must stay installable while its own state is unknown or
@@ -624,10 +625,16 @@ def resolver_complaint(resolver_status) -> tuple[str, str] | None:
         return "warning", f"the name-resolution shim is not usable — {why}"
 
     selftest = rs.get("selftest") or ""
+    probed = rs.get("probed") or ""
     if not selftest:
+        # WHICH program was asked belongs in this sentence. Without it the
+        # message cannot distinguish a probe that ran and stayed silent from
+        # one that never had a binary to run, and on 2026-09-22 those two
+        # looked identical for an hour.
+        where = f" (probed {probed})" if probed else " (no binary was probed)"
         return "warning", ("shim installed and loaded, but it reported no "
-                           "self-test — firmware older than 2.57.0-fx.1, or "
-                           "the probe produced no line")
+                           f"self-test{where} — firmware older than "
+                           "2.57.0-fx.1, or the probe produced no line")
     # The shim's own line, e.g. "clienttoken.spotify.com rc=0 ip=1.2.3.4 …".
     # Padded on both sides so "rc=0" cannot match inside "rc=07".
     if " rc=0 " not in f" {selftest} ":
