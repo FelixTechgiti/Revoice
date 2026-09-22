@@ -441,7 +441,11 @@ func main() {
 	})
 	applyAirplayConfig(airplayClient, s)
 	applyFirewall()
-	startNetworkRepair(spotifyClient, airplayClient)
+	// The busy predicate is passed in rather than reached for: startNetworkRepair
+	// is about the network and has no business knowing what owns the speaker.
+	startNetworkRepair(spotifyClient, airplayClient, func() bool {
+		return dataClient.MusicPlane().Owner() != musicplane.None
+	})
 
 	// Re-execute one endpoint after its binary has been replaced. The
 	// controller decides whether to ask — it is the side that knows whether
@@ -2089,7 +2093,20 @@ func coresTotal() int {
 // is about the KERNEL; emOS answers both the same way, and a device that one
 // day loses a membership under emOS is repaired without anybody remembering
 // this comment.
-func startNetworkRepair(sp *spotify.Client, ap *airplay.Client) {
+func startNetworkRepair(sp *spotify.Client, ap *airplay.Client, busy func() bool) {
+	// The re-join, shared by both repairs below. One closure rather than two,
+	// because they repair the same thing from two different instruments and
+	// two copies would eventually differ in which endpoints they restart.
+	rejoin := func() {
+		// Restart only what is running. Restart() on a stopped endpoint
+		// would start one nobody asked for.
+		if sp.Running() {
+			sp.Restart()
+		}
+		if ap.Running() {
+			ap.Restart()
+		}
+	}
 	watcher := &mcast.Watcher{
 		Read: func() (string, error) {
 			b, err := os.ReadFile(mcast.ProcPath)
@@ -2099,16 +2116,7 @@ func startNetworkRepair(sp *spotify.Client, ap *airplay.Client) {
 		// is correctly absent when both endpoints are off, and restarting what
 		// the user switched off would be worse than the bug.
 		Active: func() bool { return sp.Running() || ap.Running() },
-		Rejoin: func() {
-			// Restart only what is running. Restart() on a stopped endpoint
-			// would start one nobody asked for.
-			if sp.Running() {
-				sp.Restart()
-			}
-			if ap.Running() {
-				ap.Restart()
-			}
-		},
+		Rejoin: rejoin,
 	}
 	go func() {
 		t := time.NewTicker(mcast.DefaultInterval)
@@ -2126,9 +2134,14 @@ func startNetworkRepair(sp *spotify.Client, ap *airplay.Client) {
 	// a shared 30s tick would either flood somebody's network while healthy or
 	// date a recovery to the nearest five minutes while deaf.
 	//
-	// It measures and logs; nothing acts on it. Same posture as `wifi.Describe`
-	// on the `no controller` lines — the mechanism is below anything this
-	// project controls, and every remedy available here is a guess.
+	// It now repairs as well as measures, and that changed on 2026-09-22 when
+	// the mechanism stopped being a guess. The AP snoops IGMP; the membership
+	// is refreshed by answering the querier's general query; that query is
+	// itself multicast. Once the AP has let the group go, the one message that
+	// would restore it can no longer arrive, so the device stays deaf until
+	// something joins afresh — measured over four minutes with an IGMP accept
+	// rule in place and the IGMP counter at zero throughout, then +579 mDNS
+	// packets in the twenty seconds after a re-join. See internal/mcast.
 	//
 	// Reading a counter rather than sending a query is not a refinement: the
 	// query version could not work on this platform at all, because FireOS
@@ -2147,6 +2160,13 @@ func startNetworkRepair(sp *spotify.Client, ap *airplay.Client) {
 			return mcast.Reading{Packets: n, Found: ok}
 		},
 		Active: func() bool { return sp.Running() || ap.Running() },
+		Repair: rejoin,
+		// A repair restarts the endpoints, so it waits for the music to stop.
+		// A session already streaming is unaffected by the device being deaf —
+		// it has its connection — so repairing through it would be the cure
+		// costing more than the disease. The prober keeps asking, so nothing
+		// is dropped; it only waits.
+		Busy: busy,
 	}
 	go prober.Run(nil)
 }
