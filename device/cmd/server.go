@@ -1567,6 +1567,12 @@ func firewallWant() []netfilter.Rule {
 			want = append(want, netfilter.NqptpRules()...)
 		}
 	}
+	// Inbound mDNS, once anything is advertised. Both endpoints need it and
+	// neither can be asked without it, so it is added once rather than by
+	// each — see netfilter.MDNSRule for why it is written at all.
+	if len(want) > 0 {
+		want = append(want, netfilter.MDNSRule())
+	}
 	// Unconditional: a device nobody can ping is a device that reads as "off
 	// the network" when it is not, and an afternoon went into that mistake.
 	want = append(want, netfilter.PingRule())

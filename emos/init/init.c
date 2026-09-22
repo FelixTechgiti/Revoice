@@ -2222,6 +2222,21 @@ static pid_t dnsproxy_start(void)
  *     way, so dropping these is a device that boots perfectly and never
  *     connects to anything. Tested by killing the server and watching it
  *     rediscover: "mDNS: found Clara server at 10.10.1.81:8767".
+ *   - udp dport 5353: mDNS QUERIES. The device is also a responder — Spotify
+ *     Connect and AirPlay are both discovered by asking it — and a query
+ *     arrives on the destination port. This line was missing until #298, and
+ *     the source-port line above was written as though finding the controller
+ *     were the whole of what mDNS is for here.
+ *
+ *     The failure it caused is the kind this file exists to prevent: an
+ *     announcement is OUTBOUND, so both services appeared in every picker on
+ *     the segment, were heard by twenty hosts, and went silent the moment a
+ *     client's cache expired and it had to ask. /proc/net/igmp had the group
+ *     and netstat had the socket throughout. The firmware did not cover it
+ *     either, because FireOS's Amazon allowlist carries this rule and
+ *     internal/netfilter inherited it rather than writing it — so on emOS the
+ *     port was closed by both halves believing the other had it. Both now
+ *     write it; a duplicate ACCEPT costs one exec.
  *
  * ICMP is allowed deliberately. It is not attack surface in any meaningful
  * sense and ping is the cheapest way to tell whether a device is alive — the
@@ -2239,12 +2254,19 @@ static void firewall(void)
         "  $T -A INPUT -i lo -j ACCEPT; "
         "  $T -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT; "
         "  $T -A INPUT -p udp --sport 5353 -j ACCEPT; "
+        "  $T -A INPUT -p udp --dport 5353 -j ACCEPT; "
         "  $T -P INPUT DROP; "
         "  $T -P FORWARD DROP; "
         "done; "
-        "iptables -I INPUT 4 -p udp --sport 67 --dport 68 -j ACCEPT; "
-        "iptables -I INPUT 5 -p icmp -j ACCEPT; "
-        "ip6tables -I INPUT 4 -p icmpv6 -j ACCEPT", NULL };
+        /* Positions 5 and 6, not 4 and 5: the -A rules above are now four, so
+         * inserting at 4 would land BEFORE the mDNS query rule rather than
+         * after it. Order does not change the outcome here — every rule is an
+         * ACCEPT and none overlaps — but a position that silently means
+         * something else after an edit is how the next line gets put in the
+         * wrong place. */
+        "iptables -I INPUT 5 -p udp --sport 67 --dport 68 -j ACCEPT; "
+        "iptables -I INPUT 6 -p icmp -j ACCEPT; "
+        "ip6tables -I INPUT 5 -p icmpv6 -j ACCEPT", NULL };
     int st = run_wait(fw);
     netlog("firewall applied status=%d\n", st);
 }

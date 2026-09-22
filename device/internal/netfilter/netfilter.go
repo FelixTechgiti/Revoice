@@ -115,6 +115,10 @@ const (
 	// naming them cannot drift from a daemon argument — there is no argument.
 	NqptpPortA = 319
 	NqptpPortB = 320
+
+	// MDNSPort is the mDNS port, fixed by RFC 6762 rather than chosen. Both
+	// responders bind it; see MDNSRule for why a rule has to name it.
+	MDNSPort = 5353
 )
 
 // Rule is one INPUT accept that belongs to us.
@@ -197,6 +201,34 @@ func NqptpRules() []Rule {
 // the next person will look for it, which is more than can be said for how
 // the whole default-DROP problem was found.
 
+// MDNSRule opens inbound mDNS, which is what lets the device be ASKED.
+//
+// **Neither half of the project opened it, because each believed the other
+// had** — measured on emOS 2026-09-22 (#298). FireOS's Amazon allowlist
+// carries `udp dpt:5353`, which is why this package never needed the rule and
+// why the header comment above lists mDNS among the things already allowed.
+// emOS has a default-deny policy of its own and allows `udp SPT:5353` only —
+// mDNS responses, so the device can find its controller. A query arrives on
+// the destination port, so on emOS every query to both responders was dropped.
+//
+// The failure is silent in the worst direction: announcements are outbound and
+// unaffected, so the service appears in a picker, is heard by the whole
+// segment, and vanishes when the client's cache expires with no way to refresh
+// it. `/proc/net/igmp` has the group and `netstat` has the socket throughout.
+//
+// So the rule is written here rather than inherited. It is a no-op wherever the
+// port is already open, which is the cheaper half of the trade: a duplicate
+// ACCEPT costs one exec at startup, and an assumption about somebody else's
+// allowlist cost #77, #298 and every hour spent on either.
+//
+// Gated on an endpoint being enabled, like the rest — the device's own
+// discovery of its controller is the client side and rides the source-port
+// rule, so a device advertising nothing does not need this open.
+func MDNSRule() Rule {
+	return Rule{Proto: "udp", Port: fmt.Sprint(MDNSPort),
+		Why: "mDNS queries, so Spotify and AirPlay can be asked as well as heard"}
+}
+
 // PingRule lets the device answer a ping.
 //
 // FireOS accepts only RELATED,ESTABLISHED ICMP, so an echo request — which is
@@ -264,6 +296,7 @@ func All() []Rule {
 	out := append([]Rule{}, SpotifyRules()...)
 	out = append(out, AirPlayRules()...)
 	out = append(out, NqptpRules()...)
+	out = append(out, MDNSRule())
 	return append(out, PingRule())
 }
 
