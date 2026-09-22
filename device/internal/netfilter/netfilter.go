@@ -142,6 +142,7 @@ const (
 type Rule struct {
 	Proto string // "tcp", "udp" or "icmp"
 	Port  string // "5000", "6001:6010"; empty only for icmp
+	Dest  string // "224.0.0.251"; empty means any destination
 	Why   string // for the log line, so a reader knows whose port this is
 }
 
@@ -310,6 +311,37 @@ func IGMPRule() Rule {
 		Why: "IGMP membership queries, so the router keeps delivering multicast"}
 }
 
+// MDNSGroup is the mDNS multicast group, fixed by RFC 6762.
+const MDNSGroup = "224.0.0.251"
+
+// MDNSMulticastRule accepts the same traffic MDNSRule does, narrowed to the
+// multicast group — and it exists for its COUNTER rather than for what it
+// permits.
+//
+// **#315's repair could not fire, because the counter it watched was not a
+// measurement of the thing that fails.** `udp dpt:5353` accepts every inbound
+// packet to that port, unicast included; the fault is that MULTICAST stops
+// arriving. Measured on a deaf device 2026-09-22, answering no mDNS query at
+// all while fourteen other hosts answered every one:
+//
+//	T0 = 2628   19:54:30
+//	T1 = 2637   20:00:22      +9 packets in 5m52s
+//
+// Two consecutive silent five-minute windows are what declare deafness, and at
+// one and a half packets a minute there are none. The device had been deaf for
+// most of an hour and its own log carried not one `[mcast]` line.
+//
+// **It must be requested AFTER MDNSRule.** `Sync` inserts each wanted rule
+// with `-I INPUT`, so the last entry ends up first in the chain — which is why
+// ICMP sits at the top on a live device. First match wins, so this one counts
+// only if it is in front; behind the general rule its counter would read zero
+// for ever, which is a broken instrument that looks like a broken network.
+// `TestTheMulticastCounterIsAskedForAfterTheGeneralRule` pins the order.
+func MDNSMulticastRule() Rule {
+	return Rule{Proto: "udp", Port: fmt.Sprint(MDNSPort), Dest: MDNSGroup,
+		Why: "mDNS multicast, counted separately so deafness can be measured"}
+}
+
 // PingRule lets the device answer a ping.
 //
 // FireOS accepts only RELATED,ESTABLISHED ICMP, so an echo request — which is
@@ -324,6 +356,9 @@ func PingRule() Rule {
 // spec is the fully-specified rule, without the -I/-C/-D verb.
 func (r Rule) spec() []string {
 	a := []string{"INPUT", "-i", iface, "-p", r.Proto}
+	if r.Dest != "" {
+		a = append(a, "-d", r.Dest)
+	}
 	switch {
 	case r.Proto == "icmp":
 		a = append(a, "--icmp-type", "echo-request")
@@ -383,6 +418,7 @@ func All() []Rule {
 	out = append(out, NqptpRules()...)
 	out = append(out, AirPlay2SessionRules()...)
 	out = append(out, MDNSRule())
+	out = append(out, MDNSMulticastRule())
 	out = append(out, IGMPRule())
 	return append(out, PingRule())
 }

@@ -3,6 +3,7 @@ package netfilter
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -371,5 +372,93 @@ func TestTurningTheClockDaemonOffClosesItsPorts(t *testing.T) {
 		if f.count(r) != 0 {
 			t.Fatalf("PTP port left open with no daemon behind it: %s", r)
 		}
+	}
+}
+
+func TestTheMulticastCounterIsAskedForAfterTheGeneralRule(t *testing.T) {
+	// Sync inserts each wanted rule with `-I INPUT`, so the LAST entry ends up
+	// FIRST in the chain — which is why ICMP sits at the top on a live device.
+	// First match wins, so the narrow multicast rule counts only while it is
+	// in front of the general one. Behind it, its counter reads zero for ever:
+	// a broken instrument that looks exactly like a broken network.
+	//
+	// That is a property of a list's ORDER, which is the kind of thing a tidy
+	// reorder breaks without any test noticing. Hence this one, on the source,
+	// since firewallWant lives in cmd and cannot be imported (cgo).
+	src, err := os.ReadFile(filepath.Join("..", "..", "cmd", "server.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	start := strings.Index(body, "func firewallWant() []netfilter.Rule {")
+	if start < 0 {
+		t.Fatal("firewallWant() is gone")
+	}
+	want := body[start : start+strings.Index(body[start:], "\n}")]
+
+	general := strings.Index(want, "netfilter.MDNSRule()")
+	multicast := strings.Index(want, "netfilter.MDNSMulticastRule()")
+	if general < 0 || multicast < 0 {
+		t.Fatalf("firewallWant no longer asks for both mDNS rules "+
+			"(general=%d multicast=%d)", general, multicast)
+	}
+	if multicast < general {
+		t.Fatal("MDNSMulticastRule is requested BEFORE MDNSRule, so Sync puts " +
+			"it behind the general rule in the chain and its counter can only " +
+			"ever read zero — the deafness probe would then report a healthy " +
+			"device as permanently deaf (#328)")
+	}
+}
+
+func TestTheMulticastRuleNamesTheGroup(t *testing.T) {
+	spec := strings.Join(MDNSMulticastRule().spec(), " ")
+	if !strings.Contains(spec, "-d "+MDNSGroup) {
+		t.Fatalf("the multicast rule does not name the group: %s", spec)
+	}
+	if !strings.Contains(spec, "--dport 5353") {
+		t.Fatalf("the multicast rule does not name the port: %s", spec)
+	}
+	// The general rule must stay general, or unicast mDNS stops being accepted
+	// and the device can no longer be asked directly.
+	if strings.Contains(strings.Join(MDNSRule().spec(), " "), "-d ") {
+		t.Fatal("the general mDNS rule has grown a destination, so unicast " +
+			"queries are no longer accepted")
+	}
+}
+
+func TestPacketsForDestSeparatesMulticastFromTheTotal(t *testing.T) {
+	// The shape a device carries once both rules are in: the narrow rule
+	// counts the multicast, the general one counts what is left.
+	listing := "Chain INPUT (policy DROP 0 packets, 0 bytes)\n" +
+		"    pkts      bytes target     prot opt in     out     source               destination\n" +
+		"      11      900 ACCEPT     udp  --  wlan0  *       0.0.0.0/0            224.0.0.251          udp dpt:5353\n" +
+		"    2637   210000 ACCEPT     udp  --  wlan0  *       0.0.0.0/0            0.0.0.0/0            udp dpt:5353\n"
+
+	mc, ok := PacketsForDest(listing, "udp", "5353", "wlan0", MDNSGroup)
+	if !ok || mc != 11 {
+		t.Fatalf("multicast count = %d (found=%v), wanted 11", mc, ok)
+	}
+	// PacketsFor keeps its own contract: it sums, which is right for "is this
+	// port reachable" and wrong for this instrument.
+	total, _ := PacketsFor(listing, "udp", "5353", "wlan0")
+	if total != 2648 {
+		t.Fatalf("PacketsFor = %d, wanted the sum 2648 — its contract changed", total)
+	}
+	if mc == total {
+		t.Fatal("the multicast reading equals the total, so the two rules are " +
+			"not being told apart and #328 is back")
+	}
+}
+
+func TestADeviceWithOnlyTheGeneralRuleReadsAsUNKNOWN(t *testing.T) {
+	// Firmware in the field has only the general rule. Reading that as a
+	// multicast count of zero would report every un-updated device as
+	// permanently deaf and restart its endpoints every ten minutes for ever —
+	// the failure #318 pinned, arriving by a different door.
+	listing := "    2637   210000 ACCEPT     udp  --  wlan0  *       0.0.0.0/0" +
+		"            0.0.0.0/0            udp dpt:5353\n"
+	if n, ok := PacketsForDest(listing, "udp", "5353", "wlan0", MDNSGroup); ok {
+		t.Fatalf("found=%v n=%d — a chain without the multicast rule must read "+
+			"as cannot-tell, not as silence", ok, n)
 	}
 }
