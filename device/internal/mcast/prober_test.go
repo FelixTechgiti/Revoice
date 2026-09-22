@@ -265,3 +265,113 @@ func TestTheSilentCadenceIsTheFastOne(t *testing.T) {
 		t.Fatalf("silent=%s is not faster than healthy=%s", SilentInterval, HealthyInterval)
 	}
 }
+
+// deafProber returns a Prober that always reads a stalled counter, plus the
+// repair count it drives.
+func deafProber(t *testing.T) (*Prober, *int) {
+	t.Helper()
+	n := 0
+	p := &Prober{
+		Sample: func() Reading { return Reading{Packets: 7, Found: true} },
+		Repair: func() { n++ },
+	}
+	return p, &n
+}
+
+// Walk the prober far enough to be deaf, then on for the requested span.
+func run(p *Prober, from time.Time, span, step time.Duration) {
+	for d := time.Duration(0); d <= span; d += step {
+		p.Tick(from.Add(d))
+	}
+}
+
+func TestADeafProberRejoins(t *testing.T) {
+	p, n := deafProber(t)
+	run(p, time.Unix(0, 0), 30*time.Minute, time.Minute)
+	if *n == 0 {
+		t.Fatal("stayed deaf for half an hour and never re-joined — this is the " +
+			"whole of #142, and the fault does not clear on its own")
+	}
+}
+
+func TestRepairKeepsTryingWhileDeaf(t *testing.T) {
+	// EventDeaf fires once per episode and the fault is self-locking, so a
+	// repair hung on the transition gets one attempt per boot. If the first
+	// restart does not take, that is a device deaf until somebody reboots it.
+	p, n := deafProber(t)
+	p.RepairEvery = 5 * time.Minute
+	run(p, time.Unix(0, 0), 60*time.Minute, time.Minute)
+	if *n < 3 {
+		t.Fatalf("re-joined %d times in an hour of deafness, wanted several — "+
+			"a single attempt per episode is one attempt per boot", *n)
+	}
+}
+
+func TestRepairIsBounded(t *testing.T) {
+	// The Watcher's backoff exists because restarting two subprocesses every
+	// interval on a board sharing 512MB with Android is a fault of its own.
+	p, n := deafProber(t)
+	p.RepairEvery = 10 * time.Minute
+	run(p, time.Unix(0, 0), 30*time.Minute, 10*time.Second)
+	if *n > 4 {
+		t.Fatalf("re-joined %d times in 30 minutes with a 10-minute bound", *n)
+	}
+}
+
+func TestNoRepairWhileAudioIsPlaying(t *testing.T) {
+	// A repair restarts the endpoints. Deafness costs a session in progress
+	// nothing — it already has its connection — so cutting somebody's music to
+	// fix it is the repair being worse than the fault.
+	p, n := deafProber(t)
+	p.Busy = func() bool { return true }
+	run(p, time.Unix(0, 0), 60*time.Minute, time.Minute)
+	if *n != 0 {
+		t.Fatalf("restarted the endpoints %d times during playback", *n)
+	}
+}
+
+func TestPlaybackDefersRatherThanCancels(t *testing.T) {
+	playing := true
+	n := 0
+	p := &Prober{
+		Sample: func() Reading { return Reading{Packets: 7, Found: true} },
+		Repair: func() { n++ },
+		Busy:   func() bool { return playing },
+	}
+	base := time.Unix(0, 0)
+	run(p, base, 30*time.Minute, time.Minute)
+	if n != 0 {
+		t.Fatal("repaired while busy")
+	}
+	playing = false
+	run(p, base.Add(31*time.Minute), 30*time.Minute, time.Minute)
+	if n == 0 {
+		t.Fatal("never repaired after playback ended — a deferred repair that " +
+			"is dropped leaves the device deaf until the next reboot")
+	}
+}
+
+func TestAProberWithNoRepairIsStillTheInstrument(t *testing.T) {
+	// The repair is optional, and a caller that supplies none must keep the
+	// logging behaviour this package had before it.
+	p := &Prober{Sample: func() Reading { return Reading{Packets: 7, Found: true} }}
+	run(p, time.Unix(0, 0), 30*time.Minute, time.Minute)
+	if p.Repairs() != 0 {
+		t.Fatalf("counted %d repairs with no Repair set", p.Repairs())
+	}
+	if !p.Tracker.Deaf() {
+		t.Fatal("did not notice the stalled counter")
+	}
+}
+
+func TestAHealthyProberNeverRepairs(t *testing.T) {
+	n, packets := 0, int64(0)
+	p := &Prober{
+		Sample: func() Reading { packets += 50; return Reading{Packets: packets, Found: true} },
+		Repair: func() { n++ },
+	}
+	run(p, time.Unix(0, 0), 60*time.Minute, time.Minute)
+	if n != 0 {
+		t.Fatalf("restarted the endpoints %d times on a healthy device", n)
+	}
+}
