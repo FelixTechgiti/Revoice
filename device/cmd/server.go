@@ -1595,6 +1595,13 @@ func firewallWant() []netfilter.Rule {
 	// each — see netfilter.MDNSRule for why it is written at all.
 	if len(want) > 0 {
 		want = append(want, netfilter.MDNSRule())
+		// AFTER the general rule, and the order is load-bearing: Sync inserts
+		// with `-I INPUT`, so the last entry ends up first in the chain and
+		// first match wins. Behind the general rule this counter reads zero
+		// for ever, which the deafness probe would read as a permanently deaf
+		// device (#328). Pinned by TestTheMulticastCounterIsAskedForAfter
+		// TheGeneralRule.
+		want = append(want, netfilter.MDNSMulticastRule())
 	}
 	// Unconditional, both of them.
 	//
@@ -2182,7 +2189,12 @@ func startNetworkRepair(sp *spotify.Client, ap *airplay.Client, busy func() bool
 			if err != nil {
 				return mcast.Reading{Err: err}
 			}
-			n, ok := netfilter.PacketsFor(listing, "udp", mcast.MDNSPort, mcast.Iface)
+			// The MULTICAST counter, not the port's total. The general
+			// `dpt:5353` rule accepts unicast too, and reading it meant a deaf
+			// device looked healthy on the strength of a handful of unicast
+			// packets a minute — so the repair below could never fire (#328).
+			n, ok := netfilter.PacketsForDest(listing, "udp", mcast.MDNSPort,
+				mcast.Iface, netfilter.MDNSGroup)
 			return mcast.Reading{Packets: n, Found: ok}
 		},
 		Active: func() bool { return sp.Running() || ap.Running() },

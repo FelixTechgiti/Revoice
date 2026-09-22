@@ -90,6 +90,42 @@ func PacketsFor(listing, proto, port, iface string) (int64, bool) {
 	return total, found
 }
 
+// PacketsForDest is PacketsFor narrowed to one destination address, and it
+// exists because summing is the wrong answer for an INSTRUMENT.
+//
+// PacketsFor deliberately totals every matching rule, which is right for "is
+// this port reachable". The deafness probe asks a different question — "is
+// MULTICAST arriving" — and on a chain carrying both a multicast rule and a
+// general one, the sum is the number that could not tell them apart (#328).
+//
+// The destination is column 8 in iptables' own listing and is matched exactly:
+// a rule with no `-d` prints `0.0.0.0/0`, which must never satisfy a request
+// for the group.
+func PacketsForDest(listing, proto, port, iface, dest string) (int64, bool) {
+	var total int64
+	var found bool
+	want := "dpt:" + port
+	for _, line := range strings.Split(listing, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 10 {
+			continue
+		}
+		n, err := strconv.ParseInt(f[0], 10, 64)
+		if err != nil {
+			continue
+		}
+		if f[2] != "ACCEPT" || f[3] != proto || f[5] != iface || f[8] != dest {
+			continue
+		}
+		if !hasExact(f[9:], want) {
+			continue
+		}
+		total += n
+		found = true
+	}
+	return total, found
+}
+
 // hasExact looks for the option as a whole field. `dpt:5353` must not be
 // satisfied by `dpts:5000:5353` or by `spt:5353` — a source port is the other
 // direction, and a range that happens to end here is a different rule. Same
