@@ -54,6 +54,18 @@ zwanzig Sekunden, danach 579.
 dem Fehler gar nicht betroffen, und die Reparatur würde sie unterbrechen — sie
 wartet, bis die Musik zu Ende ist.
 
+### Die AirPlay-Uhr überlebt jetzt einen Neustart ihres Taktgebers
+
+**Das erklärt AirPlay-2-Sitzungen, die ohne erkennbaren Grund nicht zustande
+kamen, obwohl vorher alles lief.** AirPlay 2 braucht einen zweiten Dienst, der
+die Uhrzeit vorgibt. Startete dieser Dienst aus irgendeinem Grund neu, las der
+Empfänger danach eine Uhr weiter, die niemand mehr stellte — und konnte das
+nicht bemerken, weil ein stehengebliebener Wert sich für ihn wie ein besonders
+stabiler liest.
+
+Gefunden hat man das nur zufällig; gemeldet wurde es an keiner Stelle. Ab dieser
+Fassung wird der Empfänger mit seinem Taktgeber zusammen neu gestartet.
+
 ### Was zusätzlich nötig ist
 
 Die passenden Endpunkt-Programme kommen mit `endpoints-v1.20.0`. Darin steckt
