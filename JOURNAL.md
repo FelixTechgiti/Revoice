@@ -3836,3 +3836,69 @@ Updates-Reiter ruft `install_needed` direkt und hätte die Datei installiert;
 kaputt war nur der automatische Pfad. Das ist der Grund, warum es eine
 Fehlfunktion war und kein Ausfall — und auch der Grund, warum es ohne einen
 Blick ins Log niemandem aufgefallen wäre.
+
+## 2026-09-22 — Der Shim löst auf, und der Weg dahin war fünfmal das Instrument
+
+**Spotify Connect läuft wieder.** Gemessen auf G090L91180250AN1 um 14:45:05:
+
+    resolver: shim resolving — clienttoken.spotify.com
+    ghbn=null rc=0 ip=35.186.224.24 entries=1
+
+librespot hat seit 14:39:22 keinen Fehler mehr geschrieben, wo er tagelang
+jede Minute gescheitert war.
+
+### Der Befund, auf den alles hinauslief
+
+**`ghbn=null`.** `gethostbyname` liefert in librespots Prozess nichts.
+
+Der Shim war auf genau diesen Aufruf gebaut, weil er am 2026-09-21 in *nqptp*
+als funktionierend gemessen worden war — per `gaiprobe.so`. Diese Messung war
+richtig und hat sich nicht verallgemeinert. Beide Einstiegspunkte von bionics
+Resolver sind auf emOS unbrauchbar; den anderen zu nehmen hieß, den Ast zu
+wechseln statt den Baum zu verlassen.
+
+`gaishim.so` liest jetzt `/etc/resolv.conf` und fragt den Nameserver selbst per
+UDP — dasselbe Gespräch, das `dns_lookup_a` in `emos/init/init.c` führt, nur
+aus dem Prozess des Endpunkts heraus. Nichts im Pfad berührt noch
+`/dev/socket/dnsproxyd`, bionics Resolver oder Amazon-Code. `gethostbyname`
+bleibt Rückfall für eine Plattform ohne `resolv.conf`.
+
+**Warum es in nqptp funktionierte und in librespot nicht, ist unerklärt.** Das
+ist der Rest, den #263 offen behält, neben der eigentlichen Frage: `getaddrinfo`
+auf emOS ist nicht repariert, sondern umgangen — für die drei Programme, die
+wir selbst starten. Jedes andere bionic-Programm auf dem Gerät kann weiterhin
+keinen Namen auflösen.
+
+### Fünf Runden, fünfmal das Messgerät
+
+Das ist der Teil, der sich verallgemeinert. Jede Firmware-Runde fand einen
+Fehler in der **Messkette** statt im Gemessenen, und keiner davon war durch
+Nachdenken zu finden — nur dadurch, dass die Messung selbst etwas ausgab:
+
+| Fassung | was falsch war |
+|---|---|
+| 2.56.0 | Der Probe fragte eine **64-Bit**-Shell nach einer 32-Bit-Bibliothek. Dieselbe Falle, die #263 schon aufgeschrieben hatte, eine Ebene höher |
+| 2.57.0 | Routinemeldungen des Linkers (`unused DT entry`) wurden als **Ablehnung** gelesen — ein Fehlurteil über eine Bibliothek, die sauber lud |
+| 2.58.0 | Ein **ausgetauschter** Shim wurde nie neu geprüft; das Urteil beschrieb die vorherige Datei und sah aus wie eine Aussage über die aktuelle |
+| 2.59.0 | Ein Aufseher **ohne Binärpfad** belegte die Entsperrung und brachte den zum Schweigen, der hätte messen können |
+| Controller 2.68.0 | `resolver_status` wurde beim Empfang **weggeworfen** — vier Firmware-Releases lang meldete das Gerät korrekt und das Dashboard sagte, es habe geschwiegen |
+
+Die drei letzten haben dieselbe Form: **Nicht hinsehen zu können ist kein
+Urteil.** Ein Vorfilter, der vor der Messung greift; eine Entsperrung, die vor
+der Messung greift; ein Empfänger, der die Antwort nicht abholt. Jedes Mal war
+das Ergebnis nicht „kaputt", sondern „hat nichts gesagt" — und jedes Mal
+suchte die nächste Stunde an der falschen Stelle.
+
+**Der teuerste Einzelposten war der Controller-Fehler**, weil er stromabwärts
+lag: Vier Firmware-Runden bauten auf einer Auskunft auf, die nie ankam. Der
+Test dagegen liest `em_controller.py` als Quelltext und prüft für *jede* Art,
+dass ihr `status_attr` aus der Anmeldung zugewiesen wird — die Suite kann das
+Modul nicht importieren, und eine fehlende Zuweisung sieht aus wie nichts.
+
+### Was am selben Tag noch auffiel
+
+Ein zweites Gerät kam dazu (G090LF11743202AM, amonet v2.0.0) und führte
+`shairport-sync-ap2` zum ersten Mal überhaupt aus. Es startet nicht:
+`CANNOT LINK EXECUTABLE … library "libandroid.so" not found`, im Minutentakt,
+während ein funktionierender klassischer Empfänger danebenliegt. Das ist #295
+und hat mit dem Resolver nichts zu tun.
