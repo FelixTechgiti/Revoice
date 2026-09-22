@@ -119,6 +119,23 @@ const (
 	// MDNSPort is the mDNS port, fixed by RFC 6762 rather than chosen. Both
 	// responders bind it; see MDNSRule for why a rule has to name it.
 	MDNSPort = 5353
+
+	// AirPlay2SessionBase/Count is the range an AirPlay 2 session's own
+	// sockets are taken from. Chosen to sit immediately above the classic RTP
+	// range so the two read as one block, and pinned here because the
+	// alternative is what the long comment below used to describe: ports the
+	// kernel picks, which no rule can name.
+	//
+	// shairport-sync is told the same numbers through the environment and
+	// walks the range itself — see device/shairport/compat/ap2_ports.h. One
+	// definition, so the rule and the listener cannot drift.
+	//
+	// Ten for a protocol that binds four sockets per session: enough for a
+	// session to start while the previous one's sockets are still in
+	// TIME_WAIT, which is the case a range of four would fail on and nobody
+	// would connect to a range.
+	AirPlay2SessionBase  = 6011
+	AirPlay2SessionCount = 10
 )
 
 // Rule is one INPUT accept that belongs to us.
@@ -169,8 +186,14 @@ func NqptpRules() []Rule {
 	}
 }
 
-// # AirPlay 2 needs inbound ports THAT CANNOT BE NAMED, and no rule here
-// closes that gap
+// # AirPlay 2's per-session ports, and how they came to be nameable
+//
+// **This section described an unsolved problem until #79, and the paragraphs
+// below are kept because the reasoning is what the answer was chosen from.**
+// What changed is the last line of it: shairport-sync now takes those sockets
+// from AirPlay2SessionBase/Count instead of from the kernel, so
+// AirPlay2SessionRules can name them. The patch is one rename plus a wrapper
+// in device/shairport/ap2/in-container.sh; the analysis stands as written.
 //
 // Read off rtsp.c on 2026-09-12, and unchanged between 4.3.7 and 5.5.1, so it
 // is not something a version bump fixes:
@@ -197,9 +220,34 @@ func NqptpRules() []Rule {
 //     narrowest answer and the only one that stays narrow, at the cost of a
 //     patch this build has so far avoided entirely.
 //
-// Nothing here implements any of them, deliberately. It is written down where
-// the next person will look for it, which is more than can be said for how
-// the whole default-DROP problem was found.
+// The third was chosen, 2026-09-22. It is the only one that stays narrow: the
+// first opens roughly 28,000 ports on somebody's home network for a music
+// session, and the second changes every other process on the device to avoid
+// doing so. The cost is the first real patch to shairport-sync's own source in
+// this build — guarded so that it fails the build rather than silently
+// stopping to apply, because a binary that looks right and stalls every
+// session is exactly the failure being removed.
+
+// AirPlay2SessionRules are the per-session sockets, which are TCP and UDP over
+// the same range — event and buffered audio are SOCK_STREAM, ap2_control is
+// SOCK_DGRAM, and which lands where is up to the order a session binds them
+// in. So both protocols are opened over the whole range rather than guessed
+// at: a rule that is right for the sockets one session happened to bind is a
+// rule that is wrong for the next.
+//
+// Separate from AirPlayRules for NqptpRules' reason — a classic receiver binds
+// none of these, and opening twenty ports for sockets that will never exist is
+// a hole with nothing behind it.
+func AirPlay2SessionRules() []Rule {
+	r := fmt.Sprintf("%d:%d", AirPlay2SessionBase,
+		AirPlay2SessionBase+AirPlay2SessionCount-1)
+	return []Rule{
+		{Proto: "tcp", Port: r,
+			Why: "AirPlay 2 session event and buffered-audio sockets"},
+		{Proto: "udp", Port: r,
+			Why: "AirPlay 2 session control socket"},
+	}
+}
 
 // MDNSRule opens inbound mDNS, which is what lets the device be ASKED.
 //
@@ -296,6 +344,7 @@ func All() []Rule {
 	out := append([]Rule{}, SpotifyRules()...)
 	out = append(out, AirPlayRules()...)
 	out = append(out, NqptpRules()...)
+	out = append(out, AirPlay2SessionRules()...)
 	out = append(out, MDNSRule())
 	return append(out, PingRule())
 }

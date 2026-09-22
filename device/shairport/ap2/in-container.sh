@@ -278,7 +278,10 @@ say "the compat shims"
 # had them exiting once a minute on a real device (#218); tinysvc_txt.c is the
 # TXT string encoder tinysvcmdns should have had, and without it the responder
 # thread dereferences a NULL on its first announcement because AirPlay 2's
-# `pk=` record is longer than a DNS name label may be (#229).
+# `pk=` record is longer than a DNS name label may be (#229); ap2_ports.c is
+# the port range an AirPlay 2 session's sockets are taken from, so the firewall
+# can name them (#79) — without it a session negotiates and then carries no
+# audio on any device with a default-DROP policy, which is all of them.
 "$CC" -c -O2 -fPIC -I/compat /compat/android_compat.c   -o /build/android_compat.o
 "$CC" -c -O2 -fPIC -I/compat /compat/android_ifaddrs.c  -o /build/android_ifaddrs.o
 "$CC" -c -O2 -fPIC -I/compat /compat/android_shm.c      -o /build/android_shm.o
@@ -286,10 +289,11 @@ say "the compat shims"
 "$CC" -c -O2 -fPIC -I/compat /compat/android_localhost.c -o /build/android_localhost.o
 "$CC" -c -O2 -fPIC -I/compat /compat/mdns_ap2.c         -o /build/mdns_ap2.o
 "$CC" -c -O2 -fPIC -I/compat /compat/tinysvc_txt.c      -o /build/tinysvc_txt.o
+"$CC" -c -O2 -fPIC -I/compat /compat/ap2_ports.c        -o /build/ap2_ports.o
 llvm-ar rcs "$PREFIX/lib/libemcompat.a" \
     /build/android_compat.o /build/android_ifaddrs.o /build/android_shm.o \
     /build/android_uuid.o /build/android_localhost.o /build/mdns_ap2.o \
-    /build/tinysvc_txt.o
+    /build/tinysvc_txt.o /build/ap2_ports.o
 
 # `-luuid` has to resolve, because configure probes for it by name. The symbols
 # are in libemcompat.a; this archive is what makes the -l work, the same trick
@@ -383,6 +387,31 @@ cd shairport-sync
 # ap2name and secondary_txt_records and declares both
 # __attribute__((unused)). See compat/mdns_tinysvcmdns.c.
 cp /compat/mdns_tinysvcmdns.c mdns_tinysvcmdns.c
+
+# Take AirPlay 2's per-session sockets from a range a firewall rule can name
+# (#79). Unlike the mDNS backend this is a PATCH and not a whole file: common.c
+# is large, central and nothing to do with us, so owning a copy of it would
+# mean re-reading upstream's diff on every bump to keep a file we did not want.
+#
+# The edit is a rename, so the original function is preserved byte for byte and
+# only answers to a different name; the wrapper appended below is the whole of
+# what we add. Every one of the four sites that asks for "any port" —
+# local_event_port twice, local_ap2_control_port and local_buffered_audio_port
+# — goes through this one function, which is why the patch is one line.
+#
+# Guarded, because a silent no-op here ships a binary that looks right and
+# stalls every session: the rename either matches exactly one definition or the
+# build stops. The signature is checked rather than the name alone, since a
+# future common.c could plausibly keep the name and change the arguments — and
+# then the wrapper would not compile, which is the failure we want, but the
+# message would be about a type rather than about this patch.
+found=$(grep -cE '^int bind_socket_and_port\(int type, int ip_family, const char \*self_ip_address, uint32_t scope_id,$' common.c)
+if [ "$found" != 1 ]; then
+    echo "common.c has $found definitions matching the expected bind_socket_and_port signature, not 1 — the patch below no longer matches, and AirPlay 2 would ship taking kernel-chosen ports again (#79)" >&2
+    exit 1
+fi
+sed -i 's/^int bind_socket_and_port(int type,/int em_bind_socket_and_port_once(int type,/' common.c
+cat /compat/ap2_ports_wrapper.c >> common.c
 
 autoreconf -fi
 

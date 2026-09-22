@@ -1565,6 +1565,9 @@ func firewallWant() []netfilter.Rule {
 		// there is a hole with nothing behind it.
 		if nqptp.Running() {
 			want = append(want, netfilter.NqptpRules()...)
+			// The session's own sockets, on the same gate: only an AirPlay 2
+			// receiver binds them, and nqptp running is what says this is one.
+			want = append(want, netfilter.AirPlay2SessionRules()...)
 		}
 	}
 	// Inbound mDNS, once anything is advertised. Both endpoints need it and

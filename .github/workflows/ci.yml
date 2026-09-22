@@ -806,6 +806,78 @@ jobs:
             device/shairport/compat/mdnscheck.c
           /tmp/mdnscheck
 
+      # The port range an AirPlay 2 session's own sockets are taken from
+      # (#79). Every rejection here falls back to upstream's "ask the kernel",
+      # which on a default-DROP device is a session that negotiates and then
+      # plays nothing — so a value wrongly rejected and one wrongly accepted
+      # look identical from outside, and this is the only place the difference
+      # is visible.
+      - name: The AirPlay 2 session port range is parsed as the firewall assumes
+        run: |
+          cc -O2 -Wall -Wextra -o /tmp/ap2portscheck \
+            device/shairport/compat/ap2portscheck.c
+          /tmp/ap2portscheck
+
+      # The wrapper that patch puts into shairport-sync's common.c, driven
+      # against stubs. It cannot be compiled here in its real context — that
+      # needs the cross toolchain and the whole checkout — but its LOGIC can,
+      # and the logic is where "walks the range" turns into "takes the first
+      # port and gives up" without anything failing.
+      - name: The bind_socket_and_port wrapper walks the range
+        run: |
+          d=$(mktemp -d)
+          cp device/shairport/compat/ap2_ports.h "$d/"
+          cp device/shairport/compat/ap2_ports.c "$d/"
+          cat > "$d/stub.c" <<'STUB'
+          #include <stdarg.h>
+          #include <stdint.h>
+          #include <stdio.h>
+          void warn(const char *fmt, ...) {
+            va_list a; va_start(a, fmt); vfprintf(stderr, fmt, a); va_end(a);
+          }
+          int em_bind_socket_and_port_once(int, int, const char *, uint32_t, uint16_t *, int *);
+          STUB
+          cat "$d/stub.c" device/shairport/compat/ap2_ports_wrapper.c > "$d/patched.c"
+          cat > "$d/drive.c" <<'DRIVE'
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          int bind_socket_and_port(int, int, const char *, uint32_t, uint16_t *, int *);
+          /* 6011 and 6012 taken, 6013 free, so the walk has to happen. */
+          int em_bind_socket_and_port_once(int t, int f, const char *ip, uint32_t s,
+                                           uint16_t *port, int *sock) {
+            (void)t; (void)f; (void)ip; (void)s;
+            if (*port == 0) { *port = 40001; *sock = 99; return 0; }
+            if (*port < 6013) return 98;
+            *sock = (int)*port; return 0;
+          }
+          static int bad = 0;
+          static void want(const char *what, uint16_t got, uint16_t expect) {
+            printf("%-46s %u %s\n", what, got, got == expect ? "ok" : "FAIL");
+            if (got != expect) bad = 1;
+          }
+          int main(void) {
+            uint16_t p; int s;
+            setenv("REVOICE_AP2_PORT_BASE", "6011", 1);
+            setenv("REVOICE_AP2_PORT_COUNT", "10", 1);
+            p = 0; bind_socket_and_port(1, 2, "x", 0, &p, &s);
+            want("walks past two busy ports", p, 6013);
+            p = 5000; bind_socket_and_port(1, 2, "x", 0, &p, &s);
+            want("a named port is left alone", p, 5000);
+            unsetenv("REVOICE_AP2_PORT_BASE"); unsetenv("REVOICE_AP2_PORT_COUNT");
+            p = 0; bind_socket_and_port(1, 2, "x", 0, &p, &s);
+            want("no range -> upstream behaviour", p, 40001);
+            setenv("REVOICE_AP2_PORT_BASE", "6011", 1);
+            setenv("REVOICE_AP2_PORT_COUNT", "2", 1);
+            p = 0; bind_socket_and_port(1, 2, "x", 0, &p, &s);
+            want("exhausted -> loud fallback", p, 40001);
+            return bad;
+          }
+          DRIVE
+          cc -O2 -Wall -Wextra -I"$d" -o "$d/wt" \
+            "$d/patched.c" "$d/ap2_ports.c" "$d/drive.c"
+          "$d/wt"
+
       # The uuid shim. shairport-sync uses three libuuid functions at one site
       # to mint the AirPlay identifier that goes in `pi=`; bionic has no
       # libuuid and util-linux is the wrong size of dependency for it. Nothing
