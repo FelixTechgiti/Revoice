@@ -1,5 +1,67 @@
 # emOS changelog
 
+## 0.8.0-fx.1
+
+### emOS bringt seinen eigenen busybox mit
+
+**Auf einem FireOS-6-Gerät hing die Netzwerkverbindung an einem Programm, das
+gar nicht zu emOS gehörte.** emOS startet DHCP über `/sbin/udhcpc`, und udhcpc
+ist ein busybox-Applet — mitgeliefert wurde aber nie eines. Auf dem ersten
+v2-Gerät fiel das nicht auf, weil die *optionale* Root-Komponente von
+amonet-biscuit 2.0.0 zufällig einen busybox hinterlassen hatte. Ein sauberes
+FireOS 6 hat nur toybox und gar keinen busybox. Dort bootete emOS, steuerte den
+Funkchip an, meldete sich am WLAN an — und bekam nie eine Adresse.
+
+Betroffen war mehr als DHCP: `ntpd`, `syslogd`/`klogd` und das `awk`, mit dem
+`em-wifi` einen Scan liest, suchten alle über denselben Weg.
+
+Ab dieser Fassung liegt ein eigener busybox im Image, und er wird auf jedem
+Layout **zuerst** gefunden. Das ist der Unterschied zwischen „irgendein
+busybox unbekannter Herkunft, den ein Reflash entfernen kann" und einem, der
+zum Image gehört. Auf dem Zweitgerät mit einem absichtlich untergeschobenen
+busybox gegengeprüft: unserer gewinnt.
+
+Nebenbei zwei Dinge an der Root-Konsole, die es immer schon gab: `ANDROID_DATA`
+ist jetzt gesetzt, also entfällt die doppelte tzdata-Warnung vor jeder Ausgabe,
+und eine nicht startbare Shell meldet einmal `svc console absent`, statt sich
+endlos neu zu starten.
+
+### Jedes Gerät meldet wieder seine eigene Seriennummer
+
+**Geräte auf amonet 2.x meldeten gar keine** — und weil die Flotte darauf
+schlüsselt, trugen sie sich alle als dasselbe `unknown-device` ein und
+überschrieben gegenseitig ihre Einträge, ohne dass irgendetwas davon berichtete.
+
+Die Ursache war eine Längengrenze, nicht amonet: FireOS 6 fährt den 32-Bit-Kernel,
+dort ist die Kommandozeile auf 1024 Zeichen begrenzt, und `androidboot.serialno`
+begann erst bei Byte 1040. Unter FireOS 5 (64 Bit, Grenze 2048) passte dieselbe
+Zeile — deshalb sah es nach einem amonet-2.x-Problem aus.
+
+emOS liest die Nummer jetzt aus `/proc/idme/serial`, wo die Hardware sie führt.
+Die bisherigen Quellen bleiben als Rückfall erhalten. Eine unplausible Nummer
+wird verworfen statt weitergereicht: zwei Geräte mit einer Identität sind
+teurer als ein Gerät ohne.
+
+### WLAN-Namen, die der Standard erlaubt, funktionieren jetzt auch
+
+Ein WLAN-Name darf 0 bis 32 beliebige Bytes lang sein. `em-wifi` zerlegte die
+Scan-Ergebnisse an Leerzeichen — aus `Mein Heim WLAN` wurde `Mein` — und gab
+die Escape-Sequenzen des Supplicants als Namen weiter, sodass aus `Café` das
+andere Netz `Caf\xc3\xa9` wurde. Namen werden jetzt durchgehend als Bytes
+behandelt.
+
+### Was du merkst
+
+- **FireOS 6 lässt sich überhaupt einrichten.** Ohne den mitgelieferten busybox
+  gibt es auf einem sauberen FireOS 6 kein DHCP, und der Controller lehnt es
+  seit 2.70.0-fx.1 ab, ein solches Image überhaupt zu bauen (#290).
+- Geräte auf amonet 2.x erscheinen mit ihrer echten Seriennummer statt als
+  `unknown-device`, und mehrere davon kommen sich nicht mehr gegenseitig in die
+  Quere.
+- WLANs mit Leerzeichen, Apostroph oder Umlaut im Namen werden richtig gefunden
+  und verbunden.
+- An der Root-Konsole ist es ruhiger: keine tzdata-Warnung mehr vor jeder Ausgabe.
+
 ## 0.7.0-fx.1
 
 ### Der zweite Weg, auf dem Programme Namen nachschlagen
