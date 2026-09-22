@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.68.0-fx.1
+
+### Der Updates-Reiter sagte „hat nichts gemeldet", obwohl das Gerät meldete
+
+**Wer 2.67.0-fx.1 hat und ein emOS-Gerät betreibt, braucht diese Fassung.**
+Ohne sie bleibt der Eintrag *Namensauflösung (emOS)* dauerhaft bei „Zustand
+unbekannt", egal was das Gerät tut.
+
+Das Gerät berichtet seit Firmware 2.54.0-fx.1 bei jeder Anmeldung, ob die
+Bibliothek installiert ist, ob es sie braucht und was sie zuletzt beim
+Auflösen eines Namens geantwortet hat. Der Controller hat diesen Bericht
+entgegengenommen und weggeworfen — er übernimmt die Statusfelder einzeln, und
+dieses eine stand nicht in der Liste.
+
+Die Folge war die unangenehmste Sorte Fehler: Nichts sah kaputt aus. Im
+Dashboard stand, das Gerät habe nichts gesagt, und das ist genau der Satz,
+nach dem man am Gerät zu suchen anfängt statt im Controller.
+
+Nach diesem Update steht dort, was das Gerät die ganze Zeit berichtet hat.
+Eine neue Firmware ist dafür nicht nötig.
+
 ## 2.67.0-fx.1
 
 ### Der Updates-Reiter unterscheidet „geladen" von „funktioniert"
