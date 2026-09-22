@@ -126,6 +126,41 @@ jobs:
             esac
           done
 
+      # Every shared library a binary NEEDS has to exist on the device, and a
+      # FireOS 6 /system is the smaller of the two: it carries no libandroid.so
+      # and no libmediandk.so. Nothing in the build says otherwise — ffmpeg
+      # enables jni and mediacodec by default for --target-os=android, they add
+      # -landroid -lmediandk transitively, and the result links clean, strips
+      # clean and dies at exec:
+      #
+      #   CANNOT LINK EXECUTABLE "shairport-sync-ap2": library "libandroid.so" not found
+      #
+      # That shipped (#297) and was found on a device rather than here, which
+      # is what this step is for. An allowlist rather than a denylist, because
+      # the next dependency to creep in will not be one of the two that already
+      # did.
+      - name: Every binary may only need libraries the device has
+        run: |
+          set -e
+          allowed="libc.so libdl.so libm.so libz.so liblog.so libstdc++.so"
+          fail=0
+          for f in device/librespot/out/librespot \
+                   device/shairport/out/shairport-sync \
+                   device/shairport/out/shairport-sync-ap2 \
+                   device/shairport/out/nqptp \
+                   device/gaishim/out/gaishim.so; do
+            needed="$(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
+            echo "$(basename "$f"): ${needed:-none}"
+            for lib in $needed; do
+              case " $allowed " in
+                *" $lib "*) ;;
+                *) echo "::error::$f needs $lib, which a FireOS /system does not carry"
+                   fail=1 ;;
+              esac
+            done
+          done
+          [ "$fail" = 0 ] || exit 1
+
       # The notes carry the licence offer, so it travels with the artifact
       # rather than living only in a workflow comment.
       - name: Release notes

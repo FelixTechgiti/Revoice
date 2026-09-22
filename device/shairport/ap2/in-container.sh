@@ -181,6 +181,24 @@ say "ffmpeg (trimmed)"
 #
 # What it is actually FOR is one codec. AIRPLAY2.md: Buffered Audio is "AAC
 # stereo at 44,100 frames per second" and Realtime streams are ALAC. So this is
+# --disable-jni and --disable-mediacodec are NOT covered by
+# --disable-everything, and that is the trap: --disable-everything turns off
+# COMPONENTS (decoders, muxers, filters), while jni and mediacodec are external
+# library bindings that ffmpeg enables BY DEFAULT for --target-os=android. They
+# add -landroid -lmediandk to ffmpeg's link requirements, those propagate into
+# shairport-sync-ap2, and neither library exists on a FireOS 6 /system:
+#
+#   CANNOT LINK EXECUTABLE "shairport-sync-ap2": library "libandroid.so" not found
+#
+# Measured 2026-09-22 on a FireOS 6 device. `readelf -d` on the published
+# binary listed libandroid.so and libmediandk.so; the classic receiver next to
+# it needs libm, libdl and libc and runs. The AirPlay 2 path wants neither
+# binding — every decoder it uses is requested explicitly below and all of them
+# are software.
+#
+# The failure is invisible in the build: nothing here mentions -landroid, the
+# link succeeds, the binary strips clean, and it dies at exec on the device.
+# The same shape as the CXXLD note below.
 # --disable-everything plus the two decoders, which keeps a general-purpose
 # media framework from becoming several megabytes on a device that shares
 # 512MB with Android.
@@ -208,7 +226,8 @@ git clone --depth 1 --branch n7.1.5 https://github.com/FFmpeg/FFmpeg ffmpeg
         --disable-programs --disable-doc --disable-htmlpages --disable-manpages \
         --disable-avdevice --disable-avfilter --disable-swscale --disable-postproc \
         --disable-network --disable-iconv --disable-symver \
-        --disable-debug
+        --disable-debug \
+        --disable-jni --disable-mediacodec
     make -j"$JOBS"
     make install
 )
