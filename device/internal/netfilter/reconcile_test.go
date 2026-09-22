@@ -16,6 +16,8 @@ const listingHealthy = `-P INPUT DROP
 -A INPUT -i wlan0 -p tcp -m tcp --dport 5000 -j ACCEPT
 -A INPUT -i wlan0 -p udp -m udp --dport 319 -j ACCEPT
 -A INPUT -i wlan0 -p udp -m udp --dport 320 -j ACCEPT
+-A INPUT -i wlan0 -p tcp -m tcp --dport 6011:6020 -j ACCEPT
+-A INPUT -i wlan0 -p udp -m udp --dport 6011:6020 -j ACCEPT
 -A INPUT -i wlan0 -p tcp -m state --state RELATED,ESTABLISHED -j ACCEPT
 -A INPUT -i wlan0 -p udp -m udp --dport 5353 -j ACCEPT
 -A INPUT -i wlan0 -p tcp -m tcp --dport 4070 -j ACCEPT

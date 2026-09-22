@@ -60,6 +60,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -847,7 +848,15 @@ func (c *Client) session(ctx context.Context) error {
 	// it up rather than the next reboot.
 	res := endpoint.ResolverStatus()
 	endpoint.LogResolver(res, c.binary())
-	cmd.Env = res.Env(append(os.Environ(), ShmDirEnv+"="+ShmDir()))
+	// And where its per-session sockets must come from, so the firewall rule
+	// naming that range means something. An AirPlay 2 build walks it; a
+	// classic one never asks for "any port" on this path and ignores both.
+	// Same shape as ShmDir above: the firmware answers once and both children
+	// are told, rather than each guessing.
+	cmd.Env = res.Env(append(os.Environ(),
+		ShmDirEnv+"="+ShmDir(),
+		AP2PortBaseEnv+"="+strconv.Itoa(netfilter.AirPlay2SessionBase),
+		AP2PortCountEnv+"="+strconv.Itoa(netfilter.AirPlay2SessionCount)))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

@@ -40,6 +40,20 @@ const NqptpPath = "/data/local/bin/nqptp"
 const (
 	ShmDirEnv     = "REVOICE_SHM_DIR"
 	DefaultShmDir = "/dev/revoice-shm"
+
+	// AP2PortBaseEnv/AP2PortCountEnv tell an AirPlay 2 shairport-sync which
+	// range to take a session's own sockets from, instead of asking the
+	// kernel for any port (#79). The values are netfilter's, not ours — the
+	// firewall rule and the listener have to be the same numbers, and there is
+	// only one place those numbers are allowed to live.
+	//
+	// The names are duplicated from device/shairport/compat/ap2_ports.h,
+	// which is unavoidable: one side is C in a binary built in a container and
+	// the other is Go. A disagreement is silent — the binary would take kernel
+	// ports again and the rule would name an empty range — so
+	// TestPortEnvNamesMatchTheShim reads the header and compares.
+	AP2PortBaseEnv  = "REVOICE_AP2_PORT_BASE"
+	AP2PortCountEnv = "REVOICE_AP2_PORT_COUNT"
 )
 
 // ShmDir is where the PTP clock record lives, for whichever child is being

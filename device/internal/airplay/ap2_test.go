@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wilbowes/EchoMuse/internal/netfilter"
 )
 
 // The strings are real shapes from shairport-sync's get_version_string()
@@ -253,5 +255,46 @@ func TestNqptpRestartClaimsNothingItDidNotDo(t *testing.T) {
 	n.mu.Unlock()
 	if n.Restart() {
 		t.Error("enabled but between attempts: the next exec opens the new inode by itself")
+	}
+}
+
+func TestPortEnvNamesMatchTheShim(t *testing.T) {
+	// The names exist twice — once here and once in the C the binary is built
+	// from — because one side is Go and the other is a container build. A
+	// disagreement is silent in the worst way: shairport-sync would go back to
+	// kernel-chosen ports and the firewall would name an empty range, which is
+	// the failure this whole mechanism removes, restored by a typo.
+	src, err := os.ReadFile(filepath.Join("..", "..", "shairport", "compat", "ap2_ports.h"))
+	if err != nil {
+		t.Fatalf("cannot read the shim's header, so the names cannot be compared: %v", err)
+	}
+	h := string(src)
+	for _, want := range []struct{ macro, value string }{
+		{"EM_AP2_PORT_BASE_ENV", AP2PortBaseEnv},
+		{"EM_AP2_PORT_COUNT_ENV", AP2PortCountEnv},
+	} {
+		if !strings.Contains(h, `#define `+want.macro+` "`+want.value+`"`) {
+			t.Fatalf("%s is %q here, and ap2_ports.h does not define %s as that — "+
+				"the binary would read a variable the firmware never sets",
+				want.macro, want.value, want.macro)
+		}
+	}
+}
+
+func TestSessionPortsAreNotTheClassicRTPRange(t *testing.T) {
+	// Two ranges, both handed to the same process, and they must not overlap:
+	// the classic RTP ports are bound by name at startup, so a session socket
+	// placed on one of them would fail to bind for the life of the receiver
+	// and the walk would quietly move on — a range that is one port smaller
+	// than the rule says, every time.
+	loA, hiA := netfilter.AirPlayUDPBase, netfilter.AirPlayUDPBase+netfilter.AirPlayUDPRange-1
+	loB, hiB := netfilter.AirPlay2SessionBase, netfilter.AirPlay2SessionBase+netfilter.AirPlay2SessionCount-1
+	if loA <= hiB && loB <= hiA {
+		t.Fatalf("the classic RTP range %d:%d and the AirPlay 2 session range %d:%d overlap",
+			loA, hiA, loB, hiB)
+	}
+	if netfilter.AirPlay2SessionCount < 4 {
+		t.Fatalf("a session binds four sockets and the range holds %d",
+			netfilter.AirPlay2SessionCount)
 	}
 }
