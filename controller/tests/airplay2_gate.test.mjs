@@ -162,7 +162,7 @@ const AP2 = { flavour: "airplay2", nqptp: { ok: true } };
 {
   const g = airplay2Line({ flavour: "classic" }, null, true);
   assert.deepStrictEqual(g, { flavour: "classic", clock: null, restarts: 0,
-                              receiverRunning: null });
+                              receiverRunning: null, settingDiffers: false });
 }
 
 {
@@ -266,10 +266,39 @@ for (const key of ["devAirplayFlavour", "devAirplayClassic",
                    "devAirplayUnknownFlavour", "devAirplay2Ok",
                    "devAirplay2ClockDown", "devAirplay2NoClock",
                    "devAirplay2ClockUnknown", "devAirplay2RxDown",
-                   "devAirplay2RxDownNoClock"]) {
+                   "devAirplay2RxDownNoClock", "devAirplayFlavourPending"]) {
   const n = (strings.match(new RegExp(`^\\s*${key}:`, "gm")) || []).length;
   assert.strictEqual(n, 2,
     `${key} should be defined once per language in strings.js, found ${n}`);
+}
+
+{
+  // #326: the setting and the running receiver can differ, and the panel has
+  // to say so. The device names the gap itself — comparing paths here would
+  // be a second copy of a decision the firmware already made.
+  const g = airplay2Line({ ...AP2, setting_differs: true }, HEALTH_OK, true,
+                         { enabled: true, alive: true });
+  assert.strictEqual(g.settingDiffers, true);
+  // The verdict is untouched: what is PLAYING stays the headline, and the
+  // setting only says what the next restart will bring.
+  assert.strictEqual(g.flavour, "airplay2");
+  assert.strictEqual(g.clock, "ok");
+}
+
+{
+  // Absent before the firmware that added it, and absence must not render as
+  // a warning on every device in the field.
+  const g = airplay2Line(AP2, HEALTH_OK, true, { enabled: true, alive: true });
+  assert.strictEqual(g.settingDiffers, false);
+}
+
+{
+  // It is carried on the CLASSIC branch too. A device set to AirPlay 2 and
+  // still running the classic receiver is exactly the state somebody is
+  // waiting on an install for, and that branch returns early.
+  const g = airplay2Line({ flavour: "classic", setting_differs: true }, null, true);
+  assert.strictEqual(g.settingDiffers, true,
+    "the early return for a classic receiver drops the gap");
 }
 
 console.log("airplay2_gate: all checks passed");

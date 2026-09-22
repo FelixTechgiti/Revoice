@@ -439,6 +439,12 @@ func main() {
 	dataClient.MusicPlane().Register(musicplane.AirPlay, func(why musicplane.Reason) {
 		airplayClient.Leave(string(why))
 	})
+	// What the AirPlay panel describes. Set here because this is where the
+	// receiver's client exists; without it the report falls back to the
+	// SETTING, which is the state #326 reported as "classic AirPlay" on a
+	// device running the AirPlay 2 binary.
+	client.AirPlayRunningBinary = airplayClient.RunningBinary
+
 	// nqptp's exit unlinks the clock record, and a mapping already held
 	// survives the unlink — so a receiver that is not restarted with it reads
 	// an orphaned inode while the new nqptp writes to a different file, and
@@ -1597,8 +1603,18 @@ func firewallWant() []netfilter.Rule {
 		// TheGeneralRule.
 		want = append(want, netfilter.MDNSMulticastRule())
 	}
-	// Unconditional: a device nobody can ping is a device that reads as "off
-	// the network" when it is not, and an afternoon went into that mistake.
+	// Unconditional, both of them.
+	//
+	// IGMP because a multicast membership is KEPT by answering the router's
+	// queries, and the device needs one whether or not an endpoint is enabled
+	// — it finds its controller over mDNS. It was added to netfilter.All() in
+	// #319 and never added HERE, which is not "missing" but self-deleting:
+	// All() is what Sync removes from, so the rule was actively taken back off
+	// any device where something else had set it (#323).
+	//
+	// Ping because a device nobody can ping is a device that reads as "off the
+	// network" when it is not, and an afternoon went into that mistake.
+	want = append(want, netfilter.IGMPRule())
 	want = append(want, netfilter.PingRule())
 	return want
 }

@@ -628,6 +628,27 @@ func airplay2Wanted() bool {
 	return snap.Airplay2Enabled != nil && *snap.Airplay2Enabled
 }
 
+// AirPlayRunningBinary reports the receiver file currently executing, or "" if
+// none is. Set by cmd at startup; nil until then, and nil in every test that
+// does not care.
+//
+// A hook rather than a read, because this one cannot be derived from anything
+// this package can reach: the setting above is in the config and the RUNNING
+// file is a property of a process only internal/airplay's client knows about.
+// Wiring the client in here instead would put the audio stack behind the
+// control plane's imports for one string.
+//
+// It exists because the two disagree, and the panel built from the setting
+// said "classic AirPlay" about a device running the AirPlay 2 receiver (#326).
+var AirPlayRunningBinary func() string
+
+func airplayRunningBinary() string {
+	if AirPlayRunningBinary == nil {
+		return ""
+	}
+	return AirPlayRunningBinary()
+}
+
 func (c *ControlClient) connect(ctx context.Context, server *discovery.ServerInfo, data *DataClient) (bool, error) {
 	var connectedAt time.Time
 
@@ -708,7 +729,7 @@ func (c *ControlClient) connect(ctx context.Context, server *discovery.ServerInf
 		// is a missing file, nobody can tell that from a broken feature
 		// without a shell session on the user's own hardware.
 		"spotify_status": spotify.Report(),
-		"airplay_status": airplay.Report(airplay2Wanted()),
+		"airplay_status": airplay.Report(airplay2Wanted(), airplayRunningBinary()),
 		// Whether the getaddrinfo shim is installed, and whether this device
 		// needs one at all. Beside the two above and for their reason: on
 		// emOS without it, BOTH endpoints start, retry every 60 seconds and
