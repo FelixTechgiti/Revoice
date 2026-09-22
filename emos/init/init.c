@@ -2276,21 +2276,31 @@ static void firewall(void)
         "  $T -P INPUT DROP; "
         "  $T -P FORWARD DROP; "
         "done; "
-        /* Positions 5 to 7, because the -A rules above are now four. Order
-         * does not change the outcome here — every rule is an ACCEPT and none
-         * overlaps — but a position that silently means something else after
-         * an edit is how the next line gets put in the wrong place, and this
-         * number has now been wrong once already.
+        /* `-A`, not `-I <n>`. These four belong at the end and always did —
+         * the numbers only ever meant "after the loop's rules", and they were
+         * written as positions that have to be counted by hand and corrected
+         * whenever a rule is added above. That count was wrong twice while
+         * adding the two rules above it.
+         *
+         * The failure mode is what makes it worth changing rather than
+         * recounting: an index past the end of the chain is an ERROR, not an
+         * append, so one miscount drops every rule after it. Losing the ICMP
+         * line that way gives a device that answers no ping, which reads as
+         * "off the network" — an afternoon already went into that once, and
+         * the comment on PingRule says so.
+         *
+         * Order does not change the outcome: every rule here is an ACCEPT and
+         * none overlaps another.
          *
          * IGMP is here rather than in the loop because protocol 2 means
          * nothing on IPv6: MLD is what keeps a v6 membership and it rides
          * ICMPv6, which the last line already allows. A `-p 2` in ip6tables
          * would be a rule that can never match, which is worse than no rule —
          * it reads as cover that is not there. */
-        "iptables -I INPUT 5 -p 2 -j ACCEPT; "
-        "iptables -I INPUT 6 -p udp --sport 67 --dport 68 -j ACCEPT; "
-        "iptables -I INPUT 7 -p icmp -j ACCEPT; "
-        "ip6tables -I INPUT 5 -p icmpv6 -j ACCEPT", NULL };
+        "iptables -A INPUT -p 2 -j ACCEPT; "
+        "iptables -A INPUT -p udp --sport 67 --dport 68 -j ACCEPT; "
+        "iptables -A INPUT -p icmp -j ACCEPT; "
+        "ip6tables -A INPUT -p icmpv6 -j ACCEPT", NULL };
     int st = run_wait(fw);
     netlog("firewall applied status=%d\n", st);
 }
