@@ -432,6 +432,10 @@ class Device:
         # dashboard has to be able to say.
         self.spotify_status: dict | None = None
         self.airplay_status: dict | None = None
+        # Whether the getaddrinfo shim is installed, whether this device
+        # needs one, and what it answered when last asked to resolve a name.
+        # Same three-valued absence as the two above.
+        self.resolver_status: dict | None = None
         # Which userspace the device booted, from its register message.
         # None until a device registers, and None forever for firmware too
         # old to say — which em_platform resolves to Android, leaving the
@@ -4062,6 +4066,7 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
         device.ambient_light_status = msg.get("ambient_light_status")
         device.spotify_status = msg.get("spotify_status")
         device.airplay_status = msg.get("airplay_status")
+        device.resolver_status = msg.get("resolver_status")
         # What the device's music plane is playing at this instant. On the
         # register message because a device that reconnects mid-track would
         # otherwise read as silent until the track ended — an amplifier

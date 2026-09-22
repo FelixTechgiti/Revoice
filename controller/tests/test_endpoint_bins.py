@@ -913,3 +913,30 @@ def test_the_selftest_reaches_the_dashboard():
     assert st["status"] == "installed"
     assert "rc=0" in (st["selftest"] or "")
     assert st["preload_error"] is None
+
+
+def test_every_kind_status_is_actually_taken_off_the_register_message():
+    """A `status_attr` nothing copies onto the Device is a kind that can only
+    ever read "the device has not reported".
+
+    Three lists have to agree and nothing makes them: the firmware puts a key
+    on the register message, `em_controller` copies that key onto the live
+    Device, and `Kind.status_attr` names the attribute it reads back. Miss
+    the middle one and the device reports faithfully, the controller throws
+    it away, and the dashboard says the device said nothing — which is what
+    somebody then goes and debugs on the device.
+
+    Measured 2026-09-21: `resolver_status` rode the register message from
+    firmware 2.54.0-fx.1 on and was dropped by the controller for four
+    firmware releases. Every panel was consistent and wrong.
+
+    Read off the source because the suite cannot import em_controller.
+    """
+    src = (REPO / "controller/em_controller.py").read_text()
+    for key, k in ebins.KINDS.items():
+        assert f'device.{k.status_attr} = msg.get("{k.status_attr}")' in src, (
+            f"{key} reads Device.{k.status_attr}, and em_controller never "
+            f"assigns it from the register message — the kind can only ever "
+            f"report 'state unknown'")
+        assert f"self.{k.status_attr}" in src, (
+            f"Device has no {k.status_attr} attribute for the {key} kind")
