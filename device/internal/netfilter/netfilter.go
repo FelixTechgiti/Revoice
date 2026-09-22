@@ -70,6 +70,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -78,7 +79,14 @@ import (
 
 // The interface the device is reachable on. Amazon's own rules are scoped to
 // it; ours are too, so a rule can never widen anything on another link.
-const iface = "wlan0"
+// Iface is the radio every rule here names, and the one both endpoints
+// announce on. Exported because mDNS responders on this platform have to be
+// TOLD which interface they are on — see IfaceIPv4 — and a second copy of the
+// string in another package is one that eventually disagrees with the
+// firewall.
+const Iface = "wlan0"
+
+const iface = Iface
 
 // Ports we pin so a rule can name them. Changing one means changing the
 // daemon's argument as well — they are read from here, which is the point.
@@ -361,4 +369,36 @@ func Exec(args ...string) error {
 			strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// IfaceIPv4 returns Iface's IPv4 address, or "" if it has none yet.
+//
+// It exists because librespot's --zeroconf-interface takes an ADDRESS where
+// shairport-sync's `interface` takes a name, and because neither responder can
+// find the interface by itself on this platform: both reach getifaddrs through
+// device/shairport/compat/android_ifaddrs.c, bionic declaring the real one
+// __INTRODUCED_IN(24), and where that list comes back unusable they bind 5353,
+// join 224.0.0.251 and announce NOTHING — healthy-looking sockets, invisible
+// speaker (#298).
+//
+// net.InterfaceByName is deliberately the source: it is pure Go over netlink
+// and does not go through the shim, so this answer is independent of the bug
+// it works around.
+func IfaceIPv4() string {
+	ifi, err := net.InterfaceByName(Iface)
+	if err != nil {
+		return ""
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok {
+			if v4 := ipn.IP.To4(); v4 != nil {
+				return v4.String()
+			}
+		}
+	}
+	return ""
 }

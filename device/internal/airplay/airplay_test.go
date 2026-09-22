@@ -561,3 +561,15 @@ func TestAllThreePortsArePinnedToTheOnesTheFirewallOpens(t *testing.T) {
 		}
 	}
 }
+
+// The generated config must NAME the interface. Without it shairport-sync
+// binds 5353, joins 224.0.0.251 and registers nothing at all — sockets that
+// look healthy and a speaker nobody can see (#298). The failure is silent at
+// both ends, which is why it is pinned here rather than left to a reviewer.
+func TestRenderConfigNamesTheInterface(t *testing.T) {
+	got := renderConfig(0, "")
+	want := fmt.Sprintf("  interface = %q;\n", netfilter.Iface)
+	if !strings.Contains(got, want) {
+		t.Fatalf("config does not name the interface; want %q in:\n%s", want, got)
+	}
+}

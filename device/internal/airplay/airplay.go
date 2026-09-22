@@ -703,6 +703,22 @@ func renderConfig(delaySec float64, metadataPipe string) string {
 	general += fmt.Sprintf("  port = %d;\n", netfilter.AirPlayRTSPPort)
 	general += fmt.Sprintf("  udp_port_base = %d;\n", netfilter.AirPlayUDPBase)
 	general += fmt.Sprintf("  udp_port_range = %d;\n", netfilter.AirPlayUDPRange)
+	// NAMED, because the responder cannot work it out for itself here.
+	// mdns_tinysvcmdns.c takes the host's address from the first non-loopback
+	// entry getifaddrs() returns, and on this platform getifaddrs() is our own
+	// shim (device/shairport/compat/android_ifaddrs.c) because bionic declares
+	// the real one __INTRODUCED_IN(24). Where that list comes back unusable,
+	// shairport-sync binds 5353, joins 224.0.0.251 and then registers NOTHING
+	// — it logs its regtype and never announces, so /proc/net/igmp and netstat
+	// both look healthy while the speaker is invisible.
+	//
+	// Measured 2026-09-22 on a FireOS 6 device: a _raop._tcp query answered by
+	// 20 hosts on the segment and not by this one; adding this line put it in
+	// avahi-browse within seconds. Naming the interface skips the enumeration
+	// rather than fixing it — the shim is still wrong for everything else that
+	// calls getifaddrs (#298) — but nothing here needs to discover an
+	// interface the firmware already knows.
+	general += fmt.Sprintf("  interface = %q;\n", netfilter.Iface)
 	if delaySec != 0 {
 		general += fmt.Sprintf(
 			"  audio_backend_latency_offset_in_seconds = %.4f;\n", -delaySec)

@@ -651,3 +651,43 @@ func TestWithoutVolumeControlNoScaleTypeIsForced(t *testing.T) {
 		t.Errorf("--volume-ctrl is forced with the setting off:\n%s", args)
 	}
 }
+
+// librespot must be told which address to announce on, for the reason
+// airplay's TestRenderConfigNamesTheInterface gives: enumeration is the broken
+// step, so leaving it to librespot announces nothing (#298).
+func TestArgsCarryZeroconfInterface(t *testing.T) {
+	orig := ifaceIPv4
+	defer func() { ifaceIPv4 = orig }()
+	ifaceIPv4 = func() string { return "192.0.2.7" }
+
+	c := New(Options{Name: "x", Binary: "/bin/true", CacheDir: t.TempDir()}, &fakeSink{}, &fakePlane{})
+	if !hasPair(c.args(), "--zeroconf-interface", "192.0.2.7") {
+		t.Fatalf("resolved address missing from args: %v", c.args())
+	}
+
+	// An explicit option wins over the lookup.
+	c2 := New(Options{Name: "x", Binary: "/bin/true", CacheDir: t.TempDir(),
+		ZeroconfAddr: "198.51.100.3"}, &fakeSink{}, &fakePlane{})
+	if !hasPair(c2.args(), "--zeroconf-interface", "198.51.100.3") {
+		t.Fatalf("explicit ZeroconfAddr not used: %v", c2.args())
+	}
+
+	// No address yet is not a reason to pass an empty flag: librespot would
+	// take "" as a list of zero interfaces and bind none.
+	ifaceIPv4 = func() string { return "" }
+	c3 := New(Options{Name: "x", Binary: "/bin/true", CacheDir: t.TempDir()}, &fakeSink{}, &fakePlane{})
+	for _, v := range c3.args() {
+		if v == "--zeroconf-interface" {
+			t.Fatalf("flag passed with no address: %v", c3.args())
+		}
+	}
+}
+
+func hasPair(args []string, flag, val string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == val {
+			return true
+		}
+	}
+	return false
+}
