@@ -46,6 +46,43 @@ existing token for a known device, the config is keyed by `device_id`, and the
 device re-registers by itself. The only thing in the way was one refusal in
 the browser.
 
+## Reading a device without reaching it at all
+
+**The add-on log carries every device's relayed log, and Home Assistant will
+hand it over without a shell, without a token and without the ingress round
+trip above.** That is a weaker capability than `exec` and it is available in
+cases where `exec` is not — it needs only Home Assistant's own API:
+
+    ha_get_logs(source="supervisor", slug="46aaf331_controller", search="...")
+
+Everything a device writes with `log.Print` arrives there, prefixed
+`[<serial>] [device]`, alongside the controller's own lines. A whole
+investigation was run this way on 2026-09-21/22 — firmware versions,
+capability lists, endpoint failures, binary transfers with their md5s, and the
+resolver verdicts that ended #263 — from a session that could not open a shell
+on the device at all.
+
+Three things about it that are not obvious:
+
+- **`search` is a substring filter over the whole line, and the answer is
+  ordered newest first.** Filtering on the serial (`search="G090L..."`) is how
+  a two-device fleet stays readable.
+- **The relay drops lines under load.** A burst — an endpoint reconcile opens
+  a dozen shell sessions — can swallow a line that was written. An absent line
+  is therefore never evidence that something did not happen, which cost two
+  wrong explanations on 2026-09-21 before the cause was found.
+- **It reads the CONTROLLER's container log.** A restart of the add-on rotates
+  it, so a measurement worth keeping is worth copying into an issue before
+  restarting anything.
+
+**A verdict that rides the REGISTER message is as old as the last
+registration.** `resolver_status`, `spotify_status` and `airplay_status` are
+sent when a device connects and not again. So after an install the dashboard
+and the log both still show the state from BEFORE it — the device is not
+wrong, it has not been asked since. Forcing a re-registration (restart the
+add-on; the device reconnects in seconds) is what makes the current answer
+visible, and forgetting it produced two confident misreadings on 2026-09-22.
+
 ## Reaching a device without a person at it
 
 **A session can drive a fielded device end to end, and knowing that is the
