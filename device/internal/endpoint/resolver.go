@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -320,7 +321,17 @@ func LogResolver(r Resolver, binary string) {
 		state = "not_needed"
 		msg = "resolver: FireOS libc resolves names itself; gaishim not used"
 	case r.Present:
-		state = "active"
+		// The SIZE is part of the state, and that is the point rather than
+		// decoration. A replaced shim is still "installed", so keying on
+		// presence alone means the file can change under a running firmware
+		// and never be probed again — which is exactly what happened on
+		// 2026-09-22: a new library was installed at 08:35:08 and the last
+		// verdict on record was from 08:34:41, about the previous one.
+		//
+		// Including the size makes "a different file is there now" a state
+		// change, which is precisely when the question is worth asking
+		// again.
+		state = "active:" + strconv.FormatInt(r.Size, 10)
 	default:
 		state = "missing:" + r.Reason
 		// The actionable case, and the one that is otherwise invisible:
@@ -339,7 +350,7 @@ func LogResolver(r Resolver, binary string) {
 	logAny, logLast = true, state
 	logMu.Unlock()
 
-	if state == "not_needed" {
+	if strings.HasPrefix(state, "not_needed") {
 		return // true of most of the fleet; saying it once is noise
 	}
 
@@ -347,7 +358,7 @@ func LogResolver(r Resolver, binary string) {
 	// the difference is invisible at run time — so it is asked HERE, on the
 	// transition, rather than left to be inferred from an endpoint that keeps
 	// failing. One process spawn per state change, not per restart.
-	if state == "active" {
+	if strings.HasPrefix(state, "active:") {
 		refusal, selftest := resolverProbe(r.Path, binary)
 		logMu.Lock()
 		lastRefusal, lastSelfTest = refusal, selftest
