@@ -67,6 +67,7 @@ import websockets
 from websockets.asyncio.server import ServerConnection as WebSocketServerProtocol
 
 import em_db as db
+import em_endpoint_bins
 import em_dbadopt
 import em_auth as auth
 import em_api as api
@@ -4067,6 +4068,16 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
         device.spotify_status = msg.get("spotify_status")
         device.airplay_status = msg.get("airplay_status")
         device.resolver_status = msg.get("resolver_status")
+        # And SAID OUT LOUD, here, when it is worth reading.
+        #
+        # From THIS side rather than the device's: the firmware writes its own
+        # line once at start, before the control connection exists, so the
+        # relay has nowhere to send it — see em_endpoint_bins.resolver_complaint,
+        # where the decision lives so it can be tested.
+        _complaint = em_endpoint_bins.resolver_complaint(device.resolver_status)
+        if _complaint:
+            _level, _text = _complaint
+            getattr(log, _level)(f"[{device_id}] resolver: {_text}")
         # What the device's music plane is playing at this instant. On the
         # register message because a device that reconnects mid-track would
         # otherwise read as silent until the track ended — an amplifier

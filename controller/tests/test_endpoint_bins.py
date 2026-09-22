@@ -940,3 +940,64 @@ def test_every_kind_status_is_actually_taken_off_the_register_message():
             f"report 'state unknown'")
         assert f"self.{k.status_attr}" in src, (
             f"Device has no {k.status_attr} attribute for the {key} kind")
+
+
+# ─── What the controller says about the shim ─────────────────────────────────
+
+def test_a_working_shim_says_nothing_loud():
+    """It is a complaint, not a status line."""
+    lvl, _ = ebins.resolver_complaint(
+        {"needed": True, "ok": True,
+         "selftest": "clienttoken.spotify.com rc=0 ip=35.186.224.24 entries=1"})
+    assert lvl == "info"
+
+
+def test_a_fireos_device_has_nothing_to_complain_about():
+    assert ebins.resolver_complaint({"needed": False, "ok": False,
+                                     "reason": "not_installed"}) is None
+    assert ebins.resolver_complaint(None) is None
+    assert ebins.resolver_complaint({}) is None
+
+
+def test_the_three_ways_it_can_be_wrong_are_all_warnings():
+    for name, rs, expect in [
+        ("not installed",
+         {"needed": True, "ok": False, "reason": "not_installed"},
+         "not_installed"),
+        ("the linker refused it",
+         {"needed": True, "ok": True,
+          "preload_error": 'CANNOT LINK … is 32-bit instead of 64-bit'},
+         "CANNOT LINK"),
+        ("loaded and resolves nothing",
+         {"needed": True, "ok": True,
+          "selftest": "clienttoken.spotify.com rc=7 entries=0"},
+         "rc=7"),
+    ]:
+        lvl, text = ebins.resolver_complaint(rs)
+        assert lvl == "warning", f"{name} must warn"
+        assert expect in text, f"{name}: {text!r} does not carry {expect!r}"
+
+
+def test_loaded_and_silent_is_a_warning_not_a_pass():
+    """The fourth state, and the one that reads healthy from every side.
+
+    Firmware older than the self-test cannot answer, and a probe that
+    produced no line has not answered either. Both are unknowns, and an
+    unknown must not be reported as a working resolver.
+    """
+    lvl, text = ebins.resolver_complaint({"needed": True, "ok": True})
+    assert lvl == "warning"
+    assert "no self-test" in text
+
+
+def test_rc_is_matched_as_a_whole_field():
+    """`rc=0` must not match inside `rc=07`, and `rc=0` at the end must match.
+
+    The self-test line is the shim's own, and it ends without a trailing
+    space — so a naive substring test on ' rc=0 ' would read a success at
+    the end of the line as a failure.
+    """
+    ok_at_end = {"needed": True, "ok": True, "selftest": "host rc=0"}
+    assert ebins.resolver_complaint(ok_at_end)[0] == "info"
+    not_ok = {"needed": True, "ok": True, "selftest": "host rc=07 entries=0"}
+    assert ebins.resolver_complaint(not_ok)[0] == "warning"
