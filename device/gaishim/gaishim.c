@@ -628,6 +628,35 @@ void gaishim_selftest(const char *host)
 
 	st_puts(SELFTEST_MARK);
 	st_puts(host);
+
+	/* The RAW answer from the call this library is built on, before our own
+	 * logic touches it. Without it, a failure here is ambiguous between "the
+	 * device cannot resolve through gethostbyname" and "this file has a bug",
+	 * and those want completely different work.
+	 *
+	 * Measured 2026-09-22: the shim loads into librespot, runs, and returns
+	 * EAI_NODATA — which is what our code returns when gethostbyname gives
+	 * nothing. Whether it gave nothing is exactly what was not observable. */
+	{
+		struct hostent *he = GAISHIM_RESOLVER(host);
+		st_puts(" ghbn=");
+		if (!he) {
+			st_puts("null");
+		} else if (!he->h_addr_list || !he->h_addr_list[0]) {
+			st_puts("empty");
+		} else {
+			unsigned char *a = (unsigned char *)he->h_addr_list[0];
+			int i;
+			st_puts("af"); st_num(he->h_addrtype);
+			st_puts("/len"); st_num(he->h_length);
+			st_puts("/");
+			for (i = 0; i < 4; i++) {
+				st_num(a[i]);
+				if (i < 3) st_puts(".");
+			}
+		}
+	}
+
 	st_puts(" rc=");
 	rc = getaddrinfo(host, "443", &hints, &res);
 	st_num(rc);
