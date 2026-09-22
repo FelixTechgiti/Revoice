@@ -1001,3 +1001,18 @@ def test_rc_is_matched_as_a_whole_field():
     assert ebins.resolver_complaint(ok_at_end)[0] == "info"
     not_ok = {"needed": True, "ok": True, "selftest": "host rc=07 entries=0"}
     assert ebins.resolver_complaint(not_ok)[0] == "warning"
+
+
+def test_the_silent_case_names_what_was_probed():
+    """"No self-test" has two causes and they want different work.
+
+    A probe that ran against librespot and stayed silent is a shim problem.
+    A probe that never had a binary is a firmware problem. For an hour on
+    2026-09-22 those produced the identical sentence.
+    """
+    _, with_binary = ebins.resolver_complaint(
+        {"needed": True, "ok": True, "probed": "/data/local/bin/librespot"})
+    assert "/data/local/bin/librespot" in with_binary
+
+    _, without = ebins.resolver_complaint({"needed": True, "ok": True})
+    assert "no binary was probed" in without

@@ -413,3 +413,53 @@ func TestAReplacedShimIsProbedAgain(t *testing.T) {
 			"would still describe the old file", *calls)
 	}
 }
+
+// The failure of 2026-09-22 08:55: three supervisors share this dedup, the
+// first to arrive decides it, and one of them had no binary. It recorded
+// "seen" without measuring, and the supervisor that COULD measure was skipped
+// as a repeat — so the device reported "no self-test" about a library that
+// answers when asked.
+func TestASupervisorWithNoBinaryDoesNotSilenceOneWithABinary(t *testing.T) {
+	stub(t, platform.EmOS, present(), nil)
+	calls := stubProbe(t, "")
+
+	LogResolver(ResolverStatus(), "")
+	if *calls != 0 {
+		t.Fatalf("probed %d times with no binary, want 0", *calls)
+	}
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
+	if *calls != 1 {
+		t.Errorf("the supervisor that had a binary probed %d times, want 1 — "+
+			"failing to look is not a verdict", *calls)
+	}
+}
+
+// Two endpoints, two binaries: each is its own question, and neither answers
+// for the other.
+func TestEachBinaryIsItsOwnVerdict(t *testing.T) {
+	stub(t, platform.EmOS, present(), nil)
+	calls := stubProbe(t, "")
+
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
+	LogResolver(ResolverStatus(), "/data/local/bin/shairport-sync")
+	if *calls != 2 {
+		t.Errorf("probed %d times for two distinct binaries, want 2", *calls)
+	}
+}
+
+// And the verdict says which program it is about — without that, "no
+// self-test" is unreadable from the controller.
+func TestTheReportNamesTheProbedBinary(t *testing.T) {
+	stub(t, platform.EmOS, present(), nil)
+	old := resolverProbe
+	resolverProbe = func(string, string) (string, string) {
+		return "", "clienttoken.spotify.com rc=0 ip=1.2.3.4 entries=1"
+	}
+	t.Cleanup(func() { resolverProbe = old })
+
+	LogResolver(ResolverStatus(), "/data/local/bin/librespot")
+	if got := ResolverStatus().Report()["probed"]; got != "/data/local/bin/librespot" {
+		t.Errorf("probed = %v, want the binary the verdict is about", got)
+	}
+}
