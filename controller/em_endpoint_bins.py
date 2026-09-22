@@ -583,6 +583,58 @@ def refuse_install(k: Kind, live, db_path: str | None = None) -> str | None:
     return None
 
 
+def resolver_complaint(resolver_status) -> tuple[str, str] | None:
+    """
+    What to say about a device's name-resolution shim, or None to stay quiet.
+
+    Returns `(level, text)` where level is "warning" or "info".
+
+    # Why the CONTROLLER says it
+
+    The firmware writes its own line, once, from the endpoint supervisor at
+    start — before the control connection exists, so the log relay has
+    nowhere to send it, and the state never changes again so it is never
+    written twice. It was missing for all four firmware releases built on
+    top of it, and its absence was explained three different ways before the
+    cause was found. The register message has no such problem: it arrives ON
+    the connection, every time.
+
+    # The four answers, and why the fourth is not silence
+
+    A device that resolves names says nothing at all — this is a complaint,
+    not a status line. The rest are the three ways it can be wrong, and the
+    third is the one that reads healthy everywhere else:
+
+      * not installed, or the linker refused it — the file is the problem
+      * loaded, and it resolves nothing — the shim is the problem
+      * loaded, and it did not answer — either the firmware predates the
+        self-test or the probe produced no line, and BOTH are unknowns
+        rather than successes
+
+    `needed` gates the whole thing: a FireOS device resolves names itself
+    and has nothing to complain about.
+    """
+    rs = resolver_status or {}
+    if not rs.get("needed"):
+        return None
+
+    why = rs.get("preload_error") or (
+        "" if rs.get("ok") else (rs.get("reason") or "not installed"))
+    if why:
+        return "warning", f"the name-resolution shim is not usable — {why}"
+
+    selftest = rs.get("selftest") or ""
+    if not selftest:
+        return "warning", ("shim installed and loaded, but it reported no "
+                           "self-test — firmware older than 2.57.0-fx.1, or "
+                           "the probe produced no line")
+    # The shim's own line, e.g. "clienttoken.spotify.com rc=0 ip=1.2.3.4 …".
+    # Padded on both sides so "rc=0" cannot match inside "rc=07".
+    if " rc=0 " not in f" {selftest} ":
+        return "warning", f"shim loaded and resolves nothing — {selftest}"
+    return "info", f"shim resolving — {selftest}"
+
+
 def wants_install(k: Kind, capabilities, effective: dict) -> bool:
     """
     Could this device want this kind at all — the half that costs no I/O.
