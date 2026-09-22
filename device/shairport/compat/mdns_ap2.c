@@ -46,8 +46,15 @@ static void txt_free(char **txt) {
   free(txt);
 }
 
+/* Whether txt_dup failed, as opposed to being handed nothing to copy. The two
+ * are the same return value and must not be the same answer, or an allocation
+ * failure reads as "this service has no attributes" and goes on the air. */
+static int dup_failed(char **in, char **out) {
+  return in != NULL && in[0] != NULL && out == NULL;
+}
+
 int em_ad_set(struct em_ad *ad, const char *ap1name, const char *ap2name, int port,
-              char **secondary) {
+              char **primary, char **secondary) {
   if (ad == NULL || ap1name == NULL)
     return -1;
 
@@ -55,12 +62,14 @@ int em_ad_set(struct em_ad *ad, const char *ap1name, const char *ap2name, int po
    * leaves the caller advertising what it already was. */
   char *n1 = strdup(ap1name);
   char *n2 = (ap2name != NULL) ? strdup(ap2name) : NULL;
+  char **pri = txt_dup(primary);
   char **sec = txt_dup(secondary);
 
-  if (n1 == NULL || (ap2name != NULL && n2 == NULL) || (secondary != NULL && secondary[0] != NULL &&
-                                                        sec == NULL)) {
+  if (n1 == NULL || (ap2name != NULL && n2 == NULL) || dup_failed(primary, pri) ||
+      dup_failed(secondary, sec)) {
     free(n1);
     free(n2);
+    txt_free(pri);
     txt_free(sec);
     return -1;
   }
@@ -69,26 +78,39 @@ int em_ad_set(struct em_ad *ad, const char *ap1name, const char *ap2name, int po
   ad->ap1name = n1;
   ad->ap2name = n2;
   ad->port = port;
+  ad->primary = pri;
   ad->secondary = sec;
   return 0;
 }
 
-int em_ad_update(struct em_ad *ad, char **secondary) {
+int em_ad_update(struct em_ad *ad, char **primary, char **secondary) {
   if (ad == NULL)
     return -1;
   /* NULL means "unchanged", not "none". shairport's four update call sites all
    * pass NULL for the primary records and only ever resend the secondary set;
    * reading NULL as "clear it" would retire _raop._tcp's TXT on the first
    * group change. */
-  if (secondary == NULL)
+  if (primary == NULL && secondary == NULL)
     return 0;
 
+  char **pri = txt_dup(primary);
   char **sec = txt_dup(secondary);
-  if (secondary[0] != NULL && sec == NULL)
+  if (dup_failed(primary, pri) || dup_failed(secondary, sec)) {
+    txt_free(pri);
+    txt_free(sec);
     return -1;
+  }
 
-  txt_free(ad->secondary);
-  ad->secondary = sec;
+  /* Both halves are swapped only once both copies exist, so a failure on the
+   * second leaves neither replaced. */
+  if (primary != NULL) {
+    txt_free(ad->primary);
+    ad->primary = pri;
+  }
+  if (secondary != NULL) {
+    txt_free(ad->secondary);
+    ad->secondary = sec;
+  }
   return 0;
 }
 
@@ -97,9 +119,11 @@ void em_ad_free(struct em_ad *ad) {
     return;
   free(ad->ap1name);
   free(ad->ap2name);
+  txt_free(ad->primary);
   txt_free(ad->secondary);
   ad->ap1name = NULL;
   ad->ap2name = NULL;
+  ad->primary = NULL;
   ad->secondary = NULL;
   ad->port = 0;
 }
