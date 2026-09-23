@@ -1556,6 +1556,51 @@ static int run_wait(char *const argv[])
     return st;
 }
 
+/* Turn WiFi power save off, on every carrier rising edge.
+ *
+ * An idle device takes one to two seconds to answer anything it did not start
+ * itself, and that is the whole of why it cannot be found on a LAN: every
+ * discovery is inbound and unsolicited — an mDNS query for Spotify Connect or
+ * AirPlay, the TCP connect behind it, a phone looking for a speaker. The
+ * controller link hides it completely, because the device opens that one
+ * itself and keeps it alive, so a device reads as perfectly healthy in the
+ * dashboard while no phone can see it.
+ *
+ * Measured on emos-v0.8.0-fx.1: ARP did not even resolve cold, and once it
+ * did, min/avg/max were 934/1447/1959 ms. With power save off: 1.4/210/985 ms.
+ * The minimum falling from 934 ms to 1.4 ms is the measurement — the link was
+ * always capable and what was being timed was sleep.
+ *
+ * Under FireOS, Android's wifi service does this; emOS has no framework and
+ * the MediaTek driver default applies. So it belongs here rather than in the
+ * firmware, which runs on both.
+ *
+ * Re-applied per EDGE rather than reconciled, because this driver implements
+ * `set_power_mode` and not `get_power_mode` — there is nothing to read back,
+ * so the only safe assumption is that a re-association restored the default.
+ * `iw` is not on the device on any layout; `iwpriv` is.
+ *
+ * A device with no iwpriv keeps the driver default and SAYS so. It is a
+ * latency fault rather than a boot fault, so it must never be a reason not to
+ * come up — but an unsaid one is invisible, which is how this cost a week.
+ */
+static void wifi_power_save_off(void)
+{
+    static const char *const cands[] = { "/system/bin/iwpriv",
+                                         "/system/xbin/iwpriv",
+                                         "/sbin/iwpriv",
+                                         "/vendor/bin/iwpriv", NULL };
+    const char *tool = first_exec(cands);
+    if (!tool) {
+        netlog("wifi: no iwpriv found - power save left at the driver "
+               "default, inbound traffic will be answered late\n");
+        return;
+    }
+    char *argv[] = { (char *)tool, "wlan0", "set_power_mode", "0", NULL };
+    int st = run_wait(argv);
+    netlog("wifi: power save off (%s set_power_mode 0) status=%d\n", tool, st);
+}
+
 /* Write /etc/resolv.conf pointing at the default gateway.
  *
  * The device has NO working DNS otherwise: FireOS keeps resolvers in Android
@@ -2857,6 +2902,11 @@ static void net_main(void)
      * exist and are not working, which is a fault worth showing. Waiting with
      * NO conf is not a fault and never turns it red -- see below. */
     int nocarrier = 0, said_fail = 0, said_noconf = 0;
+    /* Carrier as of the previous pass, so power save is turned off on the
+     * RISING edge and not once per five seconds. A re-association -- the
+     * firmware switching network, or the AP dropping us -- restores the
+     * driver default, and this is the only event that sees it. */
+    int had_carrier = 0;
 
     for (;;) {
         pid_t d;
@@ -2915,6 +2965,7 @@ static void net_main(void)
                                                   * supervision loop and may
                                                   * run many times. */
             dry = 0;
+            had_carrier = 0;
             /* Credentials present and still no carrier: say so. A red head is
              * the only channel left when the network is the broken thing.
              * Once, and the loop keeps trying -- it is a clue, not a halt. */
@@ -2927,6 +2978,10 @@ static void net_main(void)
         } else {
             nudges = 0;
             nocarrier = 0;
+            if (!had_carrier) {
+                had_carrier = 1;
+                wifi_power_save_off();
+            }
             if (dhc < 0) {
                 dhc = spawn(dhcp);
                 dry = 0;

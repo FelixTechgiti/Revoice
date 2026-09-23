@@ -270,6 +270,16 @@ appears. `dhcpcd` is started only after association, because it is given `-K`
 to match stock and so never retries a lease it failed to get before the link
 was up.
 
+**Power save is turned off on every carrier rising edge**, and it has to be an
+edge rather than a reconciled setting: this driver implements
+`iwpriv wlan0 set_power_mode` and not `get_power_mode`, so there is nothing to
+read back and a re-association has to be assumed to have restored the default.
+Left on, an idle device answers inbound traffic one to two seconds late or not
+at all — which is invisible over the controller link, because the device opens
+that one itself, and fatal to everything that finds a speaker on a LAN. A
+device whose `/system` carries no `iwpriv` keeps the driver default and says so
+in `/run/net.log`; it is a latency fault, never a reason not to boot.
+
 Cold boot to on-the-network is about 32 seconds.
 
 ## Diagnostics
