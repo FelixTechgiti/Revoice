@@ -182,7 +182,15 @@ def test_the_endpoint_asks_both_questions_in_one_shell_session():
 def test_the_panel_renders_the_servers_verdict_rather_than_its_own():
     jsx = (__import__("pathlib").Path(__file__).resolve().parents[1]
            / "static" / "dashboard.jsx").read_text()
-    assert "diag_' + emos.diagSummary" in jsx
+    # The panel is its own component since #338 and takes the verdict as a
+    # prop; what is pinned is that it RENDERS the server's, never derives one.
+    assert "diag_' + summary" in jsx
+    assert "<DeviceDiagnosis diag={emos && emos.diag}" in jsx
+    # And it is rendered on STATUS, which is the move (#338): the Updates tab
+    # keeps the emOS version and the reflash button, which are an update.
+    assert "summary={emos && emos.diagSummary}" in jsx
+    assert "tab === 'updates' || tab === 'status'" in jsx, (
+        "the probe must fire for the tab that now shows its answer")
     # Every verdict the server can produce needs a string, in both languages.
     strings = (__import__("pathlib").Path(__file__).resolve().parents[1]
                / "static" / "strings.js").read_text()
@@ -283,3 +291,92 @@ def test_airplay2_is_not_judged_on_a_port_this_firmware_does_not_use():
                          airplay_on=True, airplay2_on=True, spotify_on=True)
     assert d["airplay2Listening"] is False
     assert diag.summary(d) == "ok"
+
+
+# ── Installed is not running, and unknown is not healthy (#338) ──────────────
+
+def test_which_receiver_is_running_is_asked_and_the_suffix_is_checked_first():
+    """
+    `shairport-sync` is a PREFIX of `shairport-sync-ap2`, so a test for the
+    classic name matches the AirPlay 2 process too — and the answer would be
+    "classic" about a device serving AirPlay 2, which is this bug with the
+    sign flipped.
+    """
+    assert diag._receiver_running("1 root /data/local/bin/shairport-sync-ap2 -a X") == "ap2"
+    assert diag._receiver_running("1 root /data/local/bin/shairport-sync -a X") == "classic"
+
+
+def test_a_ps_that_said_nothing_is_not_a_device_with_no_receiver():
+    """
+    None and "none" are different claims: a failed measurement and a fact
+    about the device. Same three-valued discipline as nqptpRunning, and for
+    the same reason — the reassuring reading of a failed measurement is the
+    one that costs a day.
+    """
+    assert diag._receiver_running(None) is None
+    assert diag._receiver_running("") == "none"
+
+
+def test_the_probe_asks_which_receiver_is_running():
+    cmd = diag.diag_cmd()
+    assert "RXRUN:" in cmd
+    assert "[s]hairport-sync" in cmd, "the ps match must not catch its own grep"
+
+
+def test_an_unknown_clock_never_renders_as_a_running_one():
+    """
+    The server keeps "not measured" apart from "not running"; the dashboard
+    used to collapse the first into "clock running" — the direction that
+    reassures.
+    """
+    jsx = (__import__("pathlib").Path(__file__).resolve().parents[1]
+           / "static" / "dashboard.jsx").read_text()
+    body = jsx.split("function diagAirplayLine", 1)[1].split("\n}", 1)[0]
+    assert "diagClockUnknown" in body, (
+        "an unmeasured clock has no string of its own — see #338")
+    assert "d.nqptpRunning == null" in body
+
+
+def test_the_airplay_line_is_built_from_what_is_running():
+    jsx = (__import__("pathlib").Path(__file__).resolve().parents[1]
+           / "static" / "dashboard.jsx").read_text()
+    body = jsx.split("function diagAirplayLine", 1)[1].split("\n}", 1)[0]
+    assert "d.receiverRunning" in body, "the line must report what is EXECUTING"
+    assert "const running = d.ap2Installed" not in body
+
+
+# ── The power-save line the tail could never reach (#338) ───────────────────
+
+def test_the_power_save_line_is_grepped_not_tailed():
+    """
+    emOS writes it once, on the first carrier rising edge. A six-line tail on
+    a device that has been up an hour can never contain it, which made the one
+    measurement that says whether #299 ran unreadable on the day it shipped.
+    """
+    cmd = diag.diag_cmd()
+    assert "WIFIPS:" in cmd
+    assert "power save" in cmd and "no iwpriv" in cmd
+    assert "busybox grep" in cmd.split("WIFIPS:")[1].split(";")[0]
+
+
+def test_the_four_things_emos_can_say_about_power_save():
+    off = diag._power_save("wifi: power save off (/system/bin/iwpriv set_power_mode 0) status=0")
+    assert off["state"] == "off"
+    bad = diag._power_save("wifi: power save off (/system/bin/iwpriv set_power_mode 0) status=256")
+    assert bad["state"] == "refused" and bad["status"] == 256
+    assert diag._power_save("wifi: no iwpriv found - left at the driver default")["state"] == "no_tool"
+
+
+def test_silence_about_power_save_is_not_a_fault():
+    """
+    An emOS below 0.10.0-fx.1 and a FireOS device both say nothing here, and
+    only one of them has anything wrong with it. Rendering silence as "power
+    save is on" would accuse every device that predates the fix.
+    """
+    assert diag._power_save(None) is None
+    assert diag._power_save("") is None
+    strings = (__import__("pathlib").Path(__file__).resolve().parents[1]
+               / "static" / "strings.js").read_text()
+    assert strings.count("diagPowerSaveSilent:") == 2
+    for key in ("off", "refused", "no_tool", "unknown"):
+        assert strings.count(f"diagPowerSave_{key}:") == 2, key

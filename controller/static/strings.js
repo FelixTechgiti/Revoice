@@ -311,6 +311,15 @@
       diagClockOk: 'clock running',
       diagClockStopped: 'clock NOT running',
       diagClockMissing: 'no clock daemon',
+      diagClockUnknown: 'clock not measured',
+      diagAp2Idle: 'AirPlay 2 is installed and was not selected',
+      diagPowerSave: 'WiFi power save',
+      diagPowerSave_off: 'off',
+      diagPowerSave_refused: 'the driver refused to turn it off',
+      diagPowerSave_no_tool: 'no iwpriv here — left at the driver default',
+      diagPowerSave_unknown: 'emOS said something unrecognised',
+      diagPowerSaveSilent: 'not stated — an emOS below 0.10.0-fx.1, or FireOS, '
+        + 'where Android owns it',
       emosWarning: 'This writes the boot partition. The controller rebuilds '
         + 'the image from THIS device — your own kernel, only the emOS part '
         + 'replaced — verifies it by checksum before and after writing, and '
@@ -325,11 +334,14 @@
           + 'network — but a boot partition is the one thing on this device '
           + 'with no second slot.\n\nThe device will be away for a few minutes.';
       },
-      diagAirplay(kind, clock) {
-        // The product names are not translated; which one is INSTALLED is.
-        const what = kind === 'ap2' ? 'AirPlay 2'
-          : kind === 'classic' ? 'AirPlay' : 'none installed';
-        return `AirPlay: ${what} (${clock})`;
+      diagAirplay(running, clock, note) {
+        // What is RUNNING, never what is on disk — reading one as the other
+        // is #338. The product names are not translated; the verb is.
+        const what = running === 'ap2' ? 'AirPlay 2 running'
+          : running === 'classic' ? 'AirPlay running'
+          : running === 'none' ? 'no receiver running'
+          : 'could not tell what is running';
+        return `AirPlay: ${what} (${clock})${note ? ' — ' + note : ''}`;
       },
       emosStarted: 'Started. It takes a few minutes and the device reboots at '
         + 'the end — watch the device log for each step.',
@@ -911,6 +923,15 @@
       diagClockOk: 'Uhr läuft',
       diagClockStopped: 'Uhr läuft NICHT',
       diagClockMissing: 'kein Uhren-Dienst',
+      diagClockUnknown: 'Uhr nicht gemessen',
+      diagAp2Idle: 'AirPlay 2 ist installiert und wurde nicht gewählt',
+      diagPowerSave: 'WLAN-Stromsparen',
+      diagPowerSave_off: 'aus',
+      diagPowerSave_refused: 'der Treiber hat das Abschalten abgelehnt',
+      diagPowerSave_no_tool: 'kein iwpriv vorhanden — Voreinstellung des Treibers',
+      diagPowerSave_unknown: 'emOS hat etwas Unbekanntes gemeldet',
+      diagPowerSaveSilent: 'keine Angabe — emOS älter als 0.10.0-fx.1, oder '
+        + 'FireOS, wo Android das übernimmt',
       emosWarning: 'Das schreibt die Boot-Partition. Der Controller baut das '
         + 'Abbild aus DIESEM Gerät neu — dein eigener Kernel, nur der '
         + 'emOS-Teil wird ersetzt —, prüft es vor und nach dem Schreiben per '
@@ -927,10 +948,12 @@
           + 'auf diesem Gerät ohne zweiten Platz.\n\nDas Gerät ist ein paar '
           + 'Minuten weg.';
       },
-      diagAirplay(kind, clock) {
-        const what = kind === 'ap2' ? 'AirPlay 2'
-          : kind === 'classic' ? 'AirPlay' : 'nichts installiert';
-        return `AirPlay: ${what} (${clock})`;
+      diagAirplay(running, clock, note) {
+        const what = running === 'ap2' ? 'AirPlay 2 läuft'
+          : running === 'classic' ? 'klassisches AirPlay läuft'
+          : running === 'none' ? 'kein Empfänger läuft'
+          : 'nicht feststellbar, was läuft';
+        return `AirPlay: ${what} (${clock})${note ? ' — ' + note : ''}`;
       },
       emosStarted: 'Gestartet. Es dauert ein paar Minuten und das Gerät '
         + 'startet am Ende neu — jeder Schritt steht im Geräteprotokoll.',
