@@ -1,5 +1,40 @@
 # emOS changelog
 
+## 0.10.0-fx.1
+
+### Der Lautsprecher antwortet, wenn er gefragt wird
+
+**Wer emOS einsetzt, sollte dieses Update einspielen — es ist der Grund, warum
+ein Echo im Netz nur manchmal auftaucht.**
+
+emOS hat das Stromsparen des WLANs nie abgeschaltet. Unter FireOS erledigte
+Android das im Hintergrund; emOS hat keinen solchen Dienst, also galt bisher
+die Voreinstellung des Funkchips. Ein Gerät, das gerade nichts zu tun hat,
+schläft damit zwischen zwei Funkbaken — und alles, was von außen kommt, wartet.
+
+Gemessen an einem Gerät im Ruhezustand: die schnellste Antwort brauchte
+**934 Millisekunden**, die langsamste knapp zwei Sekunden, und manche Anfragen
+kamen gar nicht an. Nach dem Abschalten des Stromsparens waren es
+**1,4 Millisekunden**. Die Verbindung konnte das die ganze Zeit; gemessen wurde
+Schlaf.
+
+Das erklärt mehr als eine träge Antwort. Alles, was einen Lautsprecher im
+Heimnetz findet, kommt von außen: die Suchanfrage eines Telefons nach AirPlay,
+die Suche der Spotify-App, der Verbindungsaufbau dahinter. Die Verbindung zum
+Controller war nie betroffen, weil das Gerät sie selbst aufbaut und offen hält
+— deshalb konnte ein Echo im Dashboard vollkommen gesund aussehen und für jedes
+Telefon im selben Raum unsichtbar sein.
+
+Ab dieser Fassung wird das Stromsparen bei jeder Anmeldung am WLAN abgeschaltet,
+also auch nach einem Netzwechsel oder wenn der Router die Verbindung kurz
+verliert. Ein Gerät, dessen Android-Partition das nötige Werkzeug nicht
+mitbringt, startet unverändert und schreibt das ins Netzprotokoll, das die
+Gerätediagnose im Dashboard anzeigt.
+
+Ein zweiter Sparmechanismus des Funkchips ist damit noch nicht angefasst: nach
+dem Abschalten blieben einzelne Ausreißer bis knapp eine Sekunde. Das wird
+getrennt gemessen, bevor daran etwas verstellt wird.
+
 ## 0.9.0-fx.1
 
 ### Spotify und AirPlay können endlich gefragt werden
