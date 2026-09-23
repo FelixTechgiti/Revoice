@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.75.0-fx.1
+
+### Die Gerätediagnose sagt, was läuft
+
+**Wer wissen will, ob sein Echo AirPlay 2 ausliefert, bekam bisher je nach
+Seite zwei verschiedene Antworten.** Die Diagnose meldete „AirPlay 2 (Uhr
+läuft)" über ein Gerät, das klassisches AirPlay ausliefert — und über eine Uhr,
+deren Zustand nie gemessen wurde.
+
+Dahinter standen zwei Verwechslungen derselben Art. Dass eine Datei auf dem
+Gerät liegt, hieß „sie läuft"; und eine Messung, die nicht zustande kam, hieß
+„alles in Ordnung". Ab dieser Fassung fragt der Controller das Gerät, welches
+Programm tatsächlich ausgeführt wird, und eine nicht zustande gekommene Messung
+steht als solche da.
+
+Steht klassisches AirPlay, während die AirPlay-2-Datei danebenliegt, sagt die
+Zeile das ausdrücklich — dann fehlt nur ein Schalter, kein Programm.
+
+**Neu ist eine Zeile zum WLAN-Stromsparen.** Sie sagt, was emOS beim Starten
+damit gemacht hat. Schweigt sie, liegt kein Fehler vor: ein emOS älter als
+0.10.0-fx.1 und ein FireOS-Gerät sagen dazu beide nichts.
+
+**Die Diagnose ist von „Updates" nach „Status" umgezogen.** Sie beschreibt,
+was ein Gerät ist, und nicht, was man mit ihm tun kann. Das Abfragen dauert
+rund eine halbe Minute; solange steht jetzt „wird abgefragt" da, statt dass die
+Anzeige einfach fehlt.
+
 ## 2.74.0-fx.1
 
 ### Der Lautsprecher heißt so, wie er im Dashboard heißt
