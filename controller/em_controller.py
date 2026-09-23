@@ -85,6 +85,7 @@ import em_outchain
 import em_ring_light
 import em_scenes
 import em_shadow
+import em_endpoint_names
 import em_oww_warmup
 import em_audiostate
 import em_barge
@@ -4163,6 +4164,11 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
         config = await loop.run_in_executor(
             None, db.get_effective_device_config, device_id
         )
+        # Empty endpoint names resolve to the label on the way out, never in
+        # the stored config — see em_endpoint_names (#309). Rebound rather
+        # than folded into the send, because the mirrors below read the same
+        # name and four tests anchor on the shape of that one line.
+        config = em_endpoint_names.resolve(config, row["label"])
         await device.send_control({"type": "config", **config})
         device.oww_threshold = float(config.get("owwThreshold", OWW_THRESHOLD))
         device.oww_model     = config.get("owwModel", f"{OWW_MODEL}_v0.1")
