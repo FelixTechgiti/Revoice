@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.73.0-fx.1
+
+### Der AirPlay- und Spotify-Name bleibt stehen
+
+**Wer den Namen eines Lautsprechers eingetragen hat und ihn nach dem Neuladen
+nicht mehr vorfand, braucht dieses Update.** Der Name ließ sich bisher
+überhaupt nicht speichern — nicht falsch gespeichert, sondern beim Eintragen
+verworfen, während die Oberfläche Erfolg meldete.
+
+Ob ein Gerät einen Wert für sich behalten darf, entscheidet der Controller an
+drei Stellen. Die Stelle, die den Wert wieder ausliest, kannte die Ausnahme für
+Namen: ein Name kann nie von der Flotte kommen, weil sonst jeder Echo im Haus
+gleich hieße. Die beiden Stellen, die schreiben, kannten sie nicht. Und da kein
+Gerät den Bereich „Streaming" von sich aus übersteuert, hatte der Name nirgends
+Platz.
+
+Die 2.72.0-fx.1 hat die Fehlermeldung beseitigt, die dabei zuletzt erschien.
+Das war die halbe Strecke: seitdem ließ sich speichern, nur kam der Name
+weiterhin nicht an. Beides zusammen ist derselbe Fehler in zwei Ausprägungen —
+eine Regel, die es doppelt gibt, und gepflegt wird die Kopie, die gelesen wird.
+
+**Nach dem Update den Namen einmal neu eintragen.** Was vorher eingegeben
+wurde, ist nie irgendwo angekommen und kann nicht zurückkommen.
+
+Ein Gerät, dem niemand einen Namen gegeben hat, meldet sich weiterhin mit
+seiner Seriennummer. Dass an dieser Stelle die Gerätebezeichnung einspringen
+sollte, ist als eigener Punkt offen.
+
 ## 2.72.0-fx.1
 
 ### Geräteeinstellungen lassen sich wieder speichern
