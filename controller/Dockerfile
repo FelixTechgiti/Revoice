@@ -103,6 +103,7 @@ COPY em_oww_assets.py  ./
 COPY em_oww_models.py .
 COPY em_endpoint_bins.py .
 COPY em_endpoint_release.py .
+COPY em_endpoint_names.py .
 COPY em_endpoint_restart.py .
 COPY em_mdnsscan.py .
 COPY em_netdiag.py .

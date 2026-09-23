@@ -58,6 +58,7 @@ import em_db as db
 import em_auth as auth
 import em_ble_proxy
 import em_config_sections as sections_mod
+import em_endpoint_names
 import em_console_pw
 import em_labels
 import em_crashlog
@@ -1300,6 +1301,23 @@ async def _post_approve(request: web.Request) -> web.Response:
     return _ok({"device_id": device_id, "label": label})
 
 
+async def _with_endpoint_names(device_id: str, effective: dict) -> dict:
+    """
+    The effective config as it goes ON THE WIRE: empty endpoint names filled
+    from the device's label (#309).
+
+    Every full config push goes through this, and there are four of them —
+    registration, a config save, and the two wake-model installs, which send
+    the whole effective config again and would otherwise hand the device back
+    its serial. `tests/test_endpoint_names.py` pins that no fifth appears
+    without it.
+    """
+    row = await asyncio.get_event_loop().run_in_executor(
+        None, db.get_device, device_id
+    )
+    return em_endpoint_names.resolve(effective, row["label"] if row else "")
+
+
 async def _apply_live_config(device_id: str, live, effective: dict) -> None:
     """
     Push an effective config to a connected device and refresh the
@@ -1316,6 +1334,7 @@ async def _apply_live_config(device_id: str, live, effective: dict) -> None:
     locally until the classifier is actually on it — see _hold_back_oww_model.
     """
     effective, pending_model = _hold_back_oww_model(live, effective)
+    effective = await _with_endpoint_names(device_id, effective)
     await live.send_control({"type": "config", **effective})
     if "owwThreshold" in effective:
         live.oww_threshold = float(effective["owwThreshold"])
@@ -5059,6 +5078,7 @@ async def _install_then_switch(device_id: str, model: str) -> None:
                  f"— dropping the switch to {model}")
         return
 
+    effective = await _with_endpoint_names(device_id, effective)
     await live.send_control({"type": "config", **effective})
     live.oww_model = model
     import em_esphome
@@ -5355,6 +5375,7 @@ async def reconcile_oww_assets(device_id: str, live) -> None:
     )
     # The device builds its scorer from the config push, so it needs telling
     # the model is now there — same mechanism _install_then_switch relies on.
+    effective = await _with_endpoint_names(device_id, effective)
     await live.send_control({"type": "config", **effective})
     await _push_log_event(
         device_id, "info", "controller",
