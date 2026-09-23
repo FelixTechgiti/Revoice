@@ -358,3 +358,81 @@ def test_the_dashboard_mirror_of_device_only_keys_matches():
     assert mirrored == set(cs.DEVICE_ONLY_KEYS), (
         f"dashboard mirror {sorted(mirrored)} != "
         f"{sorted(cs.DEVICE_ONLY_KEYS)}")
+
+
+# ── The names must be STORABLE, not only readable (#332) ─────────────────────
+
+def test_storable_keys_carries_all_three_sets():
+    """
+    The union a write path needs. `merge` applies three sets on the way out;
+    a write path that applies two discards the third in silence.
+    """
+    keys = cs.storable_keys(["ring"])
+    assert "ledScene" in keys, "the scoped section's own keys"
+    assert cs.STATE_KEYS <= keys, "hardware state is never section-scoped"
+    assert cs.DEVICE_ONLY_KEYS <= keys, "a name can never come from the fleet"
+
+
+def test_a_name_is_storable_with_no_section_overridden_at_all():
+    """
+    The reported state: a device that follows the fleet everywhere.
+
+    `streaming` is not in the v8 backfill and a new row defaults to '[]', so
+    this is not an unusual configuration — it is the one every device is in
+    until somebody switches that stage over by hand.
+    """
+    keys = cs.storable_keys([])
+    assert "airplayName" in keys
+    assert "spotifyName" in keys
+    assert "ledScene" not in keys, "an unscoped section's keys must stay out"
+
+
+def test_a_name_survives_reverting_the_streaming_section(tmp_path):
+    """
+    The second half of #332, in the database.
+
+    Handing `streaming` back to the fleet must not delete the name: the fleet
+    cannot hold one either (see test_a_fleet_name_never_reaches_a_device_that
+    _has_none), so pruning it here deletes it from everywhere at once.
+    """
+    em_db.init(str(tmp_path / "t.db"))
+    em_db.register_new_device("dev1", "10.0.0.9", "vtest")
+    em_db.set_device_config_sections("dev1", ["streaming"])
+    em_db.set_device_config("dev1", {"airplayName": "Testgerät",
+                                     "airplay2Enabled": True})
+
+    em_db.set_device_config_sections("dev1", [])
+    stored = em_db.get_device_config("dev1")
+    assert stored.get("airplayName") == "Testgerät", (
+        "the name was pruned with the section — it can live nowhere else")
+    assert "airplay2Enabled" not in stored, (
+        "an ordinary key of a reverted section must still be discarded")
+    assert em_db.get_effective_device_config("dev1")["airplayName"] == "Testgerät"
+
+
+def test_both_write_paths_use_storable_keys():
+    """
+    Source guard, because the bug was one expression written twice and a
+    third place already doing it right.
+
+    `_fixup_v11` is deliberately not covered: it is a migration that has
+    already run on every database in the field, and changing what a past
+    migration did is not a fix.
+    """
+    controller = Path(__file__).resolve().parents[1]
+    api = (controller / "em_api.py").read_text()
+    db  = (controller / "em_db.py").read_text()
+
+    assert "sections_mod.storable_keys(new_sections)" in api, (
+        "_post_device_config assembles the union itself again — see #332")
+    assert re.search(r"kept = em_config_sections\.storable_keys\(sections\)", db), (
+        "set_device_config_sections prunes with its own union again — see #332")
+
+    def _outside_the_fixup(src: str) -> str:
+        return src.split("def _fixup_v11", 1)[0] + \
+               src.split("def _fixup_v19", 1)[-1]
+
+    for name, src in (("em_api.py", api), ("em_db.py", _outside_the_fixup(db))):
+        assert "keys_for(new_sections) | " not in src, name
+        assert not re.search(r"keys_for\(sections\) \| \w+\.STATE_KEYS", src), (
+            f"{name} rebuilds the union by hand — call storable_keys")

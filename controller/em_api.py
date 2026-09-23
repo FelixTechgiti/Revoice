@@ -1476,7 +1476,10 @@ async def _post_device_config(request: web.Request) -> web.Response:
             )
         new_sections = sections_mod.normalise(sections_body)
 
-    in_scope = sections_mod.keys_for(new_sections) | sections_mod.STATE_KEYS
+    # Everything this device may hold a value of its own for — scoped keys,
+    # its own hardware state, and the names that can never be inherited.
+    # Assembling that union here is what dropped the names (#332).
+    in_scope = sections_mod.storable_keys(new_sections)
 
     # Same replace-not-merge trap as the global endpoint (see _dropped_keys),
     # but scoped: only keys that REMAIN in scope can be accidentally dropped.

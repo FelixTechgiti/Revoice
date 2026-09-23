@@ -1983,9 +1983,15 @@ def set_device_config_sections(device_id: str, section_ids) -> list:
     silently reappear if it is toggled back months later.
 
     use_global_config is kept in step as the compat view for older readers.
+
+    What survives the prune is em_config_sections.storable_keys: the scoped
+    keys plus the two sets that are never scoped. A device's Spotify and
+    AirPlay names are in the second group — pruning them when Streaming goes
+    back to the fleet would delete a name the fleet cannot hold either, which
+    is half of #332.
     """
     sections = em_config_sections.normalise(section_ids)
-    kept = em_config_sections.keys_for(sections) | em_config_sections.STATE_KEYS
+    kept = em_config_sections.storable_keys(sections)
     stored = get_device_config(device_id)
     pruned = {k: v for k, v in stored.items() if k in kept}
     with _tx() as conn:

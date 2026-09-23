@@ -1849,9 +1849,10 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
     setSaving(true);
     try {
       // Send the scoping plus the full effective config. The controller
-      // keeps only the values belonging to overridden sections, so sending
-      // everything is safe and keeps the clobber guard satisfied (it sees no
-      // in-scope key going missing).
+      // keeps the values belonging to overridden sections, plus the keys that
+      // are never scoped at all (state, and the per-device names) — so
+      // sending everything is safe and keeps the clobber guard satisfied (it
+      // sees no in-scope key going missing).
       const body = { config_sections: sections, ...config };
       const res = await API.post(`/api/devices/${device.device_id}/config`, body);
       setDirty(false);
