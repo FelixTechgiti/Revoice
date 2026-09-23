@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.74.0-fx.1
+
+### Der Lautsprecher heißt so, wie er im Dashboard heißt
+
+**Wer nie einen AirPlay- oder Spotify-Namen eingetragen hat, findet seinen
+Echo ab jetzt unter seiner Bezeichnung statt unter der Seriennummer.** Ein
+Gerät, das im Dashboard „Küche" heißt, hieß in der AirPlay-Liste und in der
+Spotify-App `G090LF11743202AM` — und mit zwei Dots füllen sich beide Listen
+mit Nummern, die sich in der Mitte unterscheiden.
+
+Der Controller kannte die Antwort die ganze Zeit. Das Gerät kennt nur seine
+Seriennummer, deshalb kann es sich nicht selbst helfen; gesagt bekommen hat es
+bisher nichts, weil ein leeres Namensfeld hiess „nichts schicken".
+
+Ab dieser Fassung heisst ein leeres Feld „nimm die Bezeichnung". Der
+eingetragene Name schlägt das weiterhin, wer also einen abweichenden
+Spotify-Namen will, trägt ihn ein. Gespeichert wird die Bezeichnung nicht: sie
+wird beim Senden eingesetzt, damit sich der Name mitändert, wenn das Gerät
+umbenannt wird.
+
+**Zusammen mit 2.73.0-fx.1 ist die Sache damit vollständig.** Jene Fassung hat
+den eingetragenen Namen wieder speicherbar gemacht; diese sorgt dafür, dass man
+gar keinen eintragen muss.
+
+Der Name wird beim nächsten Verbinden des Geräts wirksam — der Endpunkt startet
+dafür kurz neu.
+
 ## 2.73.0-fx.1
 
 ### Der AirPlay- und Spotify-Name bleibt stehen
