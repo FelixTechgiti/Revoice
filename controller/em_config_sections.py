@@ -136,6 +136,30 @@ def keys_for(section_ids) -> set[str]:
     return out
 
 
+def storable_keys(section_ids) -> set[str]:
+    """
+    Every key a DEVICE may hold a value of its own for.
+
+    Three sets, and they are here together because a write path that takes
+    only two of them silently discards the third. `keys_for` is the scoped
+    part; STATE_KEYS are hardware state the device writes back whatever the
+    scoping says; DEVICE_ONLY_KEYS exist precisely because they can never be
+    inherited, so gating them on a section is the one thing that must not
+    happen to them.
+
+    `merge` already applies all three on the way OUT. It was the way IN that
+    applied two — in two places — and the missing third is why a device whose
+    Streaming section follows the fleet could not be given a Spotify or
+    AirPlay name at all (#332): the POST kept only in-scope keys, the scoping
+    write pruned what was left, and nothing reported either.
+
+    Anything deciding what a device's stored config may CONTAIN calls this,
+    rather than assembling the union again. A migration that has already run
+    keeps whatever expression it ran with.
+    """
+    return keys_for(section_ids) | STATE_KEYS | DEVICE_ONLY_KEYS
+
+
 def normalise(section_ids) -> list[str]:
     """
     Filter to known section ids, in canonical SECTIONS order.
