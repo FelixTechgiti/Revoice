@@ -106,6 +106,23 @@ def diag_cmd() -> str:
         f"echo \"NQPTP:$([ -f {NQPTP_BINARY} ] && echo yes || echo no)\"; "
         f"echo \"NQPTPRUN:$(busybox ps 2>/dev/null | busybox grep -c "
         f"'[n]qptp')\"; "
+        # WHICH receiver is running, which no `-f` test can answer: the file
+        # being there says nothing about which one was exec'd, and reading one
+        # as the other is what told an owner they had AirPlay 2 while their
+        # device served classic (#338). The argv the kernel holds is the only
+        # honest source, and the two names differ by a suffix, so the match is
+        # on the whole word — `shairport-sync` is a prefix of
+        # `shairport-sync-ap2`, and a naive grep says "classic" about both.
+        f"echo \"RXRUN:$(busybox ps 2>/dev/null "
+        f"| busybox grep '[s]hairport-sync' | busybox head -1)\"; "
+        # emOS's WiFi power-save verdict (#299), grepped rather than left to
+        # the tail below: it is written once, on the first carrier rising
+        # edge, so on a device that has been up for an hour it is thousands of
+        # lines back. A six-line tail could never contain it, which made the
+        # one measurement that says whether the fix ran unreadable on the day
+        # it shipped.
+        f"echo \"WIFIPS:$(busybox grep -E 'power save|no iwpriv' {NETLOG} "
+        f"2>/dev/null | busybox tail -n 1)\"; "
         # emOS's init writes its own account of the boot and the network to
         # /run/net.log, and nothing in this controller has ever read it. It
         # is where `dnsproxyd: could not bind` would be — the one explanation
@@ -225,6 +242,9 @@ def parse_diag(out: str):
         "spotifyListening": PORT_SPOTIFY_ZEROCONF in ports,
         "ap2Installed": fields.get("AP2") == "yes",
         "classicInstalled": fields.get("CLASSIC") == "yes",
+        # Which one is EXECUTING. None when `ps` did not answer — not "none",
+        # which is a positive statement that no receiver is up.
+        "receiverRunning": _receiver_running(fields.get("RXRUN")),
         "nqptpInstalled": fields.get("NQPTP") == "yes",
         # A count, because `grep -c` answers 0 for "not running" and for "ps
         # did not run" alike — so a non-numeric answer is unknown, not zero.
@@ -233,7 +253,67 @@ def parse_diag(out: str):
         # (a FireOS device, or an init that never wrote one).
         "netlog": [part.strip() for part in
                    fields.get("NETLOG", "").split("|") if part.strip()],
+        # What emOS did about WiFi power save, and None when it said nothing
+        # — an init below 0.10.0-fx.1, or a FireOS device, where Android owns
+        # it and there is no fault to report.
+        "powerSave": _power_save(fields.get("WIFIPS")),
     }
+
+
+def _receiver_running(raw):
+    """Which shairport-sync is executing: "ap2", "classic", "none" or None.
+
+    None means `ps` produced nothing at all, which is not the same statement
+    as "no receiver is running" — the first is a failed measurement and the
+    second is a fact about the device. Same three-valued discipline as
+    `nqptpRunning` beside it, and for the same reason: the reassuring reading
+    of a failed measurement is the one that costs a day.
+
+    The suffix decides, and it has to be checked FIRST: `shairport-sync` is a
+    prefix of `shairport-sync-ap2`, so a test for the classic name matches the
+    AirPlay 2 process too.
+    """
+    if raw is None:
+        return None
+    line = raw.strip()
+    if not line:
+        return "none"
+    if "shairport-sync-ap2" in line:
+        return "ap2"
+    if "shairport-sync" in line:
+        return "classic"
+    return "none"
+
+
+def _power_save(raw):
+    """emOS's own verdict on WiFi power save, as one of four states.
+
+    The init writes one line and only one, so this is a parse of our own
+    output rather than a guess: `power save off (<tool> set_power_mode 0)
+    status=<n>` when it ran, `no iwpriv found` when the tool was absent.
+
+    A missing line is None — "this init never said" — and must never render as
+    "power save is on": an emOS below 0.10.0-fx.1 and a FireOS device both
+    produce nothing here, and only one of them has a fault.
+    """
+    if raw is None:
+        return None
+    line = raw.strip()
+    if not line:
+        return None
+    if "no iwpriv" in line:
+        return {"state": "no_tool", "line": line}
+    if "power save off" in line:
+        status = None
+        for part in line.split():
+            if part.startswith("status="):
+                tail = part[len("status="):]
+                if tail.lstrip("-").isdigit():
+                    status = int(tail)
+        if status == 0:
+            return {"state": "off", "line": line}
+        return {"state": "refused", "status": status, "line": line}
+    return {"state": "unknown", "line": line}
 
 
 def with_intent(diag, *, airplay_on: bool, airplay2_on: bool,

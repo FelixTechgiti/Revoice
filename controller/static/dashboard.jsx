@@ -1727,17 +1727,26 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
         .then(setLogs).catch(console.error)
         .finally(() => setLogsLoading(false));
     }
-    if (tab === 'updates') {
-      API.get('/api/releases/latest').then(setRelease).catch(() => {});
-      // emOS is a separate namespace from the firmware above, so it needs
-      // its own ask. One shell round trip; see _get_device_emos.
-      // Cleared first: reopening the tab must show "asking" again rather
-      // than last time's answer, which may be minutes old and is about to be
-      // replaced. The call waits on a shell round trip to the Echo and has
-      // been measured at ~26s, so this is a state a user really sees.
+    // emOS is a separate namespace from the firmware, so it needs its own
+    // ask — and TWO tabs read the answer now: Updates wants the version and
+    // the reflash eligibility, Status wants the diagnosis (#338).
+    //
+    // Fired per tab entry rather than once per window, which is the existing
+    // behaviour and is deliberate: the call waits on a shell round trip to
+    // the Echo, measured at ~26s, and reopening a tab must show "asking"
+    // again rather than last time's answer — minutes old and about to be
+    // replaced. Cleared first for the same reason.
+    //
+    // The cost is one probe per visit to either tab. It is not shared across
+    // them, because a cache old enough to be worth keeping is old enough to
+    // be wrong about a device somebody is standing in front of.
+    if (tab === 'updates' || tab === 'status') {
       setEmos(null); setEmosErr(false);
       API.get(`/api/devices/${device.device_id}/emos`)
         .then(setEmos).catch(() => setEmosErr(true));
+    }
+    if (tab === 'updates') {
+      API.get('/api/releases/latest').then(setRelease).catch(() => {});
       // Same tab-entry pattern as the asset state below: this changes only
       // when someone edits system config, so polling it would be waste.
       API.get('/api/system/status')
@@ -2860,6 +2869,15 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     </Panel>
                   );
                 })()}
+
+                {/* The device's own diagnosis (#338). It sat under the emOS
+                    version on Updates, which was where the probe producing it
+                    happened to be fired — a fact about the fetch, not about
+                    the reader. It belongs here for the reason written beside
+                    Maintenance: Status describes what a device IS. */}
+                <DeviceDiagnosis diag={emos && emos.diag}
+                                 summary={emos && emos.diagSummary}
+                                 asking={!emos && !emosErr} failed={emosErr}/>
               </div>
             );
           })()}
@@ -3269,52 +3287,6 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     </div>
                   )}
 
-                  {/* What the device says about the two things that stop
-                      working first, and that nothing else here can see:
-                      whether names resolve at all, and whether the local
-                      receivers are listening. The verdict is the server's —
-                      re-deriving it here is how a panel and an endpoint come
-                      to disagree about the same device. */}
-                  {emos.diag && (
-                    <div style={{ marginTop:14, paddingTop:12, borderTop:'1px solid var(--line)' }}>
-                      <div style={{ fontSize:9, color:'var(--muted)', marginBottom:6 }}>{t('diagTitle')}</div>
-                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10,
-                                    color: emos.diagSummary === 'ok' ? 'var(--muted)' : 'var(--warn)',
-                                    lineHeight:1.6, textWrap:'pretty' }}>
-                        {t('diag_' + emos.diagSummary)}
-                      </div>
-                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:8, lineHeight:1.7 }}>
-                        {t('diagDns')}: {t('diagDns_' + emos.diag.dns)}
-                        {' ('}{t('diagDnsVia')} {emos.diag.dnsPath}{')'}
-                        {/* Defensive on a field the server always sends:
-                            this panel renders inside the device window, and
-                            anything that throws here takes the WHOLE
-                            dashboard with it rather than one line. */}
-                        {' · '}{t('diagPorts')}: {(emos.diag.ports || []).length
-                          ? emos.diag.ports.join(', ')
-                          : t('diagNone')}
-                        {' · '}{diagAirplayLine(emos.diag)}
-                      </div>
-                      {emos.diag.dnsPath === 'gethostbyname' && emos.diag.dns !== 'ok' && (
-                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:6, lineHeight:1.6, textWrap:'pretty' }}>
-                          {t('diagDnsOld')}
-                        </div>
-                      )}
-                      {emos.diag.dnsDetail && (
-                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--empty)', marginTop:6, wordBreak:'break-word' }}>
-                          {emos.diag.dnsDetail}
-                        </div>
-                      )}
-                      {/* emOS's own account of its boot, verbatim and
-                          newest last. It is the only place a proxy that
-                          could not bind ever says so. */}
-                      {(emos.diag.netlog || []).length > 0 && (
-                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--empty)', marginTop:6, lineHeight:1.6, whiteSpace:'pre-wrap', wordBreak:'break-word' }}>
-                          {emos.diag.netlog.join('\n')}
-                        </div>
-                      )}
-                    </div>
-                  )}
                   </>)}
                 </Panel>
               )}
@@ -5061,18 +5033,132 @@ function airplay2Line(airplayStatus, health, capable, receiverHealth) {
   };
 }
 
-// The AirPlay half of the emOS panel's diagnosis, as one line.
+// The device's own diagnosis, as a panel.
+//
+// **It lives on STATUS, not on Updates** (#338). It used to hang off the emOS
+// version panel because that is where the probe that produces it was already
+// being fired — which is a fact about the fetch, not about the reader. The
+// reasoning beside the Maintenance panel settles it from the other side:
+// "Status describes what a device IS, and re-applying a payload is something
+// you DO". A diagnosis is what a device is. The emOS version and the reflash
+// button stay where they are, because those are an update.
+function DeviceDiagnosis({ diag, summary, asking, failed }) {
+  // Three states, not two. The probe waits on a shell round trip measured at
+  // ~26s, so "still asking" is a state somebody really sits through — and a
+  // panel that is simply absent for half a minute is indistinguishable from a
+  // device that has no diagnosis to give.
+  if (failed) {
+    return (
+      <Panel label={t('diagTitle')}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--warn)', lineHeight:1.6, textWrap:'pretty' }}>
+          {t('emosUnreachable')}
+        </div>
+      </Panel>
+    );
+  }
+  if (!diag) {
+    return asking ? (
+      <Panel label={t('diagTitle')}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', lineHeight:1.6 }}>
+          {t('emosChecking')}
+        </div>
+      </Panel>
+    ) : null;
+  }
+  return (
+    <Panel label={t('diagTitle')}>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10,
+                    color: summary === 'ok' ? 'var(--muted)' : 'var(--warn)',
+                    lineHeight:1.6, textWrap:'pretty' }}>
+        {t('diag_' + summary)}
+      </div>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:8, lineHeight:1.7 }}>
+        {t('diagDns')}: {t('diagDns_' + diag.dns)}
+        {' ('}{t('diagDnsVia')} {diag.dnsPath}{')'}
+        {/* Defensive on a field the server always sends: this renders inside
+            the device window, and anything that throws here takes the WHOLE
+            dashboard with it rather than one line. */}
+        {' · '}{t('diagPorts')}: {(diag.ports || []).length
+          ? diag.ports.join(', ')
+          : t('diagNone')}
+      </div>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:6, lineHeight:1.7 }}>
+        {diagAirplayLine(diag)}
+      </div>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:6, lineHeight:1.7 }}>
+        {diagPowerSaveLine(diag)}
+      </div>
+      {diag.dnsPath === 'gethostbyname' && diag.dns !== 'ok' && (
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:6, lineHeight:1.6, textWrap:'pretty' }}>
+          {t('diagDnsOld')}
+        </div>
+      )}
+      {diag.dnsDetail && (
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--empty)', marginTop:6, wordBreak:'break-word' }}>
+          {diag.dnsDetail}
+        </div>
+      )}
+      {/* emOS's own account of its boot, verbatim and newest last. It is the
+          only place a proxy that could not bind ever says so. The power-save
+          line above is grepped separately rather than hoped for here — it is
+          written once at boot and a six-line tail can never reach it. */}
+      {(diag.netlog || []).length > 0 && (
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--empty)', marginTop:8, lineHeight:1.6, whiteSpace:'pre-wrap', wordBreak:'break-word' }}>
+          {diag.netlog.join('\n')}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// The AirPlay half of the device diagnosis, as one line.
 //
 // A function rather than an expression in the JSX: a multi-line expression
 // inside a text node is read as TEXT by the i18n ratchet, which then counts
 // an identifier as an untranslated English string. It is also the shape the
-// panel wants — which binary is installed and whether its clock is up are
-// one fact about AirPlay, not three.
+// panel wants — what is running and whether its clock is up are one fact
+// about AirPlay, not three.
+//
+// **It reports what is RUNNING. It used to report what was INSTALLED** — the
+// ap2 file being on disk rendered as "AirPlay 2", about a device serving
+// classic AirPlay, in the same minute the Status tab said classic (#338).
+// That is #326 one panel over, and the same rule settles it: a setting and a
+// file can disagree, so ask the kernel which one is executing.
+//
+// Installed is still worth saying, as the NOTE rather than as the verdict: a
+// device running classic with the AirPlay 2 binary sitting beside it has one
+// switch between it and AirPlay 2, and a device without the binary has an
+// install. Different next steps, and the line has to tell them apart.
 function diagAirplayLine(d) {
-  const kind = d.ap2Installed ? 'ap2' : (d.classicInstalled ? 'classic' : 'none');
+  const running = d.receiverRunning == null ? null : d.receiverRunning;
+  // Unknown is its own answer and must never read as "running". The server
+  // keeps that distinction deliberately — `nqptpRunning` is null when `ps`
+  // did not answer — and the dashboard used to collapse it into the
+  // reassuring one.
   const clock = !d.nqptpInstalled ? t('diagClockMissing')
-    : (d.nqptpRunning === false ? t('diagClockStopped') : t('diagClockOk'));
-  return S().diagAirplay(kind, clock);
+    : d.nqptpRunning === false ? t('diagClockStopped')
+    : d.nqptpRunning == null ? t('diagClockUnknown')
+    : t('diagClockOk');
+  const note = (running === 'classic' && d.ap2Installed) ? t('diagAp2Idle') : '';
+  return S().diagAirplay(running, clock, note);
+}
+
+// What emOS did about WiFi power save, or that it said nothing.
+//
+// Its own line out of /run/net.log, grepped rather than tailed: it is written
+// once on the first carrier rising edge, so on a device that has been up an
+// hour a six-line tail can never contain it — which made the one measurement
+// that says whether #299's fix ran unreadable on the day it shipped.
+//
+// Silence is NOT a fault. An emOS below 0.10.0-fx.1 and a FireOS device both
+// say nothing here, and only one of them has anything wrong with it.
+function diagPowerSaveLine(d) {
+  const ps = d.powerSave;
+  if (!ps) return `${t('diagPowerSave')}: ${t('diagPowerSaveSilent')}`;
+  const what = t('diagPowerSave_' + ps.state) || ps.state;
+  const code = (ps.state === 'refused' && ps.status != null)
+    ? ` (status=${ps.status})` : '';
+  return `${t('diagPowerSave')}: ${what}${code}`;
 }
 
 function endpointHealthLine(health, capable) {
