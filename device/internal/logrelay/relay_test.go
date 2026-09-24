@@ -199,3 +199,19 @@ func TestACancellationIsStillNotAFailure(t *testing.T) {
 		t.Error("a cancelled context was relayed as a failure")
 	}
 }
+
+// The ADC mute read-back has to LEAVE the device (#339). A write the mixer
+// accepted is not a write that did what was meant, and that gap is invisible
+// to every outcome word this classifier matches on — so the line is a
+// lifecycle marker, exactly as `PcmSpeaker initialised` is, and for the same
+// reason: the measurement has no other way off a device nobody can shell into.
+func TestTheAdcMuteReadBackIsRelayed(t *testing.T) {
+	line := `Mute: ADC_A Left Mute reads "0" after writing "1"`
+	level, ok := Classify(line)
+	if !ok {
+		t.Fatal("the ADC mute read-back is not forwarded — #339 cannot be measured from the field")
+	}
+	if level != LevelInfo {
+		t.Fatalf("level = %v, want info — it is a measurement, not a failure", level)
+	}
+}

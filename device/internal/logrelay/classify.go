@@ -85,6 +85,14 @@ var lifecycleMarkers = []string{
 	"pcmspeaker initialised",
 	"pcmspeaker closed",
 	"orphaned instance",
+	// What the ADC mute control actually READS after being written. The
+	// microphone and the button LED both behave as the opposite of the state
+	// the controller displays (#339), the mixer reports no failures, and no
+	// shell is available on the device where it happens — so this is the only
+	// path the measurement has out. No generic outcome word applies: a write
+	// that landed and means the opposite of what was intended is a success by
+	// every word this classifier matches on.
+	"after writing",
 	// The all-clear for a device that could not hear the network. Its onset
 	// carries "cannot" and is forwarded as a failure; without this the log
 	// would hold every onset and no recovery, which reads as every outage

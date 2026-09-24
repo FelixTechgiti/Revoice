@@ -122,6 +122,30 @@ func setAdcMute(val string) {
 	if failed > 0 {
 		log.Printf("Mute: %d of %d ADC mute controls failed to set %s", failed, len(adcMuteCtls), val)
 	}
+	reportAdcMute(val)
+}
+
+// reportAdcMute reads one control back and says what it holds.
+//
+// A write that the mixer ACCEPTS is not a write that did what we meant, and
+// that gap is the whole of #339: the LED and the microphone both behave as the
+// opposite of `m.muted`, the mixer reports no failures, and nothing in this
+// firmware has ever said what the control actually reads afterwards. The same
+// shape as #546, where addressing a control by number wrote a perfectly valid
+// value to the wrong one and failed silently on every FireOS 6 device.
+//
+// One control, not eight: they are written together and a disagreement between
+// them is a different fault from the one being measured, so eight lines per
+// toggle would be noise. It is logged unconditionally — these are rare events,
+// a handful a day at most, and a line that only appears when somebody already
+// suspects something is a line nobody has when they need it.
+func reportAdcMute(val string) {
+	got, err := mixer.Get(adcMuteCtls[0])
+	if err != nil {
+		log.Printf("Mute: could not read %s back: %v", adcMuteCtls[0], err)
+		return
+	}
+	log.Printf("Mute: %s reads %q after writing %q", adcMuteCtls[0], got, val)
 }
 
 // RestoreMuted re-applies a persisted muted state at boot: flag + ADC mute
