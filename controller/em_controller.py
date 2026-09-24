@@ -4410,6 +4410,23 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
                 # would no-op against it.
                 await _d.mic_stop()
                 await _d.mic_start()
+        # The microphone mute, BEFORE the servers come up (#339).
+        #
+        # It used to reach this controller only as a `mute_state` CHANGE, and
+        # a change is invisible to a controller that was not there for it. So
+        # a device muted from Home Assistant and then reconnected read as
+        # unmuted here — with the microphone genuinely dead, the button LED
+        # lit, and HA's switch showing off, which is a control that lies about
+        # the one thing on this device nothing else reports.
+        #
+        # Absence reads as False, which is what firmware predating the field
+        # means and what this controller has always assumed. `mute_state`
+        # remains the authority for every change after this one.
+        #
+        # Before the servers, for `set_device_capabilities`' reason: a
+        # satellite reads `server.muted` at SubscribeStates, so a value
+        # arriving afterwards would be a state push racing the first read.
+        device.muted = bool(msg.get("muted", False))
         # Capabilities before the servers come up: they decide which HA
         # entities are advertised, and advertising is a one-shot at
         # ListEntities time.
@@ -4426,6 +4443,11 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
             set_mute=_set_mute,
             start_conversation=_start_conversation,
         )
+        # And push it into the freshly created server, which starts at False
+        # like every other mirror (#339). `device.muted` above is what the
+        # mic-start refusal reads; this is what Home Assistant's switch shows,
+        # and the two going out of step is the bug in another costume.
+        esphome.update_device_mute(device_id, device.muted)
         # Seed the audio-state entities from this device's own truth. The
         # register message carries what its music plane is playing, so a
         # device that reconnects mid-track is reported audible rather than
