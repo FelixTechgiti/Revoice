@@ -160,3 +160,59 @@ def test_the_device_is_the_authority_on_mute_state():
         "every mute_state report must reach the entity, including the ones "
         "a button press produced"
     )
+
+
+# ── Mute must survive a reconnect (#339) ────────────────────────────────────
+
+def _src(name):
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / name).read_text()
+
+
+def test_the_register_message_carries_the_mute_state():
+    """
+    A state reported only on CHANGE is invisible to a controller that was not
+    there for the change.
+
+    A device muted from Home Assistant and then reconnected read as UNMUTED
+    here — microphone genuinely dead, button LED lit, HA's switch showing off.
+    Nothing was inverted; the copy was never refreshed. The mirror of the rule
+    `base_os` is written around: ask where the CONSUMER needs the answer, and
+    the consumer is every reconnect.
+    """
+    ctl = _src("../device/internal/client/control.go")
+    assert '"muted": mutedAtRegister(),' in ctl, (
+        "the register message no longer carries the mute state — see #339")
+    assert "var MutedAtRegister func() bool" in ctl
+    cmd = _src("../device/cmd/server.go")
+    assert "client.MutedAtRegister = s.IsMuted" in cmd, (
+        "the hook is declared and never wired, so it always answers false")
+
+
+def test_the_controller_reads_it_and_mirrors_it_to_home_assistant():
+    """
+    BOTH copies, because they answer different questions: `device.muted` is
+    what the mic-start refusal reads, and the server's is what HA's switch
+    shows. The two going out of step is the same bug in another costume.
+    """
+    src = _src("em_controller.py")
+    assert 'device.muted = bool(msg.get("muted", False))' in src
+    assert "esphome.update_device_mute(device_id, device.muted)" in src
+    # Absence must keep meaning False — that is what firmware predating the
+    # field means, and what this controller has always assumed.
+    assert 'msg.get("muted", False)' in src
+
+
+def test_the_new_field_is_read_only_at_the_device():
+    """
+    The register field is the DEVICE telling the controller. It must not grow
+    a counterpart that lets the controller tell the device — the one-way rule
+    is enforced by the shape of `mute_set`, which carries no boolean, and a
+    second path with one would put that rule back into a runtime check
+    somebody can drop.
+    """
+    ctl = _src("../device/internal/client/control.go")
+    assert "func mutedAtRegister() bool" in ctl
+    # The hook READS. A setter would be the thing to forbid.
+    assert "MutedAtRegister func() bool" in ctl
+    assert "SetMutedFromController" not in ctl
