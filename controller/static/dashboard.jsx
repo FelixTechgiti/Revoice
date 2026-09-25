@@ -5297,6 +5297,31 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
   const flowLocked = running || step !== 0 || !!adb
                   || stepState.some(s => s !== 'pending');
 
+  // Where the serial console lives, found by ID rather than counted. The two
+  // flows have different step lists and this one is emOS-only; a number here
+  // would be wrong the first time a step is inserted.
+  const CONSOLE_STEP = STEPS.findIndex(st => st.id === 'reboot_watch');
+
+  // A device that ALREADY RUNS emOS and only needs a network.
+  //
+  // Without this there is no way to reach its console at all. The wizard runs
+  // in order, its first step wants ADB, and emOS has no adbd — so a device
+  // that was provisioned on one network and moved to another (sold, lent,
+  // taken to an office) cannot be told the new one from anywhere in this
+  // dashboard. The per-device Console tab is no help either: it belongs to a
+  // device the controller knows, and one that cannot reach the network has
+  // never registered.
+  //
+  // The steps before the console are marked `skipped` rather than `done`,
+  // because they were not done and a transcript that claims otherwise is
+  // worse than one that is honest about the gap.
+  function skipToConsole() {
+    if (flowLocked || CONSOLE_STEP < 0) return;
+    setStepState(prev => prev.map((v, i) => (i < CONSOLE_STEP ? 'skipped' : v)));
+    setStep(CONSOLE_STEP);
+    addLog(t('wizSkippedToConsole'), 'warn');
+  }
+
   function chooseFlow(next) {
     if (next === flow || flowLocked) return;
     // Step count differs between the flows, so the per-step state has to be
@@ -9052,8 +9077,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
   // Evaluated per render rather than held in state: a browser relaunched with
   // the flag set is a new page load, so there is nothing to invalidate.
   const usbBlocked = webUsbBlocked();
-  const statusColors = { pending: 'var(--muted)', running: 'var(--accent)', done: 'var(--ok)', error: 'var(--warn)' };
-  const statusIcons  = { pending: '·', running: '▸', done: '✓', error: '✕' };
+  const statusColors = { pending: 'var(--muted)', running: 'var(--accent)', done: 'var(--ok)', error: 'var(--warn)', skipped: 'var(--muted)' };
+  const statusIcons  = { pending: '·', running: '▸', done: '✓', error: '✕', skipped: '–' };
 
   function recoveryHint() {
     if (CONNECT.has(step)) {
@@ -9205,6 +9230,27 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                     </div>
                   ))}
                 </div>
+                {/* The way in for a device that is already running emOS and
+                    only needs a network. Offered here because step 0 is the
+                    only place the flow is still open, and hidden for FireOS
+                    because there the first step's ADB works. */}
+                {isEmos && (
+                  <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8,
+                                border: '1px solid var(--line)' }}>
+                    <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
+                                  fontWeight: 600, color: 'var(--text)' }}>
+                      {t('wizAlreadyEmos')}
+                    </div>
+                    <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                                  color: 'var(--text2)', marginTop: 4, lineHeight: 1.5,
+                                  textWrap: 'pretty' }}>
+                      {t('wizAlreadyEmosSub')}
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <Pill onClick={skipToConsole}>{t('wizConsoleOnly')}</Pill>
+                    </div>
+                  </div>
+                )}
                 {isEmos && <div style={{ marginTop: 10 }}>
                   <Toggle label={t('wizWipeFirst')}
                     sub={wipeData ? t('wizWipeFirstOn') : t('wizWipeFirstOff')}
