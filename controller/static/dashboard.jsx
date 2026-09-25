@@ -4701,6 +4701,41 @@ function _downloadBytes(bytes, filename) {
 //   alive, echoes what you type, and runs nothing. There is no stty here to
 //   remind anyone, which is exactly why it belongs in the client.
 //   NEVER PUSH BULK DATA. This kernel logs one line per byte on ttyGS0.
+// Revoice's own state on a device, and the command that clears it.
+//
+// A device carries the controller it was provisioned against: a CA, a token,
+// the remembered endpoint. Hand that device to somebody else and their
+// controller answers `token mismatch` — rule 1 of em_linkauth.decide, the one
+// case where a credential really is wrong — and the credential push that
+// would repair it rides a connection that is being refused for exactly this
+// reason. There is no way out from either end.
+//
+// Clearing these files puts the device back to "never provisioned": it dials
+// plain, presents no token, and comes back as pending for whoever now owns
+// it. tlscreds.go re-reads the credentials on EVERY dial, so this takes
+// effect on the next reconnect without a reboot.
+//
+// `console.pw` is in the list for the reason the wizard clears it during
+// provisioning: the password belongs to the PREVIOUS OWNER, and emOS's init
+// puts it in front of the console — leaving it locks the new owner out with
+// exactly the password this is meant to remove.
+//
+// NAMED FILES, never a glob and never `rm -rf` on the directory. A wildcard
+// here runs as root on somebody's device against a path that other things
+// may come to share, and the blast radius of a typo is the whole of /data.
+const REVOICE_STATE_DIRS  = ['/data/local/etc/revoice', '/data/local/etc/echomuse'];
+const REVOICE_STATE_FILES = ['ca.pem', 'token', 'controller.json', 'state.json', 'console.pw'];
+
+function resetRevoiceCommand() {
+  const paths = [];
+  for (const d of REVOICE_STATE_DIRS)
+    for (const f of REVOICE_STATE_FILES)
+      paths.push(`${d}/${f}`);
+  // `rm -f` so a device missing any of them still reaches the marker: most
+  // devices have never seen the legacy directory at all.
+  return `rm -f ${paths.join(' ')} && sync && echo RESET_OK`;
+}
+
 class _EmosConsole {
   constructor(port, log) {
     this.port = port;
@@ -8628,6 +8663,25 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
   // reports no SAE, so a [SAE] network can never be joined however correct the
   // password is, and a 5GHz-only one is invisible to it. Both present as an
   // unexplained failure when someone types a name from memory.
+  // Runs the reset above over the serial console. Console-only on purpose:
+  // the ADB flow rewrites these files two steps later anyway, and a device
+  // reachable over ADB is not the one that is locked out.
+  async function resetRevoiceState() {
+    const con = emosConsole;
+    if (!con) throw new Error('No serial console — connect it first.');
+    setRunning(true);
+    try {
+      addLog('Clearing this device\'s Revoice credentials and remembered controller…');
+      const out = await con.run(resetRevoiceCommand());
+      if (!/RESET_OK/.test(out)) {
+        throw new Error(`The device did not confirm the reset (said "${out.trim() || 'nothing'}").`);
+      }
+      addLog(t('wizResetDone'), 'warn');
+    } finally {
+      setRunning(false);
+    }
+  }
+
   async function scanWifiConsole(con) {
     if (!con) throw new Error('No serial console — re-run the Reboot and Watch step.');
     const wpa = 'wpa_cli -p /data/misc/wifi/sockets -i wlan0';
@@ -9472,6 +9526,28 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                       takes longer to appear than the operator waits. */}
                   <Pill accent onClick={() => runStep(7)}>{adb ? t('wizRebootConnectConsole') : t('wizConnectConsole')}</Pill>
                 </div>
+                {/* Offered only once the console is open, because that is the
+                    only thing this needs — and only here, since a device
+                    reachable over ADB is not one that is locked out. */}
+                {emosConsole && (
+                  <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 8,
+                                border: '1px solid var(--line)' }}>
+                    <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
+                                  fontWeight: 600, color: 'var(--text)' }}>
+                      {t('wizResetState')}
+                    </div>
+                    <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                                  color: 'var(--text2)', marginTop: 4, lineHeight: 1.5,
+                                  textWrap: 'pretty' }}>
+                      {t('wizResetStateSub')}
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <Pill onClick={() => resetRevoiceState().catch(e => addLog(e.message, 'error'))}>
+                        {t('wizResetStateGo')}
+                      </Pill>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             {isEmos && step === 8 && stepState[8] !== 'done' && !running && (
