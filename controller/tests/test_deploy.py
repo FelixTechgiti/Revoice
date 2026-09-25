@@ -3510,26 +3510,44 @@ def test_the_device_pull_uses_no_base64_flag_the_device_lacks():
 
 def test_ci_runs_every_dashboard_test():
     """
-    A `.test.mjs` that CI does not name is a test nobody runs.
+    A `.test.mjs` that CI does not run is a test nobody runs.
 
-    The dashboard suite is a list of explicit `node <file>` lines rather than
-    a glob, which is deliberate — `node --test tests/` picks up files that are
-    not tests and reports differently — but it means adding a test file is two
-    steps, and the second one is invisible when it is missed: the file exists,
-    it passes locally, and it never runs again.
+    This used to check that every file was NAMED in ci.yml, because the suite
+    was a list of explicit `node <file>` lines. The reason for the list was
+    real — `node --test tests/` picks up files that are not tests and reports
+    differently — but the list itself was the defect it kept catching: adding
+    a test was two steps, the second invisible when missed, and this assertion
+    was the only thing standing between a new test and never running again.
+    It caught `update_badge.test.mjs` (#255), and by 2026-09-25 the list held
+    31 names.
 
-    Found while adding `update_badge.test.mjs` (#255); nothing had ever
-    checked the list.
+    The step now iterates the directory and runs each file the same way the
+    list did — one `node <file>` per test, so the objection above still does
+    not apply — and the drift is gone rather than guarded. What is left to
+    check is that it stayed that way: a future edit back to a hand-written
+    list would pass silently under a test that only counted names.
     """
     ci = (CONTROLLER.parent / ".github" / "workflows" / "ci.yml").read_text()
     tests = sorted(p.name for p in (CONTROLLER / "tests").glob("*.test.mjs"))
     assert tests, "no dashboard tests found — has the directory moved?"
-    missing = [t for t in tests if f"controller/tests/{t}" not in ci]
-    assert not missing, (
-        "These dashboard tests exist and CI never runs them:\n  "
-        + "\n  ".join(missing)
-        + "\n\nAdd a `node controller/tests/<file>` line to the Dashboard "
-          "logic tests step in .github/workflows/ci.yml."
+
+    # Just this step: from its name to the next one at the same indentation.
+    step = ci[ci.index("Run dashboard tests"):]
+    nxt = step.find("\n      - name:")
+    if nxt > 0:
+        step = step[:nxt]
+
+    assert "controller/tests/*.test.mjs" in step, (
+        "The Dashboard logic tests step no longer iterates the directory. A "
+        "hand-written list drifts: a test added without a line there never "
+        "runs, and the gap looks like nothing."
+    )
+    named = [t for t in tests if f"controller/tests/{t}" in step]
+    assert not named, (
+        "These are named individually in ci.yml on top of the glob:\n  "
+        + "\n  ".join(named)
+        + "\n\nThe glob already runs them; a second mention is a list "
+          "growing back."
     )
 
 
