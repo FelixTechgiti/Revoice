@@ -5319,8 +5319,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     if (flowLocked || CONSOLE_STEP < 0) return;
     setStepState(prev => prev.map((v, i) => (i < CONSOLE_STEP ? 'skipped' : v)));
     setStep(CONSOLE_STEP);
-    addLog('Skipping to the console — this device already runs emOS. Nothing '
-         + 'has been read from it or written to it.', 'warn');
+    addLog(t('wizSkippedToConsole'), 'warn');
   }
 
   function chooseFlow(next) {
@@ -9240,18 +9239,15 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                                 border: '1px solid var(--line)' }}>
                     <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
                                   fontWeight: 600, color: 'var(--text)' }}>
-                      This Echo already runs emOS
+                      {t('wizAlreadyEmos')}
                     </div>
                     <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
                                   color: 'var(--text2)', marginTop: 4, lineHeight: 1.5,
                                   textWrap: 'pretty' }}>
-                      Skip to its serial console to put it on a different network —
-                      after a move, or when it changes hands. Nothing is read from
-                      the device or written to it, and the USB picker in step 1
-                      would stay empty anyway: emOS has no adbd.
+                      {t('wizAlreadyEmosSub')}
                     </div>
                     <div style={{ marginTop: 8 }}>
-                      <Pill onClick={skipToConsole}>Console and WiFi only</Pill>
+                      <Pill onClick={skipToConsole}>{t('wizConsoleOnly')}</Pill>
                     </div>
                   </div>
                 )}
