@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.77.0-fx.1
+
+### Ein Echo, das den Besitzer wechselt, kommt wieder herein
+
+**Für den Fall, dass ein Gerät an einen anderen Controller soll** — verkauft,
+verliehen, oder ins Büro mitgenommen.
+
+Ein eingerichtetes Echo trägt die Zugangsdaten des Controllers, gegen den es
+eingerichtet wurde. Am neuen Ort lehnt der Controller es deshalb ab; im
+Protokoll steht *token mismatch*. Und die Reparatur, die neue Zugangsdaten
+aufspielen würde, läuft über genau die Verbindung, die dabei abgewiesen wird —
+von beiden Seiten verschlossen.
+
+Im Einrichtungsassistenten steht dafür jetzt am Konsolenschritt der Knopf
+**Zugangsdaten löschen**. Er entfernt Zertifizierungsstelle, Token, den
+gemerkten Controller, den Stummschaltzustand und das Konsolenpasswort. Danach
+meldet sich das Echo binnen Sekunden neu und erscheint als wartendes Gerät,
+das nur noch freigegeben werden muss.
+
+**Das Konsolenpasswort ist mit dabei, und das ist Absicht:** Es gehört dem
+vorherigen Besitzer, und emOS setzt es vor die Konsole — bliebe es stehen,
+sperrte es den neuen Besitzer genau mit dem Passwort aus, das hier verschwinden
+soll.
+
+emOS, die Firmware und die Streaming-Programme bleiben unberührt. Es werden
+ausschließlich diese fünf Dateien gelöscht, einzeln benannt.
+
 ## 2.76.0-fx.1
 
 ### Ein Echo, auf dem emOS schon läuft, kommt jetzt an seine Konsole
