@@ -9526,28 +9526,33 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                       takes longer to appear than the operator waits. */}
                   <Pill accent onClick={() => runStep(7)}>{adb ? t('wizRebootConnectConsole') : t('wizConnectConsole')}</Pill>
                 </div>
-                {/* Offered only once the console is open, because that is the
-                    only thing this needs — and only here, since a device
-                    reachable over ADB is not one that is locked out. */}
-                {emosConsole && (
-                  <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 8,
-                                border: '1px solid var(--line)' }}>
-                    <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
-                                  fontWeight: 600, color: 'var(--text)' }}>
-                      {t('wizResetState')}
-                    </div>
-                    <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
-                                  color: 'var(--text2)', marginTop: 4, lineHeight: 1.5,
-                                  textWrap: 'pretty' }}>
-                      {t('wizResetStateSub')}
-                    </div>
-                    <div style={{ marginTop: 8 }}>
-                      <Pill onClick={() => resetRevoiceState().catch(e => addLog(e.message, 'error'))}>
-                        {t('wizResetStateGo')}
-                      </Pill>
-                    </div>
-                  </div>
-                )}
+              </div>
+            )}
+            {/* ABOVE the WiFi panel, and on THIS step rather than the
+                console step, for two reasons that are really one: the
+                console step's block is gone the instant the console
+                connects — runStep(7) marks it done and advances — so a
+                control placed there could never be seen; and the reset
+                must happen BEFORE the network, or the device joins,
+                presents the old token and is refused again. Screen
+                order is the instruction. */}
+            {isEmos && step === 8 && stepState[8] !== 'done' && !running && emosConsole && (
+              <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 8,
+                            border: '1px solid var(--line)' }}>
+                <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 14,
+                              fontWeight: 600, color: 'var(--text)' }}>
+                  {t('wizResetState')}
+                </div>
+                <div style={{ fontFamily: "'Instrument Sans',sans-serif", fontSize: 13,
+                              color: 'var(--text2)', marginTop: 4, lineHeight: 1.5,
+                              textWrap: 'pretty' }}>
+                  {t('wizResetStateSub')}
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <Pill onClick={() => resetRevoiceState().catch(e => addLog(e.message, 'error'))}>
+                    {t('wizResetStateGo')}
+                  </Pill>
+                </div>
               </div>
             )}
             {isEmos && step === 8 && stepState[8] !== 'done' && !running && (
