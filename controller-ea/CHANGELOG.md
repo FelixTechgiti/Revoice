@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.76.0-fx.1
+
+### Ein Echo, auf dem emOS schon läuft, kommt jetzt an seine Konsole
+
+**Für den Fall, dass ein eingerichtetes Gerät in ein anderes Netz soll** — nach
+einem Umzug, oder wenn es den Besitzer wechselt.
+
+Bisher gab es dafür keinen Weg. Der Einrichtungsassistent läuft strikt der
+Reihe nach, und sein erster Schritt sucht das Gerät über ADB — das emOS nicht
+mitbringt. Die USB-Auswahl bleibt dort also leer, und damit war auch die
+serielle Konsole unerreichbar, die weiter hinten im selben Assistenten sitzt.
+Der Konsolen-Reiter am Gerät half nicht weiter: Den gibt es erst, wenn der
+Controller das Gerät kennt, und ein Gerät ohne Netz hat sich nie angemeldet.
+
+Im Assistenten steht jetzt gleich am Anfang ein Kasten *Auf diesem Echo läuft
+bereits emOS* mit dem Knopf **Nur Konsole und WLAN**. Der springt direkt zur
+Konsole; danach lässt sich wie gewohnt ein Netz suchen und verbinden.
+
+**Es wird dabei nichts vom Gerät gelesen und nichts darauf geschrieben.** Die
+übersprungenen Schritte stehen im Protokoll als übersprungen, nicht als
+erledigt.
+
 ## 2.75.0-fx.1
 
 ### Die Gerätediagnose sagt, was läuft
