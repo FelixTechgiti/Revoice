@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.78.0-fx.1
+
+### Der Knopf „Zugangsdaten löschen" ist jetzt zu sehen
+
+**Betrifft jeden, der 2.77.0-fx.1 installiert hat und den Knopf gesucht hat.**
+Er war da und konnte nicht erscheinen: er hing am Konsolenschritt, und dieser
+Schritt ist abgeschlossen, sobald die Konsole verbunden ist. Genau in dem
+Moment, in dem der Knopf angezeigt werden sollte, war der Bereich, in dem er
+stand, schon weg. Der Assistent sprang direkt zum WLAN.
+
+Er steht jetzt einen Schritt weiter, **über der WLAN-Eingabe**. Das ist auch
+die richtige Reihenfolge: Erst die Zugangsdaten löschen, dann das Netz. Sonst
+verbindet sich das Echo, meldet sich mit dem alten Token und wird wieder
+abgewiesen — der Zustand, aus dem der Knopf herausführen soll.
+
+Am Knopf selbst ändert sich nichts. Er entfernt dieselben fünf Dateien, einzeln
+benannt, und braucht weiterhin die serielle Konsole.
+
 ## 2.77.0-fx.1
 
 ### Ein Echo, das den Besitzer wechselt, kommt wieder herein
