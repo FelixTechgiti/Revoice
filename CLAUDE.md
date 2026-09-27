@@ -134,15 +134,35 @@ woran Misserfolg, und was bei einem Fehlschlag mitzubringen ist.
 
   Verloren ist nichts, und das ist nachgesehen statt angenommen: die
   Tip-Commits lösen über die API weiterhin auf und ihre Bäume lassen sich
-  vollständig lesen (`GET /repos/:o/:r/contents/<pfad>?ref=<sha>`). Zwei
-  Einschränkungen, die man erst merkt, wenn man es braucht: **`git fetch origin
-  <sha>` geht nicht** — der Server verweigert eine SHA, die kein Ref erreicht,
-  also ist Auschecken kein Weg —, und ein Commit ohne Ref hängt daran, dass
-  GitHub nicht aufräumt. Wer so einen Branch löscht, hält die SHA in einem
-  Issue fest; wer daraus wieder Arbeit macht, legt zuerst wieder ein Ref an
-  (`git push origin <sha>:refs/heads/archive/<name>`, mit der `gh`-Anmeldung
-  des Arbeitsplatzes — über den Proxy einer Sitzung ist der Ref-Schreibpfad
+  vollständig lesen (`GET /repos/:o/:r/contents/<pfad>?ref=<sha>`).
+
+  **Ob `git fetch origin <sha>` eine unerreichbare SHA holt, hängt wieder an
+  der ANMELDUNG** — dieselbe Bedingung wie beim Schreiben, einen Absatz
+  weiter unten, und hier zum zweiten Mal zu weit aufgeschrieben worden. Mit
+  der `gh`-Anmeldung dieses Arbeitsplatzes geht es: gemessen an `c2e8d4a`
+  (Spitze eines gelöschten Branches, beweisbar kein Vorfahr von `main`) in
+  einem frischen leeren Klon, am 2026-09-12 und am 2026-09-13 erneut. Wo es
+  nicht geht, bleibt der API-Lesepfad oben.
+
+  Das zählt, weil #111–#114 SHAs als Wiederherstellungsweg nennen: Ein Satz,
+  der diesen Weg für tot erklärt, kostet den nächsten die Arbeit, die dort
+  archiviert ist.
+
+  Ein Commit ohne Ref hängt trotzdem daran, dass GitHub nicht aufräumt. Wer
+  so einen Branch löscht, hält die SHA in einem Issue fest; wer daraus wieder
+  Arbeit macht, legt zuerst wieder ein Ref an (`git push origin
+  <sha>:refs/heads/archive/<name>`, mit der `gh`-Anmeldung des
+  Arbeitsplatzes — über den Proxy einer Sitzung ist der Ref-Schreibpfad
   geblockt, auch der, den `create_branch` nimmt).
+
+  **Und `git branch -r --merged` beantwortet die Bedingung nicht allein**: Ein
+  per SQUASH gemergter Branch taucht dort nie auf, weil sein Tip kein Vorfahr
+  von `main` ist — GitHub markiert den PR trotzdem als merged und lässt den
+  Branch stehen, wenn niemand `--delete-branch` gesagt hat. Am 2026-09-13 war
+  `fix/134-emos-wizard-advice` genau das: Inhalt in `main`, Tip kein Vorfahr.
+  Die Frage ist also „steckt der Inhalt in `main`" und nicht „sagt `--merged`
+  ja" — bei einem Squash antwortet der PR, bei einem Merge-Commit die
+  Vorfahrenschaft.
 - **Ein PR, der ein Issue erledigt, schließt es**: `Closes #nnn` im Rumpf, nicht
   „Relates to #nnn". GitHub schließt nur bei den Schlüsselwörtern. Ein Fehler,
   der längst behoben ist und offen dasteht, wird als nächstes priorisiert — und
