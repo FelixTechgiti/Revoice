@@ -67,6 +67,37 @@ const (
 	// alarm — mDNS chatter on an ordinary LAN runs about a packet a second, so
 	// two five-minute windows of absolute silence is a real fault.
 	ProbeMisses = 2
+
+	// MinRatePerMin is the fewest packets a minute that counts as hearing the
+	// network at all.
+	//
+	// **The rule used to be absolute silence, and the reasoning above is where
+	// it went wrong** (#344): "about a packet a second" is ~300 per window,
+	// and the test built on that number fires only at ZERO. Measured
+	// 2026-09-24 on one LAN, with the comparison machine associated to the
+	// SAME BSSID on the same channel as the device:
+	//
+	//	a healthy receiver   355 packets in 91s from 30 hosts  ~= 235/min
+	//	the device           3 packets in 90s                  ~=   2/min
+	//
+	// A factor of 117, and the device was invisible to every phone on that
+	// network while every panel called it healthy. 6/min sits 39x below what
+	// the healthy receiver saw and 3x above what the deaf one did.
+	//
+	// It is one network's number, which is why it is named rather than
+	// inlined. The cost of it being too high is a needless repair on a very
+	// quiet LAN — bounded, because the repair is skipped while the device is
+	// streaming and rate-limited by RepairEvery. The cost of it being too low
+	// is the fault it exists to catch.
+	MinRatePerMin = 6.0
+
+	// StarvedMisses is how many consecutive UNDER-RATE windows declare
+	// deafness, against ProbeMisses for silent ones.
+	//
+	// Longer on purpose: a trickle is a weaker signal than silence, and a
+	// weaker signal earns a longer look. At the healthy cadence that is 15
+	// minutes rather than 10.
+	StarvedMisses = 3
 )
 
 // Reading is one sample of the counter.
@@ -105,12 +136,22 @@ const (
 type Tracker struct {
 	// Misses is how many consecutive silent windows declare deafness.
 	Misses int
+	// Starved is how many consecutive UNDER-RATE windows do. Zero takes
+	// StarvedMisses, as Misses takes ProbeMisses.
+	Starved int
+	// MinRate is the floor in packets per minute. Zero takes MinRatePerMin.
+	// A NEGATIVE value disables the rate rule and leaves only absolute
+	// silence, which is what every Tracker did before #344 — kept expressible
+	// so a device on a network this floor is wrong for can be put back.
+	MinRate float64
 
 	have      bool  // a comparable baseline exists
 	last      int64 // the counter as of the previous usable sample
+	lastAt    time.Time
 	misses    int
+	starved   int
 	deaf      bool
-	silentAt  time.Time // when the first silent window of this run was sampled
+	silentAt  time.Time // when the first quiet window of this run was sampled
 	lastHeard time.Time
 	lastDelta int64
 	episodes  int
@@ -127,11 +168,17 @@ func (t *Tracker) Observe(now time.Time, r Reading) (Event, time.Duration) {
 	if t.Misses <= 0 {
 		t.Misses = ProbeMisses
 	}
+	if t.Starved <= 0 {
+		t.Starved = StarvedMisses
+	}
+	if t.MinRate == 0 {
+		t.MinRate = MinRatePerMin
+	}
 	if !r.Usable() {
 		return EventNone, 0
 	}
 	if !t.have {
-		t.have, t.last = true, r.Packets
+		t.have, t.last, t.lastAt = true, r.Packets, now
 		return EventNone, 0
 	}
 
@@ -141,16 +188,27 @@ func (t *Tracker) Observe(now time.Time, r Reading) (Event, time.Duration) {
 	// reading it as silence would report a fault every time somebody saved a
 	// setting. Re-baseline and wait for the next window.
 	if r.Packets < t.last {
-		t.last = r.Packets
+		t.last, t.lastAt = r.Packets, now
 		t.resets++
 		return EventNone, 0
 	}
 
-	if r.Packets > t.last {
-		t.lastDelta = r.Packets - t.last
-		t.last = r.Packets
-		t.misses = 0
+	delta := r.Packets - t.last
+	elapsed := now.Sub(t.lastAt)
+	t.last, t.lastAt = r.Packets, now
+
+	// Three outcomes where there used to be two. A window carrying SOME
+	// packets but far too few is starved: the device is hearing a trickle
+	// rather than the network, which is the state #344 measured at 3% of what
+	// a machine on the same access point saw. It is not silence and must not
+	// be read as health either.
+	if delta > 0 {
+		t.lastDelta = delta
 		t.lastHeard = now
+		t.misses = 0
+	}
+	if delta > 0 && !t.starving(delta, elapsed) {
+		t.starved = 0
 		if t.deaf {
 			t.deaf = false
 			out := now.Sub(t.silentAt)
@@ -160,16 +218,40 @@ func (t *Tracker) Observe(now time.Time, r Reading) (Event, time.Duration) {
 		return EventNone, 0
 	}
 
-	if t.misses == 0 {
+	// Quiet, one way or the other. The episode is dated from the FIRST quiet
+	// window whichever kind it was, because that is when the device stopped
+	// hearing the network — the thresholds only govern when we are willing to
+	// say so.
+	if t.starved == 0 {
 		t.silentAt = now
 	}
-	t.misses++
-	if t.deaf || t.misses < t.Misses {
+	t.starved++
+	if delta == 0 {
+		t.misses++
+	}
+	if t.deaf {
+		return EventNone, 0
+	}
+	if t.misses < t.Misses && t.starved < t.Starved {
 		return EventNone, 0
 	}
 	t.deaf = true
 	t.episodes++
 	return EventDeaf, now.Sub(t.silentAt)
+}
+
+// starving reports whether this window carried too few packets to count as
+// hearing the network.
+//
+// A RATE rather than a per-window count, because the cadence itself changes —
+// five minutes while healthy, sixty seconds once quiet — so one fixed count
+// would mean two different things. A window of no length cannot be judged, and
+// a negative MinRate disables the rule entirely.
+func (t *Tracker) starving(delta int64, elapsed time.Duration) bool {
+	if t.MinRate < 0 || elapsed <= 0 {
+		return false
+	}
+	return float64(delta) < t.MinRate*elapsed.Minutes()
 }
 
 // Deaf reports the current state, which is what chooses the cadence.
