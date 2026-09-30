@@ -628,6 +628,32 @@ func airplay2Wanted() bool {
 	return snap.Airplay2Enabled != nil && *snap.Airplay2Enabled
 }
 
+// MutedAtRegister reports whether the microphone is muted right now. Set by
+// cmd at startup; nil until then, and nil in every test that does not care.
+//
+// It exists because mute was the one piece of device state that reached the
+// controller ONLY as a change, and a change is invisible to a controller that
+// was not there for it. A device muted from Home Assistant and then
+// reconnected read as UNMUTED for as long as nobody touched the button — with
+// the microphone dead, the button LED lit, and the switch in Home Assistant
+// showing off (#339). Nothing was inverted; the copy was simply never
+// refreshed.
+//
+// The mirror of the rule `base_os` is written around: ask where the CONSUMER
+// needs the answer. The consumer is every reconnect.
+//
+// A hook rather than a read, for `AirPlayRunningBinary`'s reason: the state
+// belongs to internal/server, and importing it here would put the whole local
+// state machine behind the control plane's imports for one boolean.
+var MutedAtRegister func() bool
+
+func mutedAtRegister() bool {
+	if MutedAtRegister == nil {
+		return false
+	}
+	return MutedAtRegister()
+}
+
 // AirPlayRunningBinary reports the receiver file currently executing, or "" if
 // none is. Set by cmd at startup; nil until then, and nil in every test that
 // does not care.
@@ -730,6 +756,13 @@ func (c *ControlClient) connect(ctx context.Context, server *discovery.ServerInf
 		// without a shell session on the user's own hardware.
 		"spotify_status": spotify.Report(),
 		"airplay_status": airplay.Report(airplay2Wanted(), airplayRunningBinary()),
+		// The microphone mute, because a state reported only on CHANGE is
+		// invisible to a controller that was not there for the change. See
+		// MutedAtRegister. Always sent, never omitempty: the controller reads
+		// an absent field as false, which is what firmware predating this
+		// means, and omitempty would make a live microphone say the same
+		// thing — the same reason the button event's `muted` is unconditional.
+		"muted": mutedAtRegister(),
 		// Whether the getaddrinfo shim is installed, and whether this device
 		// needs one at all. Beside the two above and for their reason: on
 		// emOS without it, BOTH endpoints start, retry every 60 seconds and

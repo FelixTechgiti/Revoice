@@ -444,6 +444,9 @@ func main() {
 	// SETTING, which is the state #326 reported as "classic AirPlay" on a
 	// device running the AirPlay 2 binary.
 	client.AirPlayRunningBinary = airplayClient.RunningBinary
+	// Mute rides the register message, so a reconnect cannot leave the
+	// controller believing a muted device is live (#339).
+	client.MutedAtRegister = s.IsMuted
 
 	// nqptp's exit unlinks the clock record, and a mapping already held
 	// survives the unlink — so a receiver that is not restarted with it reads
