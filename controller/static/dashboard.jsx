@@ -63,16 +63,15 @@ function webUsbBlocked() {
   const origin = window.location.origin;
   return {
     origin,
-    why: `WebUSB needs a secure context, and this page is on ${origin}.`,
+    why: `USB is blocked: ${origin} is not a secure address.`,
     // Under the add-on there is no localhost route to offer:
     // _ingress_only_middleware rejects anything that is not the Supervisor
     // gateway, so suggesting a direct port would send the user to a 403.
     fix: isIngress()
-      ? `Serve Home Assistant over HTTPS, or add exactly ${origin} to `
+      ? `Serve Home Assistant over HTTPS, or allow ${origin} at `
         + `chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch `
-        + `the browser. An allowlist entry for the controller's own address does `
-        + `not cover this one.`
-      : `Open the dashboard at http://localhost:8768, or add exactly ${origin} to `
+        + `the browser. The controller's own address does not cover this one.`
+      : `Use http://localhost:8768 on this computer, or allow ${origin} at `
         + `chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch `
         + `the browser.`,
   };
@@ -298,15 +297,15 @@ function updateBadge(device, str) {
 }
 
 function deviceState(d) {
-  if (!d.approved)  return { key: 'pending',   labelKey: 'statePending',   color: 'var(--warn)' };
-  if (!d.connected) return { key: 'offline',   labelKey: 'stateOffline',   color: 'var(--error)' };
-  if (d.muted)      return { key: 'muted',     labelKey: 'stateMuted',     color: 'var(--error)' };
-  if (d.speaking)   return { key: 'speaking',  labelKey: 'stateSpeaking',  color: 'var(--voice)' };
-  if (d.thinking)   return { key: 'thinking',  labelKey: 'stateThinking',  color: 'var(--voice)' };
-  if (d.listening)  return { key: 'listening', labelKey: 'stateListening', color: 'var(--voice)' };
+  if (!d.approved)  return { key: 'pending',   labelKey: 'statePending',   color: 'var(--warn)',  lcd: 'var(--accent-lit)' };
+  if (!d.connected) return { key: 'offline',   labelKey: 'stateOffline',   color: 'var(--error)', lcd: 'var(--lcd-offline)' };
+  if (d.muted)      return { key: 'muted',     labelKey: 'stateMuted',     color: 'var(--error)', lcd: 'var(--lcd-muted)' };
+  if (d.speaking)   return { key: 'speaking',  labelKey: 'stateSpeaking',  color: 'var(--voice)', lcd: 'var(--lcd-speaking)' };
+  if (d.thinking)   return { key: 'thinking',  labelKey: 'stateThinking',  color: 'var(--voice)', lcd: 'var(--lcd-thinking)' };
+  if (d.listening)  return { key: 'listening', labelKey: 'stateListening', color: 'var(--voice)', lcd: 'var(--lcd-listening)' };
   const source = playbackSource(d);
-  if (source)       return { key: 'playing',   labelKey: 'statePlaying',   color: 'var(--media)', source };
-  return               { key: 'idle',      labelKey: 'stateIdle',      color: 'var(--faint)' };
+  if (source)       return { key: 'playing',   labelKey: 'statePlaying',   color: 'var(--media)', lcd: 'var(--lcd-speaking)', source };
+  return               { key: 'idle',      labelKey: 'stateIdle',      color: 'var(--faint)', lcd: 'var(--lcd-dim)' };
 }
 
 // The state's NAME, looked up at render time.
@@ -315,6 +314,13 @@ function deviceState(d) {
 // one piece of logic on this page with a contract (the order), and a
 // function that reaches for the current language cannot be tested without
 // one. The lookup is here, where it is being drawn.
+//
+// `lcd` came with the 2026-09-28 upstream sync and is NOT a word: it is what
+// the state's name is drawn in on an LCD readout, held to 4.5:1 there by
+// tests/test_contrast.py. Upstream's `dot` — the simulated LED colour — came
+// with it and is not kept: the two call sites that read it were inside its
+// `Card`, which this fork replaced with a row-based fleet list, so it would
+// be eight literal colours nothing renders.
 function stateLabel(state) {
   return state?.labelKey ? t(state.labelKey) : '';
 }
@@ -574,6 +580,7 @@ function Slider({ label, sub, value, min, max, step = 1, unit = '', formatValue,
       {/* A control whose feature the device lacks is shown disabled WITH the
           reason (in sub), never as one that silently does nothing. */}
       <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
+        aria-label={typeof label === 'string' ? label : undefined}
         style={{ width: '100%', opacity: disabled ? 0.45 : 1 }}
         onChange={e => onChange(Number(e.target.value))} />
     </div>
@@ -660,6 +667,7 @@ function NumberField({ label, sub, value, min = 0, max = 100, unit = '',
             on. inputMode brings up the numeric keypad regardless. */}
         <input type="text" inputMode="numeric" autoComplete="off"
           value={text} disabled={disabled}
+          aria-label={typeof label === 'string' ? label : undefined}
           onFocus={() => setEditing(true)}
           onChange={e => { const d = digits(e.target.value); setText(d); commit(d); }}
           onBlur={e => {
@@ -674,7 +682,7 @@ function NumberField({ label, sub, value, min = 0, max = 100, unit = '',
           }}
           className="em-inset"
           style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, width: 84, minWidth: 0,
-                   color: 'var(--text)', border: '1px solid var(--border-hard)',
+                   color: 'var(--text)', border: '1px solid var(--field-line)',
                    opacity: disabled ? 0.45 : 1 }}/>
         {unit && <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--muted)' }}>{unit}</span>}
       </div>
@@ -701,7 +709,19 @@ function Toggle({ label, sub, value, onChange, disabled = false }) {
       <div style={{ minWidth: 0, flex: 1 }}>
         <ControlLabel label={label} sub={sub} disabled={disabled}/>
       </div>
-      <div onClick={() => { if (!disabled) onChange(!value); }} style={{
+      {/* A switch to assistive tech and the keyboard, not only to a mouse:
+          role, state, focus and Space/Enter. Also what release UAT finds it
+          by (tools/uat). */}
+      <div role="switch" aria-checked={!!value} aria-disabled={disabled || undefined}
+        aria-label={typeof label === 'string' ? label : undefined}
+        tabIndex={disabled ? -1 : 0}
+        onClick={() => { if (!disabled) onChange(!value); }}
+        onKeyDown={e => {
+          if (disabled || (e.key !== ' ' && e.key !== 'Enter')) return;
+          e.preventDefault();
+          onChange(!value);
+        }}
+        style={{
         width: 36, height: 20, borderRadius: 10, cursor: disabled ? 'default' : 'pointer',
         position: 'relative', flexShrink: 0, opacity: disabled ? 0.45 : 1,
         background: value ? 'var(--voice)' : 'var(--line-strong)',
@@ -766,6 +786,62 @@ function PasswordField({ label, sub, isSet, onChange, disabled = false }) {
   );
 }
 
+// The controller address list (controllerEndpoints): addresses an Echo dials
+// in order before falling back to mDNS. Fleet-only, so the per-device view
+// shows it read-only. Ports keep digits only as typed, NumberField's rule; an
+// empty port is sent as absent and the controller fills in its own.
+function ControllerEndpointsField({ value, onChange, readOnly = false }) {
+  const [link, setLink] = useState(null);
+  useEffect(() => {
+    if (readOnly) return;
+    API.get('/api/system/status').then(s => setLink(s.link || null)).catch(() => {});
+  }, [readOnly]);
+  const rows = Array.isArray(value) ? value : [];
+  const mono = "'DM Mono',monospace";
+  const put = (i, k, v) => onChange(rows.map((r, j) => j === i ? { ...r, [k]: v } : r));
+  const digits = v => { const d = String(v).replace(/\D/g, '').slice(0, 5); return d === '' ? '' : Number(d); };
+  const add = () => onChange([...rows, {
+    host: rows.length === 0 && link ? link.ip : '',
+    port: link ? link.port : 8767,
+    tlsPort: link ? link.tls_port : 8770,
+  }]);
+  const input = { fontFamily: mono, fontSize: 11, color: 'var(--text)',
+                  border: '1px solid var(--field-line)', minWidth: 0 };
+  return (
+    <div style={{ marginBottom: 20, minWidth: 0 }}>
+      <div style={{ fontFamily: mono, fontSize: 11, color: readOnly ? 'var(--muted)' : 'var(--text2)', marginBottom: 6 }}>
+        {t('cfgControllerAddress')}
+      </div>
+      <div style={{ fontFamily: mono, fontSize: 10, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 8 }}>
+        {readOnly
+          ? t('cfgEndpointsScoped')
+          : t('cfgEndpointsSub')}
+      </div>
+      {rows.length === 0 && (
+        <div style={{ fontFamily: mono, fontSize: 10, color: 'var(--muted)', marginBottom: 8 }}>{t('cfgEndpointsNone')}</div>
+      )}
+      {rows.map((r, i) => (
+        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+          <input type="text" autoComplete="off" spellCheck="false" placeholder={t('cfgEndpointHost')}
+            value={r.host ?? ''} disabled={readOnly} className="em-inset"
+            onChange={e => put(i, 'host', e.target.value)}
+            style={{ ...input, flex: '3 1 160px' }}/>
+          <input type="text" inputMode="numeric" placeholder={t('cfgEndpointPort')} title={t('cfgEndpointPort')}
+            value={r.port ?? ''} disabled={readOnly} className="em-inset"
+            onChange={e => put(i, 'port', digits(e.target.value))}
+            style={{ ...input, flex: '1 1 60px' }}/>
+          <input type="text" inputMode="numeric" placeholder={t('cfgEndpointTlsPort')} title={t('cfgEndpointTlsPortTitle')}
+            value={r.tlsPort ?? ''} disabled={readOnly} className="em-inset"
+            onChange={e => put(i, 'tlsPort', digits(e.target.value))}
+            style={{ ...input, flex: '1 1 60px' }}/>
+          {!readOnly && <Pill small danger onClick={() => onChange(rows.filter((_, j) => j !== i))}>{t('pwRemove')}</Pill>}
+        </div>
+      ))}
+      {!readOnly && rows.length < 8 && <Pill small onClick={add}>{t('cfgAddEndpoint')}</Pill>}
+    </div>
+  );
+}
+
 // A segmented choice, for settings with more than two states. Written as
 // buttons rather than a native <select> so the unavailable options stay
 // VISIBLE and disabled: the capability rule is that a device lacking a feature
@@ -777,10 +853,12 @@ function Select({ label, sub, value, options, onChange }) {
       <div style={{ marginBottom: 7, minWidth: 0 }}>
         <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: 'var(--text2)' }}>{label}</span>
       </div>
-      <div style={{ display: 'flex', gap: 6, minWidth: 0 }}>
+      <div role="radiogroup" aria-label={typeof label === 'string' ? label : undefined}
+        style={{ display: 'flex', gap: 6, minWidth: 0 }}>
         {options.map(o => (
           <button
             key={o.value}
+            role="radio" aria-checked={o.value === value}
             className={'em-pill em-pill--small' + (o.value === value ? ' em-pill--accent' : '')}
             disabled={!!o.disabled}
             style={{ flex: 1, minWidth: 0 }}
@@ -943,10 +1021,46 @@ function MicroMeter({ pct, sev }) {
 // deliberately a separate prop rather than a second use of `note`, because
 // `note` is red — routing neutral information through it would make every
 // device look like it was in trouble.
-function StatTile({ label, value, unit, sev = 'ok', pct, glyph, note, sub }) {
+const LINK_VERDICT = { good: 'Good', fair: 'Fair', poor: 'Poor' };
+
+// One block per minute for the last 30, coloured by that minute's packet loss
+// on the same thresholds as the Link verdict (em_tcp: good < 1%, poor >= 5%).
+// Grey is a minute with no measurement — offline, or not yet reported — which
+// must not read as a clean one. Newest on the right; hover for the figure.
+function LinkStrip({ minutes }) {
+  const n = minutes.length;
+  const now = Math.floor(Date.now() / 60000);
+  const hhmm = m => new Date(m * 60000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  return (
+    <div style={{ marginTop:10 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', fontFamily:"'DM Mono',monospace",
+                    fontSize:9, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.08em' }}>
+        <span>Link quality · last {n} min</span><span>{t('linkNow')}</span>
+      </div>
+      <div style={{ display:'flex', gap:2, marginTop:4, height:10 }}>
+        {minutes.map((p, i) => {
+          const sev = p == null ? null : p >= 5 ? 'bad' : p >= 1 ? 'warn' : 'ok';
+          const at = hhmm(now - (n - 1 - i));
+          return (
+            <div key={i} title={p == null ? `${at} · no data` : `${at} · ${p}% loss`}
+                 style={{ flex:'1 1 0', borderRadius:1,
+                          background: sev ? SEV[sev] : 'var(--track)' }}/>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Read by a screen reader, not drawn: for a meaning otherwise carried only by
+// colour (WCAG 1.4.1).
+const SR_ONLY = { position:'absolute', width:1, height:1, overflow:'hidden',
+                  clip:'rect(0 0 0 0)', whiteSpace:'nowrap' };
+
+function StatTile({ label, value, unit, sev = 'ok', pct, glyph, note, sub, grade }) {
   const dim = value == null;
   return (
-    <div style={{ flex:'1 1 0', minWidth:0 }}>
+    <div style={{ flex:'1 1 0', minWidth:0 }} title={grade ? `${label}: ${grade}` : undefined}>
       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)',
                     textTransform:'uppercase', letterSpacing:'0.08em', whiteSpace:'nowrap' }}>{label}</div>
       {/* FIXED height, and the glyph is centre-aligned rather than
@@ -965,6 +1079,7 @@ function StatTile({ label, value, unit, sev = 'ok', pct, glyph, note, sub }) {
           {dim ? '—' : value}
         </span>
         {!dim && unit && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)' }}>{unit}</span>}
+        {grade && <span style={SR_ONLY}>, {grade}</span>}
         {glyph && <span style={{ marginLeft:'auto', display:'flex', alignItems:'center',
                                  alignSelf:'center', flexShrink:0 }}>{glyph}</span>}
       </div>
@@ -1685,6 +1800,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
   // which is the right shape for a log and the wrong shape for a panel.
   const [diagBusy, setDiagBusy] = useState(false);
   const [fetchingSup, setFetchingSup] = useState(false);
+  const [pairing, setPairing] = useState(false);
   const [debloating, setDebloating] = useState(false);
   const [emos, setEmos] = useState(null);
   const [emosErr, setEmosErr] = useState(false);
@@ -1709,7 +1825,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
   const fileInputRef = useRef(null);
   const [turns, setTurns] = useState([]);
   const state = deviceState(device);
-  const needsUpdate = device.firmware_ver && release?.version && device.firmware_ver !== release.version;
+  const needsUpdate = !!device.firmware_update;
 
   // The tab KEY is the state and the label is what is read, because the two
   // want different things: `activity` is what the code has always called the
@@ -1877,16 +1993,15 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
     setSaving(false);
   }
 
-  async function doSecureLink() {
-    // Pushes CA + link token over the shell plane, then the controller
-    // bounces the connection; the device redials over wss. The "Link" row
-    // flips to wss (TLS) on the next device-list refresh after reconnect.
-    setSecuring(true);
+  async function doPair() {
+    // Answers the device's own request (its owner held the action button).
+    // The controller issues a fresh token and the CA, and the device
+    // reconnects over wss; the row clears on the next refresh.
+    setPairing(true);
     try {
-      await API.post(`/api/devices/${device.device_id}/secure_link`, {});
-    } catch(e) { alert(e.error || 'Secure link failed'); }
-    // Leave the button disabled briefly — transfer + reconnect takes ~10s.
-    setTimeout(() => setSecuring(false), 15000);
+      await API.post(`/api/devices/${device.device_id}/pair`, {});
+    } catch(e) { alert(e.error || 'Pairing failed'); }
+    setTimeout(() => setPairing(false), 15000);
   }
 
   async function doNetDiag() {
@@ -2428,7 +2543,12 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
         </div>
 
         {/* Body */}
-        <div className="em-modal-body" style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+        {/* Focusable so a keyboard can scroll it: on the Logs tab it holds
+            only text, and a scroll area with nothing focusable inside cannot
+            be scrolled without a mouse (axe scrollable-region-focusable,
+            UAT 2026-09-27 — a device with enough log lines to scroll). */}
+        <div className="em-modal-body" tabIndex={0} role="region" aria-label={`${device.label || device.device_id} ${tab}`}
+             style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
 
           {/* APPROVE */}
           {!device.approved && (
@@ -2504,6 +2624,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
             const cpuText  = s?.cpuPct != null
               ? `${s.cpuPct.toFixed(0)}%` + (s.coresOnline ? ` · ${s.coresOnline}/${s.coresTotal ?? '?'} cores` : '')
               : null;
+            const lq = device.linkQuality;   // loss verdict + per-minute strip (em_tcp)
             // Thermals: mtktscpu is the CPU zone, maxTempC the hottest of all
             // 11 zones (the PMIC and board sensors can run warmer). Amber past
             // 70C, red past 85C — well below this SoC's limits, because the
@@ -2625,21 +2746,37 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     {row(t('devRowVolume'), volumePct(device) != null
                          ? `${volumePct(device)}%`
                          : (s?.volumePct != null ? `${s.volumePct}%` : '—'))}
-                    {row(t('devRowLink'), device.connected ? (device.linkTls ? t('devLinkTls') : t('devLinkPlain')) : '—',
-                         device.connected ? (device.linkTls ? 'var(--ok)' : 'var(--warn)') : undefined)}
+                    {/* An offline Echo the controller is turning away says why,
+                        in the row that describes its link rather than a new one. */}
+                    {row(t('devRowLink'), device.connected
+                           ? (device.linkTls ? t('devLinkTls') : t('devLinkPlain'))
+                           : device.linkRefused
+                             ? <span title={t('devLinkRefusedHint')}>
+                                 {`${t('devLinkRefused')}: ${device.linkRefused.reason}`}
+                               </span>
+                             : '—',
+                         device.connected ? (device.linkTls ? 'var(--ok)' : 'var(--warn)')
+                           : device.linkRefused ? 'var(--error)' : undefined)}
                     {row(t('devRowConfig'), (() => {
                       const n = (device.config_sections ?? []).length;
                       const total = Object.keys(CONFIG_SECTIONS).length;
                       return n === 0 ? t('devConfigFleet') : S().devConfigOverride(n, total);
                     })())}
+                    {isAdmin && (device.pairRequest
+                        || (device.connected && !device.linkTls && !device.pairingCapable)) && (
+                      <div style={{ marginTop: 8, display: 'grid', gap: 6, justifyItems: 'start' }}>
+                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                          {device.pairRequest ? t('devPairWants') : t('devPairCannotAsk')}
+                        </span>
+                        <Pill small accent disabled={pairing} onClick={doPair}>
+                          {pairing ? t('devPairing')
+                                   : device.pairRequest ? t('devApprovePairing') : t('devPair')}
+                        </Pill>
+                      </div>
+                    )}
                     {isAdmin && (
                       <div style={{ marginTop: 8, display:'flex', gap:6,
                                     flexWrap:'wrap' }}>
-                        {device.connected && !device.linkTls && (
-                          <Pill small accent disabled={securing} onClick={doSecureLink}>
-                            {securing ? t('devSecuring') : t('devSecureLink')}
-                          </Pill>
-                        )}
                         {/* No `device.connected` guard, and that is the
                             point: the controller browses the network, it
                             does not ask the Echo anything. So this still
@@ -2739,13 +2876,21 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                           on screen to say so. Shown as a note rather than its
                           own tile — it qualifies the link reading, it is not
                           a separate health metric. */}
+                      {/* Headline is the signal, but the GRADE (colour and
+                          meter) is packet loss, not signal: VVV showed full
+                          bars at -43dBm while the AP resent 66% of its frames
+                          (2026-09-23). So a lossy link still goes amber or red
+                          at full signal — interference or the device, not
+                          distance. The dBm headlines rather than the verdict
+                          word, with band and loss below, because the three
+                          did not fit one line (Wil, 2026-09-27). */}
                       <StatTile
                         label={t('devRowLink')} value={s?.wifiRssi != null ? s.wifiRssi : null} unit="dBm"
                         sev={s?.wifiRssi == null ? 'ok' : s.wifiRssi > -70 ? 'ok' : s.wifiRssi > -80 ? 'warn' : 'bad'}
                         pct={s?.wifiRssi == null ? null : Math.max(0, Math.min(100, (s.wifiRssi + 95) / 35 * 100))}
                         glyph={<SignalBars rssi={s?.wifiRssi ?? null}/>}
                         sub={[wifiBand(s?.wifiFreqMhz),
-                              s?.linkSpeedMbps ? `${s.linkSpeedMbps} Mbps` : null]
+                              lq?.lossPct != null ? `${lq.lossPct}% loss` : null]
                              .filter(Boolean).join(' · ') || null}
                       />
                       {/* Amber past 200ms, red past 1s — the same thresholds the
@@ -2770,6 +2915,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                           : null}
                       />
                     </div>
+                    {lq && <LinkStrip minutes={lq.minutes}/>}
                     {!s && <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', marginTop:8 }}>{t('waitingForDeviceStats')}</div>}
                   </Panel>
                 </div>
@@ -2952,6 +3098,9 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                 sections={sections}
                 shadowCapable={!device.connected || !!device.owwShadowCapable}
                 triggerCapable={!device.connected || !!device.owwTriggerCapable}
+                localCapable={!device.connected || !!device.owwLocalCapable}
+                listen={device.connected ? device.listen : null}
+                wakeCueCapable={!device.connected || !!device.wakeCueCapable}
                 mixCapable={!device.connected || !!device.audioMixCapable}
                 audioStateCapable={!device.connected || !!device.audioStateCapable}
                 jackBypassCapable={!device.connected
@@ -3143,7 +3292,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   <Pill small
                         disabled={savingAuto || autoUpd === null || windowDraft === (autoUpd?.window || '')}
                         onClick={() => saveAutoUpdate({ auto_update_window: windowDraft })}>
-                    {savingAuto ? 'Saving…' : 'Save window'}
+                    {savingAuto ? t('saving') : t('saveWindow')}
                   </Pill>
                   <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', lineHeight:1.5, flex:'1 1 200px', minWidth:0 }}>
                     Leave empty for no automatic updates.
@@ -3635,7 +3784,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                   when a deploy starts */}
               <div className="em-inset" style={{ '--em-inset-pad':'14px', fontFamily:"'DM Mono',monospace", fontSize:12, minHeight:96, flex:1 }}>
                 {pushLog.length === 0 && !pushing && (
-                  <span style={{ color:'var(--lcd-faint)' }}>— no deploy activity this session —</span>
+                  <span style={{ color:'var(--lcd-dim)' }}>— no deploy activity this session —</span>
                 )}
                 {pushLog.map((line, i) => (
                   <div key={i} style={{
@@ -3647,7 +3796,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                     textShadow: line.startsWith('✓') ? '0 0 8px rgba(140,200,100,0.4)' : 'none',
                   }}>{line}</div>
                 ))}
-                {pushing && <span style={{ color:'var(--lcd-faint)' }}>▌</span>}
+                {pushing && <span style={{ color:'var(--lcd-dim)' }}>▌</span>}
               </div>
             </div>
           )}
@@ -3675,7 +3824,7 @@ function Detail({ device, token, onClose, onApprove, isAdmin, globalConfig, onDe
                       misaligned every row before ten o'clock. */}
                   <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--faint)', minWidth: '11ch', whiteSpace: 'nowrap', flexShrink: 0 }}>{new Date(entry.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                   <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: eventAccent(entry.level), textTransform: 'uppercase', letterSpacing: '0.1em', minWidth: 48, flexShrink: 0 }}>{entry.level}</span>
-                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: entry.source === 'device' ? 'var(--lcd-faint)' : 'var(--accent-deep)', textTransform: 'uppercase', letterSpacing: '0.08em', minWidth: 64, flexShrink: 0 }}>{entry.source}</span>
+                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: entry.source === 'device' ? 'var(--lcd-dim)' : 'var(--accent-deep)', textTransform: 'uppercase', letterSpacing: '0.08em', minWidth: 64, flexShrink: 0 }}>{entry.source}</span>
                   <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: 'var(--text2)' }}>{entry.message}</span>
                 </div>
               ))}
@@ -3844,6 +3993,8 @@ const _ADB = (() => {
 
   return { Client };
 })();
+
+// ── ProvisionWizard ──
 
 const _ALEXA_PKGS = [
   'amazon.speech.davs.davcservice',
@@ -4459,10 +4610,16 @@ const _EMOS_STEPS = [
 // FireOS flow, the serial console in the emOS one. Only its truthiness is
 // used, to disable the buttons when there is nothing to talk to.
 //
-// onSkip and onAbort are optional. Neither means anything in the emOS flow:
-// there is no "already connected" to skip to, because registering over this
-// network IS the step, and by then the boot partition is already written so
-// there is no provisioning left to abort.
+// onSkip and onAbort are optional. onAbort means nothing in the emOS flow —
+// by this point the boot partition is written, so there is no provisioning
+// left to abort.
+//
+// onSkip DOES apply to both, which this said it did not. /data survives the
+// boot-partition write, so a device re-provisioned, or moved across from
+// FireOS, arrives with a working wpa_supplicant.conf and associates during the
+// previous step — the ring runs its closing sweep while this panel is still
+// asking for a network. Skipping runs the registration wait alone; it is
+// registration, not the join, that is the step's success condition.
 function WifiPanel({ ready, wifiSsid, setWifiSsid, wifiPsk, setWifiPsk, onScan, networks, onConnect, onSkip, onAbort }) {
   const [scanning, setScanning] = useState(false);
   const [showPsk, setShowPsk]   = useState(false);
@@ -4831,8 +4988,31 @@ class _EmosConsole {
         + 'It is re-applied from the controller config when the device next '
         + 'connects.');
     }
+    // A bare timeout is where operators get stuck: three different faults
+    // produce it and the message points at none of them. Report what the port
+    // sent — that is the diagnostic — then the causes in the order they are
+    // worth checking.
+    //
+    // It deliberately does NOT offer the escrow restore. This step has already
+    // rebooted the device out of TWRP, so there is no ADB and the Restore
+    // control is disabled; naming a recovery the operator cannot reach is the
+    // same dead end as naming none.
     throw new Error(`The console did not answer "${cmd}" within `
-                  + `${Math.round(timeoutMs / 1000)}s.`);
+      + `${Math.round(timeoutMs / 1000)}s`
+      + (this.buf.trim()
+          ? `. Last output from the port: "${this.buf.trim().slice(-200)}"`
+          : ', and the port sent nothing at all.')
+      + '\n\nMost likely, in order:\n'
+      + '  1. The wrong serial port was picked — click Connect Console again '
+      + 'and choose a different one.\n'
+      + '  2. The device is still booting — wait for the ring to settle, then '
+      + 'retry.\n'
+      + '  3. emOS never started — a single segment orbiting a full blue ring '
+      + 'for more than a minute.\n\n'
+      + 'For 3, get the device into TWRP: unplug, hold mute or + (volume up), '
+      + 'and plug back in with it held until the ring changes. From there, run '
+      + 'this wizard again, or restore stock FireOS following R0rt1z2\'s XDA '
+      + 'thread.');
   }
 
   async close() {
@@ -5731,15 +5911,16 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         + 'how an Echo gets hard-bricked. See the warning at the top of docs/rooting.md.');
     }
     if (unlock.v2) {
-      // Said loudly, and not as a refusal. The operator is about to have their
-      // boot partition rewritten on a device class that has not been through
-      // this wizard before, and the thing that makes that recoverable is the
-      // escrow two steps away — so it is named here, while they can still stop.
-      addLog(`This Echo was unlocked with amonet-biscuit v2.0.0 or later `
-           + `(${unlock.evidence.join('; ')}), so it runs FireOS 6. emOS supports that `
-           + `kernel, and the wizard will build a 32-bit image to match it.`, 'warn');
-      addLog('No Echo unlocked with v2 has been through this wizard before. The '
-           + 'Escrow Boot Image step is the way back — keep that file.', 'warn');
+      // The boot partition is about to be rewritten, and the escrow two steps
+      // away is what makes that reversible — so it is named here, while the
+      // operator can still stop. That is a recovery instruction and stays.
+      // What was removed was the sentence after it claiming no v2 device had
+      // ever run this wizard, which was written when that was true and kept
+      // asserting it to every operator afterwards.
+      addLog(`Unlocked with amonet-biscuit v2.0.0 or later `
+           + `(${unlock.evidence.join('; ')}) — expecting FireOS 6 in both slots. `
+           + `The Escrow Boot Image step checks that before anything is written.`, 'warn');
+      addLog('The Escrow Boot Image step is the way back — keep that file.', 'warn');
     }
     // Which releases each flow can work with. FireOS 6 is Android 7.1, and there
     // is no FireOS on this board reporting 6.x, so the emOS flow accepts 5 and 7
@@ -5866,12 +6047,16 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
            + 'connection.', 'ok');
       return c;
     }
-    addLog('FireOS 5 confirmed. Rebooting to TWRP recovery…');
+    // Was hardcoded "FireOS 5 confirmed", which the emOS flow prints at a
+    // FireOS 6 device it has just identified as FireOS 6 two lines above.
+    addLog(`Android ${effRelease || '?'} confirmed. Rebooting to TWRP recovery…`);
     expectDisconnect.current = true;
     try { await c.shell('reboot recovery'); } catch {}
     await c.close();
     setAdb(null);
-    addLog('Device is rebooting. Wait for the TWRP menu to appear, then click "Connect to TWRP".', 'warn');
+    addLog('Device is rebooting into TWRP. The Dot has no screen — wait about 15 '
+         + 'seconds for it to come back as "Echo" in the USB picker, then click '
+         + '"Connect to TWRP".', 'warn');
     return null;
   }
 
@@ -5902,7 +6087,10 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // The banner is already logged by requestDevice; check it directly.
     const banner = c.banner ?? '';
     if (!banner.toLowerCase().includes('omni') && !banner.toLowerCase().includes('twrp') && !banner.toLowerCase().includes('recovery')) {
-      throw new Error(`Device banner is "${banner}" — expected TWRP (omni_biscuit). Is TWRP showing on screen?`);
+      throw new Error(`Device banner is "${banner}" — expected TWRP (omni_biscuit). `
+      + 'The device is not in recovery. Give it a few more seconds and click '
+      + 'Retry; the Dot has no screen, so the USB picker naming it "Echo" is '
+      + 'the only sign it has got there.');
     }
     addLog('TWRP confirmed.', 'ok');
     return c;
@@ -6202,6 +6390,232 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                    + `(p${sysPart})` };
   }
 
+  // ── Is this Echo in a state emOS can be built from? (#619) ────────────────
+  //
+  // The unlock, the recovery, both system partitions and every stock kernel
+  // must agree on ONE FireOS generation, and each fact must be READ, not
+  // inferred. #619 was amonet 2 with a FireOS 6 flash that never finished:
+  // expdb and TWRP said amonet 2, boot_b and system_b still held FireOS 5, and
+  // the wizard built a consistent FireOS 5 image that amonet 2's bootloader
+  // cannot boot. Every check it had passed, because each looked at one thing.
+  //
+  // Stricter than _unlockVerdict on purpose. That decides which FLOW a device
+  // takes at step 0, where "no evidence" must not refuse a working device.
+  // This runs before the first read that feeds a write, and here a fact that
+  // cannot be read is a refusal: the cost is a retry, and the alternative is
+  // a boot loop that needs recovery over USB.
+
+  // What emOS runs from Amazon's userspace, relative to the tree root (the
+  // partition root on FireOS 5, <partition>/system on FireOS 6). Taken from
+  // emos/init/init.c and checked against 15LE (FireOS 6.5.7.4) and C95
+  // (FireOS 5.5.5.4), 2026-09-25. e2fsck checks /data on every boot. FireOS 6
+  // runs emOS's own supplicant and udhcpc, so Amazon's are only needed on 5;
+  // busybox and wpa_cli are fallbacks behind emOS's own in /sbin, so they are
+  // not required. wmt_launcher and 6620_launcher are how init tells the two
+  // layouts apart. donor_gate.test.mjs pins every binary here against init.c.
+  function _emosSystemFiles() {
+    return {
+      5: ['bin/sh', 'bin/linker', 'bin/e2fsck', 'bin/wmt_loader', 'bin/6620_launcher',
+          'bin/wpa_supplicant', 'bin/dhcpcd',
+          'etc/firmware/WIFI_RAM_CODE_8163', 'etc/firmware/WMT_SOC.cfg'],
+      6: ['bin/sh', 'bin/linker', 'bin/e2fsck', 'vendor/bin/wmt_loader', 'vendor/bin/wmt_launcher',
+          'vendor/firmware/WIFI_RAM_CODE_8163', 'vendor/firmware/WMT_SOC.cfg'],
+    };
+  }
+
+  // One read-only pass: where expdb is (its bytes are pulled and read in the
+  // browser, never through `od`), the TWRP version, then BOTH system
+  // partitions, each mounted privately read-only as _sysreadScript does and for
+  // its reasons. Every required file is checked for both generations; the
+  // verdict decides which list applies. `-s`: an empty file is as useless as a
+  // missing one.
+  //
+  // Partitions are found by the kernel's own GPT name (PARTNAME in sysfs)
+  // first, and TWRP's by-name map only as a fallback. amonet 1's TWRP 3.2.3
+  // read expdb as unreadable through the by-name + `od` path on C95
+  // (2026-09-25), and the kernel publishes the GPT names whatever a recovery
+  // does with its links.
+  function _donorProbeScript(files) {
+    const all = [...new Set([...files[5], ...files[6]])].join(' ');
+    return (
+      'part() { for u in /sys/block/mmcblk0/mmcblk0p*/uevent; do '
+      + 'if grep -qx "PARTNAME=$1" "$u" 2>/dev/null; then d=${u%/uevent}; echo "/dev/block/${d##*/}"; return; fi; done; '
+      + 'for d in /dev/block/platform/*/by-name /dev/block/by-name; do '
+      + 'if [ -e "$d/$1" ]; then readlink -f "$d/$1"; return; fi; done; }; '
+      + 'echo "EXPDBDEV=$(part expdb)"; '
+      + 'T=$(getprop ro.twrp.version); '
+      + '[ -z "$T" ] && T=$(grep -m1 -o \'Starting TWRP [0-9][^ ]*\' /tmp/recovery.log 2>/dev/null | sed \'s/^Starting TWRP //\'); '
+      + 'echo "TWRP=$T"; '
+      + 'for x in a b; do S=$(part system_$x); '
+      + 'echo "SYS_${x}_node=$S"; [ -b "$S" ] || continue; '
+      + 'M=$(mount | sed -n "s|^$S on \\([^ ]*\\) .*|\\1|p" | sed -n 1p); OWN=""; '
+      + 'if [ -z "$M" ]; then M=/tmp/em_donor_$x; mkdir -p "$M"; OWN=1; '
+      + 'if ! mount -o ro "$S" "$M" 2>/dev/null; then echo "SYS_${x}_mount=fail"; rmdir "$M" 2>/dev/null; continue; fi; fi; '
+      + 'echo "SYS_${x}_mount=ok"; '
+      + 'if [ -f "$M/system/build.prop" ]; then L=nested; R="$M/system"; '
+      + 'elif [ -f "$M/build.prop" ]; then L=root; R="$M"; else L=none; R="$M"; fi; '
+      + 'echo "SYS_${x}_layout=$L"; '
+      + 'for k in release name incremental; do '
+      + 'echo "SYS_${x}_$k=$(grep -m1 "^ro.build.version.$k=" "$R/build.prop" 2>/dev/null | cut -d= -f2-)"; done; '
+      + `for f in ${all}; do if [ -s "$R/$f" ]; then echo "FILE_$x $f yes"; else echo "FILE_$x $f no"; fi; done; `
+      + '[ -n "$OWN" ] && { umount "$M" 2>/dev/null; rmdir "$M" 2>/dev/null; }; '
+      + 'done; echo _DONORPROBE_OK');
+  }
+
+  function parseDonorProbe(out) {
+    const text = out || '';
+    const pick = k => ((text.match(new RegExp('^' + k + '=(.*)$', 'm')) || [])[1] || '').trim();
+    const sys = {};
+    for (const x of ['a', 'b']) {
+      const files = {};
+      for (const m of text.matchAll(new RegExp(`^FILE_${x} (\\S+) (yes|no)$`, 'gm'))) files[m[1]] = m[2];
+      sys[x] = { node: pick(`SYS_${x}_node`), mount: pick(`SYS_${x}_mount`),
+                 layout: pick(`SYS_${x}_layout`), release: pick(`SYS_${x}_release`),
+                 name: pick(`SYS_${x}_name`), build: pick(`SYS_${x}_incremental`), files };
+    }
+    // `expdb` is filled in by the caller from bytes it pulls off expdbDev.
+    return { complete: text.includes('_DONORPROBE_OK'), expdbDev: pick('EXPDBDEV'),
+             expdb: pick('EXPDB').toLowerCase(), twrp: pick('TWRP'), sys };
+  }
+
+  // The kernel's architecture from the head of a boot image — the builder's
+  // own rule (em_emos_build.reference_kernel_arch), so the gate and the build
+  // cannot disagree: an ARM zImage carries 0x016f2818 at 0x24; an AArch64
+  // kernel is gzip whose Image carries "ARM\x64" at 0x38. '' when neither can
+  // be shown, which the verdict refuses.
+  async function _kernelArchOf(bytes) {
+    if (!bytes || bytes.length < 64) return '';
+    if (new TextDecoder().decode(bytes.subarray(0, 8)) !== 'ANDROID!') return '';
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const page = dv.getUint32(36, true);
+    const k = page + 0x200;
+    if (!page || k + 0x40 > bytes.length) return '';
+    if (dv.getUint32(page, true) !== 0x58881688) return '';
+    if (dv.getUint32(k + 0x24, true) === 0x016f2818) return 'arm';
+    if (bytes[k] !== 0x1f || bytes[k + 1] !== 0x8b) return '';
+    // Only the first 0x40 bytes of the Image are needed, from a stream that is
+    // cut off: read until there are enough, then drop the rest.
+    let head = new Uint8Array(0);
+    try {
+      const ds = new DecompressionStream('gzip');
+      const w = ds.writable.getWriter();
+      w.write(bytes.subarray(k)).catch(() => {});
+      w.close().catch(() => {});
+      const r = ds.readable.getReader();
+      while (head.length < 0x40) {
+        const { value, done } = await r.read();
+        if (done) break;
+        const t = new Uint8Array(head.length + value.length);
+        t.set(head); t.set(value, head.length); head = t;
+      }
+      r.cancel().catch(() => {});
+    } catch { /* a truncated stream that yielded nothing proves nothing */ }
+    return head.length >= 0x3c && head[0x38] === 0x41 && head[0x39] === 0x52
+        && head[0x3a] === 0x4d && head[0x3b] === 0x64 ? 'arm64' : '';
+  }
+
+  // The decision. `layout` is classifyBootTarget's ('v1'|'v2'); `heads` is
+  // every STOCK boot image the plan reads or keeps, as {name, arch}.
+  //
+  // Which system partitions must pass is decided by one question, asked the
+  // same way on every device: which ones does the image, or its way back,
+  // actually depend on? Those refuse; any other is reported as a warning and
+  // cannot block, so a device's outcome never depends on a slot it does not
+  // use.
+  //   amonet 2: BOTH. The slot plan may build from either, and the stock
+  //     image kept in B boots against system_b (#619).
+  //   amonet 1: system_a, which must be mmcblk0p13 — an amonet 1 image
+  //     carries no emos.system= stamp, so emOS mounts SYSTEM_PART_DEFAULT
+  //     (emos/init/init.c). C95 on 2026-09-25 had FireOS 6 in system_b beside
+  //     a working FireOS 5 system_a; that is a warning, not a refusal.
+  function donorVerdict({ probe, layout, heads, files }) {
+    const why = [], seen = [], notes = [];
+    if (!probe || !probe.complete) {
+      return { ok: false, gen: 0, confirmed: seen, notes, reason:
+        'The check of this Echo\'s partitions did not finish, so nothing about it can be '
+        + 'trusted yet. Nothing has been written. Check the cable and try this step again.' };
+    }
+    const v2Boot = probe.expdb === '88168858';
+    const tw = probe.twrp;
+    let gen = 0, unreadable = false;
+    if (!probe.expdb) {
+      unreadable = true;
+      why.push('the wizard could not read the expdb partition, so it cannot tell amonet 1 from amonet 2');
+    } else if (!tw) {
+      unreadable = true;
+      why.push('the wizard could not read the TWRP version');
+    } else if (v2Boot && /^3\.7\.0(?![0-9])/.test(tw) && layout === 'v2') {
+      gen = 6;
+    } else if (!v2Boot && /^3\.2\.3(?![0-9])/.test(tw) && layout === 'v1') {
+      gen = 5;
+    } else {
+      why.push(`the unlock does not add up: expdb ${v2Boot ? 'holds' : 'does not hold'} `
+        + `amonet 2's bootloader, TWRP is ${tw}, and the boot partitions are laid out `
+        + `for amonet ${layout === 'v2' ? 2 : 1} (amonet 1 means TWRP 3.2.3 and FireOS 5; `
+        + 'amonet 2 means TWRP 3.7.0 and FireOS 6)');
+    }
+    if (gen) {
+      seen.push(`amonet ${gen === 6 ? 2 : 1}: expdb ${v2Boot ? 'holds' : 'does not hold'} `
+              + `amonet 2's bootloader, TWRP ${tw}`);
+      const want = gen === 6
+        ? { layout: 'nested', release: '7.', arch: 'arm', label: 'FireOS 6' }
+        : { layout: 'root', release: '5.', arch: 'arm64', label: 'FireOS 5' };
+      const other = gen === 6 ? 'FireOS 5' : 'FireOS 6';
+      const needed = gen === 6 ? ['a', 'b'] : ['a'];
+      for (const x of ['a', 'b']) {
+        const s = probe.sys[x];
+        const what = s.name || (s.release ? `Android ${s.release}` : 'an unreadable build');
+        let problem = '';
+        if (!s.node) problem = `system_${x} does not exist`;
+        else if (s.mount !== 'ok') problem = `system_${x} would not mount read-only`;
+        else if (s.layout === 'none' || !s.release) problem = `system_${x} has no readable build.prop`;
+        else if (s.layout !== want.layout || !s.release.startsWith(want.release)) {
+          problem = `system_${x} holds ${what}, which is ${other}, not ${want.label}`;
+        } else {
+          const missing = files[gen].filter(f => s.files[f] !== 'yes');
+          if (missing.length) problem = `system_${x} (${what}) is missing ${missing.join(', ')}`;
+        }
+        if (!problem && gen === 5 && x === 'a' && s.node !== '/dev/block/mmcblk0p13') {
+          problem = `system_a is ${s.node}, but an amonet 1 image mounts /dev/block/mmcblk0p13`;
+        }
+        if (!needed.includes(x)) {
+          notes.push(problem
+            ? `${problem} — this image does not use system_${x}, so it is not a reason to stop`
+            : `system_${x}: ${what}, not used by this image`);
+        } else if (problem) {
+          why.push(problem);
+        } else {
+          seen.push(`system_${x}: ${what}${s.build ? ` (${s.build})` : ''}, `
+                  + `all ${files[gen].length} files emOS uses present`);
+        }
+      }
+      if (!heads || !heads.length) why.push('there is no stock boot image to build from');
+      for (const h of heads || []) {
+        if (!h.arch) why.push(`the kernel in ${h.name} could not be identified as 32- or 64-bit`);
+        else if (h.arch !== want.arch) {
+          why.push(`${h.name} holds a ${h.arch === 'arm' ? '32-bit (FireOS 6)' : '64-bit (FireOS 5)'} `
+                 + `kernel, not ${want.label}'s`);
+        } else seen.push(`${h.name}: ${want.label} kernel (${h.arch === 'arm' ? '32' : '64'}-bit)`);
+      }
+    }
+    if (!why.length) return { ok: true, gen, confirmed: seen, notes };
+    const fix = gen === 6
+      ? ' amonet 2 needs FireOS 6 in BOTH slots. If the FireOS 6 flash from the unlock '
+        + 'instructions did not complete for both, finish it, then run this step again.'
+      : gen === 5
+        ? ' amonet 1 needs FireOS 5 in system_a (mmcblk0p13) and a FireOS 5 kernel to build from.'
+        : unreadable
+          ? ' The Echo is unlocked, since it is in TWRP; this is the wizard failing to read it. '
+            + 'Try this step again, and if it repeats, use Download diagnostics and attach the '
+            + 'file to an issue.'
+          : ' EchoMuse only builds for amonet 1 with TWRP 3.2.3 and FireOS 5, or amonet 2 with '
+            + 'TWRP 3.7.0 and FireOS 6. A TWRP or amonet updated by hand would explain this; '
+            + 'please open an issue with Download diagnostics attached.';
+    return { ok: false, gen, confirmed: seen, notes, reason:
+      `This Echo is not in a state emOS can be built from: ${why.join('; ')}. `
+      + `Nothing has been written.${fix}` };
+  }
+
   function classifyBootTarget(probe) {
     const target = (probe.match(/TARGET=(\S*)/) || [])[1] || '';
     const isBlock = /ISBLK=yes/.test(probe);
@@ -6233,14 +6647,34 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
 
       // A v1-shaped map with no other-boot is a combination nothing has seen.
       // Refusing costs a bug report; guessing costs the unlock.
-      const v1Aliases = entries.filter(m => /_(amonet|x)$/.test(m[1])).map(m => m[1]);
-      if (v1Aliases.length) {
+      //
+      // The message carries what each alias RESOLVES TO, deduplicated. It used
+      // to print bare names, and the by-name glob matches one directory per
+      // platform node — so a real report read "boot_a_x, boot_a_x, boot_a_x,
+      // boot_b_x, boot_b_x, boot_b_x" (#598), which looks like six partitions
+      // and is two seen three times. Worse, the names alone cannot settle the
+      // question they are reported for: what decides whether the bare name is
+      // the kernel or amonet's payload is whether boot_a and boot_a_x point at
+      // the SAME partition. Asking someone to report a line that cannot answer
+      // it costs a round trip per device.
+      const aliasDevs = new Map();
+      for (const m of entries) {
+        if (/_(amonet|x)$/.test(m[1]) && !aliasDevs.has(m[1])) aliasDevs.set(m[1], m[2]);
+      }
+      if (aliasDevs.size) {
+        const bare = new Map();
+        for (const m of entries) {
+          if (/^boot_[ab]$/.test(m[1]) && !bare.has(m[1])) bare.set(m[1], m[2]);
+        }
+        const show = ms => [...ms].sort()
+          .map(([n, d]) => `${n} → ${d}`).join(', ');
         return { ok: false, target, names, reason:
           `/dev/block/other-boot does not exist, but the by-name map carries `
-          + `${v1Aliases.sort().join(', ')} — which belongs to the older amonet layout, `
+          + `${show(aliasDevs)} — which belongs to the older amonet layout, `
           + 'where the bare names are not the kernel. That combination is not a state '
-          + 'the wizard has seen, so nothing has been read or written. Please report '
-          + 'this with the line above.' };
+          + 'the wizard has seen, so nothing has been read or written.'
+          + (bare.size ? ` The bare names resolve to ${show(bare)}.` : '')
+          + ' Please report this with the whole line above.' };
       }
       if (!/^_[ab]$/.test(suffix)) {
         return { ok: false, target, names, reason:
@@ -6589,8 +7023,9 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
              + `(banner "${c.banner}").`, 'error');
         addLog('Pulling the cable powers the Dot off, and a cold boot comes up in Android.', 'warn');
         if (want === 'twrp') {
-          addLog('To reach TWRP: unplug, plug back in, and hold the mute button for about '
-               + '5 seconds as soon as the blue LED appears.', 'warn');
+          addLog('To reach TWRP: unplug, hold mute or + (volume up), and plug back '
+               + 'in with it held until the ring changes. Which button depends on '
+               + 'your amonet version — R0rt1z2\'s XDA thread has it.', 'warn');
         }
       }
     } catch (e) {
@@ -6691,7 +7126,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         }
         if (!announced) {
           announced = true;
-          addLog('Waiting for Android to finish booting — safe to have clicked Reconnect early, this waits as long as it takes…');
+          addLog('Waiting for Android to finish booting…');
         }
         // Heartbeat every 15s so a multi-minute wait reads as progress rather
         // than as a hang (lesson 3 above).
@@ -6705,9 +7140,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       }
       throw new Error(
         `Android has not finished booting after 10 minutes, so ${what} cannot run. `
-        + `Every pm command would fail and the step would silently do nothing. `
-        + `This is long past a slow boot — suspect a bootloop rather than patience: `
-        + `check the device's light ring, and click Retry once it settles.`);
+        + `That is long past a slow boot — check the device's light ring for a `
+        + `bootloop, and click Retry once it settles.`);
     } finally {
       setWaiting(false);
     }
@@ -6753,7 +7187,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // needs a transaction number that differs per Android release, and
     // `settings put system volume_music` is not read live by AudioService.
     // This is what pressing the button does, and it works on any release.
-    addLog('Muting the speaker — Amazon\'s setup assistant starts talking here, and cannot be stopped until root lands…');
+    addLog('Muting the speaker — the Amazon setup assistant talks during this step…');
     try {
       await c.shell('i=0; while [ $i -lt 15 ]; do input keyevent 25; i=$((i+1)); done');
       // Measured on hardware 2026-08-08: the setup assistant talks anyway. It
@@ -6766,7 +7200,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       addLog(`  → could not mute (${e.message}) — the setup prompt may talk over the wizard.`, 'warn');
     }
 
-    addLog('Testing su -c id… (magiskd can take a while to attach after boot — retrying if needed)');
+    addLog('Testing su -c id… (retries until magiskd attaches)');
     let out = '';
     let rooted = false;
     const attemptStart = Date.now();
@@ -6780,7 +7214,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         // silent wizard, which is indistinguishable from a hang. Tick while the
         // call is still in flight, so the wait is visibly a wait.
         const ticker = setInterval(
-          () => addLog(`    still waiting on su (${Math.round((Date.now() - callStart) / 1000)}s) — magiskd has not answered yet`),
+          () => addLog(`    still waiting on su (${Math.round((Date.now() - callStart) / 1000)}s)`),
           15000);
         try {
           out = await c.shell('su -c id 2>&1');
@@ -7335,9 +7769,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       // Nothing to disable, and pm said so cleanly for every one. Continuing
       // is correct, but say plainly what was concluded rather than ticking
       // the step green in silence — this is an image nobody here has seen.
-      addLog(`None of the ${_ALEXA_PKGS.length} Alexa packages are installed on this build, `
-           + `so there was nothing to disable. If the device is silent and its ring is off, `
-           + `that is the expected state and provisioning can continue.`, 'warn');
+      addLog(`None of the ${_ALEXA_PKGS.length} Alexa packages are installed on this `
+           + `build — nothing to disable.`, 'warn');
     } else {
       addLog(`${disabled} disabled, ${absent} not installed on this build.`,
              disabled ? 'ok' : 'warn');
@@ -7644,7 +8077,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // serial (a pending device row is created if needed; approval flow is
     // unchanged). A 503 means this controller has no TLS listener
     // (cryptography package missing) — provision proceeds plain, and the
-    // dashboard "Secure link" action can retrofit credentials later.
+    // device can be paired later.
     addLog('Fetching device-link TLS credentials…');
     const serial = (await c.shell('getprop ro.serialno')).trim();
     if (!serial) {
@@ -7670,6 +8103,40 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         }
         addLog('TLS credentials installed — device will connect over wss.', 'ok');
       }
+    }
+
+    // The fleet's controller address list (Config → Advanced), written as it
+    // stands now. The provisioning controller is the source of truth (Wil,
+    // 2026-09-24): with no list set, ANY controller.json is removed, hand
+    // written or not. emOS keeps /data across a re-provision, so a file from a
+    // previous deployment survives to here, and one with "mdns": false and a
+    // dead address leaves the device unable to find this controller at all.
+    const epResp = await fetch(ingressPath('/api/provision/controller_endpoints'), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!epResp.ok) {
+      throw new Error(`Controller returned ${epResp.status} fetching the controller address list.`);
+    }
+    const ep = await epResp.json();
+    if (ep.content) {
+      addLog('Writing the controller address list…');
+      await c.push('/sdcard/em-controller.json', new TextEncoder().encode(ep.content));
+      await c.shell(`su -c 'mkdir -p /data/local/etc/echomuse && cp /sdcard/em-controller.json ${ep.path} && chmod 644 ${ep.path}; rm -f /sdcard/em-controller.json'`);
+      const epTools = await deviceTools(c);
+      const epGot = (await c.shell(`su -c '${epTools.md5sum} ${ep.path}' 2>/dev/null`)).trim().split(/\s+/)[0];
+      if (epGot !== ep.md5) {
+        throw new Error(`Controller address list install verification failed — ${ep.path} reads `
+          + `${epGot || 'unreadable'}, expected ${ep.md5}.`);
+      }
+      addLog('Controller address list installed — tried before mDNS.', 'ok');
+    } else {
+      const old = (await c.shell(`su -c 'cat ${ep.path}' 2>/dev/null`)).trim();
+      const epOut = (await c.shell(
+        `su -c 'rm -f ${ep.path}; [ -e ${ep.path} ] || echo GONE'`)).trim();
+      if (!/GONE/.test(epOut)) {
+        throw new Error(`Could not remove ${ep.path} — it would send this device to another controller's addresses.`);
+      }
+      if (old.startsWith('{')) addLog(`  removed a controller address list from a previous setup: ${old}`, 'warn');
     }
 
     // A wpa_supplicant.conf that at least declares a control socket, written
@@ -7730,7 +8197,9 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // silently never fired and the wizard just sat on it. The finishing reboot
     // belongs to whichever step is genuinely last; it now lives in
     // runInstallOwwAssets. Anything added after that must move it again.
-    addLog('Staying connected — the wake word assets install next, then the device reboots.');
+    addLog(isEmos
+      ? 'Staying in recovery — the wake word assets install next, then emOS is built and flashed.'
+      : 'Staying connected — the wake word assets install next, then the device reboots.');
   }
 
   // ── emOS flow ─────────────────────────────────────────────────────────────
@@ -7746,11 +8215,48 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // /data holds everything we are about to install AND survives the boot
     // partition write, which is the whole reason the install happens before
     // the flash. TWRP does not always mount it on its own.
-    await c.shell('mount /data 2>/dev/null');
-    const dataOk = (await c.shell('mount | grep " /data " || true')).trim();
+    //
+    // Four ways, because one `mount /data` covers only the TWRP builds whose
+    // fstab already names it. `twrp mount data` drives TWRP's own mounting
+    // (which knows about decryption); the by-name attempts cover a build
+    // whose fstab entry is missing or names the wrong filesystem, and both
+    // directory spellings exist in the field. Each is a no-op once /data is
+    // up, so this costs one round trip on a device where the first worked.
+    const mounted = async () =>
+      !!(await c.shell('grep " /data " /proc/mounts || true')).trim();
+    if (!await mounted()) {
+      await c.shell('mount /data 2>&1; twrp mount data 2>&1');
+    }
+    if (!await mounted()) {
+      await c.shell(
+        'for d in /dev/block/by-name/userdata /dev/block/bootdevice/by-name/userdata; do '
+        + '[ -e "$d" ] || continue; '
+        + 'for t in ext4 f2fs; do mount -t $t "$d" /data 2>/dev/null && break 2; done; '
+        + 'done');
+    }
+    // Mounted is not the same as usable — a read-only mount passes the check
+    // above and fails every push afterwards. Everything here writes to /data.
+    const dataOk = await mounted()
+      && (await c.shell('touch /data/.em_write_test 2>&1 && rm -f /data/.em_write_test '
+                        + '&& echo _WRITEOK')).includes('_WRITEOK');
     if (!dataOk) {
-      throw new Error('/data is not mounted in TWRP, so there is nowhere to '
-        + 'install Revoice. Mount it from TWRP\'s Mount menu and retry.');
+      // Say what was found. The old message named TWRP's Mount menu as the
+      // fix, which does not help when the partition will not mount there
+      // either — reported in #598 on a FireOS 6 device where /data was
+      // missing from `df` under Android too.
+      const ev = await c.shell(
+        'echo "BYNAME=$(ls /dev/block/by-name/ 2>/dev/null | grep -i -e user -e data | tr \'\\n\' \' \')"; '
+        + 'echo "FSTAB=$(grep -i /data /etc/recovery.fstab 2>/dev/null | tr \'\\n\' \'|\')"; '
+        + 'echo "BLKID=$(blkid 2>/dev/null | grep -i -e userdata -e /data | tr \'\\n\' \'|\')"');
+      ev.split('\n').map(l => l.trim()).filter(Boolean)
+        .forEach(l => addLog(`  ${l}`, 'warn'));
+      throw new Error('/data could not be mounted in TWRP, so there is nowhere '
+        + 'to install EchoMuse — tried the fstab entry, TWRP\'s own mount, and '
+        + 'the userdata partition directly as ext4 and f2fs. Nothing has been '
+        + 'written and the device is still in TWRP.\n\n'
+        + 'A userdata partition that mounts nowhere usually needs reformatting: '
+        + 'TWRP\'s Wipe → Format Data, which ERASES everything on /data. If you '
+        + 'would rather not, attach the three lines above to a GitHub issue.');
     }
     addLog(`  /data mounted`);
 
@@ -7956,14 +8462,47 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // v1 is left alone. Its `other-boot` alias already names the slot that is
     // not running, which is the same answer this arrives at, and it has no BCB
     // to point afterwards.
-    let plan = null;
+    let plan = null, slots = null;
     if (boot.layout === 'v2') {
-      const slots = classifyBootSlots(probe);
+      slots = classifyBootSlots(probe);
       addLog(`  slot A: ${slots.a.state}, slot B: ${slots.b.state}`);
       plan = chooseBootSlots(slots, (probe.match(/SUFFIX=(\S*)/) || [])[1] || '');
       if (!plan.ok) throw new Error(plan.reason);
       addLog(`  → ${plan.reason}`, 'ok');
     }
+
+    // THE UNLOCK, THE RECOVERY, BOTH SYSTEMS AND EVERY STOCK KERNEL MUST AGREE
+    // before anything is read for the build (#619) — see donorVerdict. Every
+    // stock image is checked, not only the donor: on v2 the one left in B is
+    // the way back, and a way back that cannot boot is not one.
+    addLog('Checking this Echo is in a state emOS can be built from…');
+    const files = _emosSystemFiles();
+    const donorProbe = parseDonorProbe(await c.shell(_donorProbeScript(files)));
+    // expdb's first four bytes, read here rather than with `od` on the device.
+    if (donorProbe.expdbDev) {
+      await c.shell(`dd if=${donorProbe.expdbDev} of=/tmp/em_expdb.bin bs=4 count=1 2>/dev/null`);
+      const e = await c.pull('/tmp/em_expdb.bin');
+      await c.shell('rm -f /tmp/em_expdb.bin');
+      if (e && e.length >= 4) {
+        donorProbe.expdb = [...e.subarray(0, 4)].map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+    }
+    addLog(`  expdb (${donorProbe.expdbDev || 'not found'}): ${donorProbe.expdb || 'unreadable'}`);
+    const toCheck = plan
+      ? ['a', 'b'].filter(x => slots[x].state === 'stock')
+                  .map(x => ({ name: `boot_${x}`, dev: slots[x].dev }))
+      : [{ name: 'the boot image', dev: boot.target }];
+    const heads = [];
+    for (const t of toCheck) {
+      await c.shell(`dd if=${t.dev} of=/tmp/em_head.img bs=65536 count=1 2>/dev/null`);
+      const head = await c.pull('/tmp/em_head.img');
+      await c.shell('rm -f /tmp/em_head.img');
+      heads.push({ name: t.name, arch: await _kernelArchOf(head) });
+    }
+    const gate = donorVerdict({ probe: donorProbe, layout: boot.layout, heads, files });
+    for (const line of gate.confirmed) addLog(`  ✓ ${line}`, 'ok');
+    for (const line of gate.notes) addLog(`  ${line}`, 'warn');
+    if (!gate.ok) throw new Error(gate.reason);
     setEmosPlan(plan);
     // The ESCROW and the build reference come from the donor; the flash goes to
     // the target. They are deliberately different partitions now.
@@ -7990,10 +8529,9 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       addLog(`  amonet v2 layout, booted slot `
            + `${boot.slot.slice(1).toUpperCase()}`, 'ok');
     } else if (!amonet) {
-      addLog('No amonet partitions in the by-name map. This device may not be '
-           + 'unlocked, or may be unlocked by some other means. You are in TWRP, '
-           + 'which normally means it IS unlocked — but if the flash does not '
-           + 'boot, that is where to look first.', 'warn');
+      addLog('No amonet partitions in the by-name map — this device may be '
+           + 'unlocked by some other means. If the flash does not boot, start '
+           + 'there.', 'warn');
     } else {
       addLog('  amonet unlock confirmed in the partition map', 'ok');
     }
@@ -8338,9 +8876,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     const mbps = (bytes.length / 1024 / 1024) / Math.max(secs, 0.001);
     addLog(`  ${mbps.toFixed(1)} MB/s over ${secs.toFixed(1)}s`);
     if (mbps > 60) {
-      addLog('That throughput is not achievable on this eMMC, so the write '
-           + 'probably went to cache. The read-back below is the check that '
-           + 'matters.', 'warn');
+      addLog('Faster than this eMMC can write, so that went to cache — the '
+           + 'read-back below is the real check.', 'warn');
     }
     // dd ALWAYS prints its record counts to stderr, which is captured above.
     // Their absence means it never copied anything — it rejected its own
@@ -8415,8 +8952,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // from a read that is unstable or still cached — same answer twice is the
     // partition, a different answer twice is not, and they are not the same
     // problem. Cheap, and it runs once, on a path that has already failed.
-    addLog('  read-back does not match — reading a second time to tell a bad '
-         + 'write from an unstable read…', 'warn');
+    addLog('  read-back does not match — reading again…', 'warn');
     const again = await readBack();
     const detail = again === back
       ? `the partition consistently reads ${back || 'nothing'}, expected ${want}`
@@ -8484,8 +9020,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     if (err) {
       throw new Error(
         `${err}\n\nDO NOT REBOOT — the device is still in TWRP and recoverable from `
-        + 'here. Use "Restore escrowed boot image" below to put it back '
-        + 'back; it takes about ten seconds and leaves /data untouched.');
+        + 'here. Use "Restore escrowed boot image" below to put it back; '
+        + 'it takes about ten seconds and leaves /data untouched.');
     }
     // Writing a slot does not select it. Amazon's bootloader picks from the
     // BCB in `misc`, so a verified write can still boot the other slot — which
@@ -8591,8 +9127,12 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
       try { await c.close(); } catch {}
       setAdb(null);
     }
-    addLog('The ring fills as the boot progresses. Pick the device\'s serial '
-         + 'port when the browser asks — it appears a few seconds in.', 'warn');
+    // Anchored to the ring rather than to a number of seconds: the port does
+    // not exist until emOS itself starts, so "wait N seconds" sends people to
+    // an empty picker and makes it read as a fault.
+    addLog('The browser will ask for a serial port. It appears as "emOS", and only '
+         + 'once the emOS boot starts — that is the ring beginning to fill. An empty '
+         + 'picker means the device has not got there yet.', 'warn');
 
     let port;
     try {
@@ -8600,9 +9140,9 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     } catch (e) {
       // Cancelled, or the picker timed out before emOS's port appeared.
       if (e?.name === 'NotFoundError') {
-        throw new Error('No serial port was chosen. The device is still booting '
-          + 'emOS — click Connect Console once its port shows in the picker '
-          + '(about 30 seconds after the reboot).');
+        throw new Error('No serial port was chosen. The port appears as "emOS" '
+          + 'and only once the emOS boot starts, which is the ring beginning to '
+          + 'fill — click Connect Console again once it is there.');
       }
       throw e;
     }
@@ -8644,12 +9184,15 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // be produced by the file.
     if (!/^ID=emos\s*$/m.test(osrel)) {
       throw new Error('The console answered but this does not look like emOS '
-        + `(/etc/os-release says "${osrel.trim() || 'nothing'}"). `
-        + 'Restore the escrowed boot image before going further.');
+        + `(/etc/os-release says "${osrel.trim() || 'nothing'}"), so the flash `
+        + 'did not produce the image it should have. Do not configure WiFi on '
+        + 'it.\n\nGet the device into TWRP — unplug, hold mute or + (volume '
+        + 'up), and plug back in with it held until the ring changes — then '
+        + 'either restore your escrowed boot image from there, or run this '
+        + 'wizard again.');
     }
     addLog(osrel.trim(), 'ok');
-    addLog('emOS is running. Reaching this point with no network is expected — '
-         + 'WiFi is configured next.', 'ok');
+    addLog('emOS is running. WiFi is configured next.', 'ok');
   }
 
   // Scan from the DEVICE'S OWN RADIO, over the console.
@@ -8713,9 +9256,34 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     return nets;
   }
 
-  async function runEmosWifi() {
+  // `skipJoin` runs the registration wait alone, for a device that is already
+  // on a network — one provisioned before, or moved across from FireOS, whose
+  // wpa_supplicant.conf survived on /data. Such a device associates during the
+  // previous step and goes straight to the closing sweep, so the operator is
+  // watching a finished boot while this step waits for WiFi it already has.
+  async function runEmosWifi(skipJoin) {
     const con = emosConsole;
     if (!con) throw new Error('No serial console — re-run the Reboot and Watch step.');
+    if (skipJoin) {
+      const st = await con.run(
+        'wpa_cli -p /data/misc/wifi/sockets -i wlan0 status');
+      if (!/wpa_state=COMPLETED/.test(st)) {
+        throw new Error('Not skipping: the device reports '
+          + `${(st.match(/wpa_state=\S+/) || ['nothing readable'])[0]}, so it is `
+          + 'not on a network. Pick one above and join it.');
+      }
+      // Associated is not reachable. Without an address nothing gets to the
+      // controller, and the registration wait below would simply time out.
+      const ip = (await con.run(
+        'ip addr show wlan0 | grep "inet " | while read a b c; do echo ${b%/*}; done')).trim();
+      if (!/\d+\.\d+\.\d+\.\d+/.test(ip)) {
+        throw new Error('Not skipping: the device is associated but has no IP '
+          + 'address, so nothing can reach the controller. Join a network above.');
+      }
+      const ssidRaw = (st.match(/^ssid=(.+)$/m) || [])[1];
+      addLog(`Already on "${ssidRaw ? ssidRaw.replace(/\r$/, '') : '?'}" (${ip}) `
+           + '— skipping WiFi setup.', 'ok');
+    } else {
     const ssidB = ssidBytesFor(wifiSsid || '');
     const bad = _ssidProblem(ssidB) || _pskProblem(wifiPsk);
     if (bad) throw new Error(bad);
@@ -8777,14 +9345,45 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     // console, which is the thing this step exists to avoid needing. And
     // retrying the step calls add_network again, so each attempt stacked
     // another entry.
+    // COMPLETED is not enough on its own, because add_network ADDS: a device
+    // that already had a saved network — one provisioned before, or carried
+    // across from FireOS on /data — now has two enabled entries, and
+    // wpa_supplicant picks. So the operator retypes their network, the device
+    // associates to the OLD one, wpa_state reads COMPLETED, and the step goes
+    // green having changed nothing they asked for.
+    //
+    // Matched on the ssid wpa_cli reports against the ssid asked for, hex
+    // against hex: `status` prints the SSID with non-printables escaped and
+    // the panel accepts arbitrary bytes, so comparing display text would
+    // disagree with itself on exactly the names #586 was about.
     addLog('Waiting for the network to come up…');
     let joined = false;
+    let onSsid = null;
     for (let i = 0; i < 12 && !joined; i++) {
       await new Promise(r => setTimeout(r, 2500));
       const st = await con.run(
-        'wpa_cli -p /data/misc/wifi/sockets -i wlan0 status | grep wpa_state');
-      addLog(`  ${st.trim() || 'no answer'}`);
-      joined = /wpa_state=COMPLETED/.test(st);
+        'wpa_cli -p /data/misc/wifi/sockets -i wlan0 status');
+      const state = (st.match(/wpa_state=(\S+)/) || [])[1];
+      const raw   = (st.match(/^ssid=(.+)$/m) || [])[1];
+      onSsid = raw ? _bytesHex(_wpaUnescape(raw.replace(/\r$/, ''))) : null;
+      addLog(`  wpa_state=${state || '?'}`
+           + (onSsid ? ` ssid=${_ssidText(_hexBytes(onSsid))}` : ''));
+      joined = state === 'COMPLETED' && onSsid === ssidHex;
+    }
+    // Associated, but to something else. Removing OUR entry is right: the
+    // other network is the one that works, and it was here first.
+    if (!joined && onSsid && onSsid !== ssidHex) {
+      await con.run(`wpa_cli -p /data/misc/wifi/sockets -i wlan0 remove_network ${id}`);
+      await con.run('wpa_cli -p /data/misc/wifi/sockets -i wlan0 save_config');
+      await con.run('sync');
+      throw new Error(
+        `The device associated to "${_ssidText(_hexBytes(onSsid))}" rather than `
+        + `"${wifiSsid}" — it already had that network saved and preferred it. `
+        + `"${wifiSsid}" has been removed again, so nothing has changed.\n\n`
+        + 'If the network it is on is the one you want, click '
+        + '"Skip (already connected)". To force the new one, remove the old '
+        + 'entry over the console first: wpa_cli -p /data/misc/wifi/sockets '
+        + '-i wlan0 list_networks, then remove_network <id> and save_config.');
     }
     if (!joined) {
       addLog('Not associating — removing the network so the device is not left '
@@ -8797,6 +9396,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         + 'been removed again. Check the name and password. Note this radio '
         + 'cannot join WPA3 — it reports no SAE — so a WPA3-only network will '
         + 'never associate however correct the password is.');
+    }
+
     }
 
     addLog('Waiting for the device to register with the controller…');
@@ -8857,14 +9458,14 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
     addLog(`Registered as ${seen.label || seen.device_id}`
          + `${seen.firmware_ver ? ` running ${seen.firmware_ver}` : ''}.`, 'ok');
     addLog('── PROVISIONING COMPLETE ──', 'head');
-    if (seen.approved) {
-      addLog('This Echo is running emOS, on your network, and approved. '
-           + 'Nothing further to do — say the wake word.', 'ok');
-    } else {
-      addLog('This Echo is running emOS and has reached the controller. '
-           + 'ONE THING LEFT: approve it on the Devices page, and it will '
-           + 'connect within a few seconds.', 'ok');
+    addLog('This Echo is running emOS and has reached the controller.', 'ok');
+    if (!seen.approved) {
+      addLog('NEXT: approve it on the Devices page — it connects within a few '
+           + 'seconds of being approved.', 'warn');
     }
+    addLog('THEN: add it in Home Assistant. It is offered as an ESPHome device '
+         + 'under Settings → Devices & services, and until that is done the '
+         + 'wake word fires with nothing behind it to answer.', 'warn');
   }
 
   // ── Step executor ──
@@ -8993,8 +9594,9 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
           `This step runs in ${_MODE_NAME[wantMode]}, but the device is in `
           + `${_MODE_NAME[gotMode]} (banner "${c.banner}"). Nothing has been run. `
           + (wantMode === 'twrp'
-              ? 'Unplug, plug back in, and hold the mute button for about 5 seconds '
-                + 'as soon as the blue LED appears, then Reconnect.'
+              ? 'Unplug, hold mute or + (volume up), and plug back in with it held '
+                + 'until the ring changes, then Reconnect. Which button depends on '
+                + 'your amonet version — R0rt1z2\'s XDA thread has it.'
               : 'Reboot the device to Android and Reconnect.'));
       }
       if (isEmos) switch (stepIdx) {
@@ -9016,7 +9618,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         case 5: await runBuildEmos(useLatest); break;
         case 6: await runFlashEmos(c); break;
         case 7: await runRebootAndWatch(c); break;
-        case 8: await runEmosWifi(); break;
+        case 8: await runEmosWifi(useLatest); break;
       }
       else switch (stepIdx) {
         case  0: c = await runConnectAndroid(); break;
@@ -9140,6 +9742,14 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
         ? 'The USB link is up but this step failed — click Retry to run it again.'
         : 'Pick the device from the USB picker, then click Retry.';
     }
+    // The serial steps have no ADB at all — the device rebooted out of TWRP to
+    // get here — so the generic "use Reconnect" advice below points at a
+    // control that cannot help, on the step people most often get stuck at.
+    if (cur.id === 'reboot_watch') {
+      return 'Click Connect Console and pick the device\'s serial port. If the '
+           + 'picker is empty, the device is still booting — wait for the ring '
+           + 'to settle and click again.';
+    }
     if (INPUT_STEPS.has(cur.id)) {
       return diagnostics
         ? 'Fix the input above, then retry. If it keeps failing, download diagnostics and attach them to your issue.'
@@ -9214,6 +9824,14 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
           {/* Content */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '18px 22px 14px' }}>
 
+            {/* The step's own content SCROLLS, and the transcript below keeps
+                a floor. Both used to sit in one clipped column of fixed
+                height, so a tall step pushed its own button off the bottom:
+                the WebUSB warning on step 0 and the first-boot guide on the
+                emOS console step each left the button barely clickable (UAT
+                2026-09-27). */}
+            <div style={{ flex: '0 1 auto', minHeight: 0, overflowY: 'auto' }}>
+
             {/* Step title + desc */}
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
@@ -9242,12 +9860,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                 code. */}
             {step === 0 && usbBlocked && (
               <div className="em-panel" style={{ marginBottom: 12, borderColor: 'var(--warn)' }}>
-                <div className="em-label" style={{ marginBottom: 6 }}>USB is unavailable in this browser</div>
-                <p style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.6, margin: '0 0 6px' }}>
-                  {usbBlocked.why}
-                </p>
                 <p style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.6, margin: 0 }}>
-                  {usbBlocked.fix}
+                  <strong>{usbBlocked.why}</strong> {usbBlocked.fix}
                 </p>
               </div>
             )}
@@ -9502,25 +10116,14 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                 itself. */}
             {isEmos && step === 7 && stepState[7] !== 'done' && !running && (
               <div className="em-panel" style={{ marginBottom: 12, borderColor: 'var(--warn)' }}>
-                <div className="em-label" style={{ marginBottom: 6 }}>Watch the light ring on this boot</div>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.7 }}>
-                  <div><strong style={{ color: 'var(--ok)' }}>Filling, then white, then fading</strong> — up and on the network. Done, about 30 seconds.</div>
-                  <div><strong>Two lit segments at the top, throbbing</strong> — waiting for the network. Normal, and most of the boot.</div>
-                  <div><strong style={{ color: 'var(--warn)' }}>Solid amber</strong> — the device is restoring its own last good image. Leave it alone; it reboots itself.</div>
-                  <div><strong style={{ color: 'var(--warn)' }}>Red and stopped</strong> — a boot stage failed. Recoverable, see below.</div>
-                  <div><strong style={{ color: 'var(--error)' }}>A single segment orbiting a full blue ring, for more than a minute</strong> — emOS never started. This is the one that needs you.</div>
+                <div className="em-label" style={{ marginBottom: 6 }}>What you do</div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.7, marginBottom: 10 }}>
+                  <div>1. Click the button. The Echo reboots into emOS.</div>
+                  <div>2. Pick <strong>emOS</strong> when the browser asks for a serial port. It appears once the ring starts filling.</div>
+                  <div>Keep the cable in: it powers the Echo.</div>
                 </div>
-                <p style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.7, margin: '10px 0 0' }}>
-                  <strong>If it does not come up, do not keep power cycling it.</strong> To reach
-                  TWRP: unplug the power, hold the <strong>mute</strong> button down, and apply
-                  power with it still held — the ring shows an <strong>alternating cyan
-                  pattern</strong> once you are in recovery. Reconnect here and use
-                  <strong> Restore escrowed boot image</strong> below: about ten seconds, and it
-                  leaves everything on /data alone. Repeatedly power cycling a device that will
-                  not boot is what turns a recoverable one into a case-opening job.
-                </p>
-                <div style={{ marginTop: 12 }}>
-                  {/* Once the reboot has been sent there is no ADB handle and
+                <div style={{ marginBottom: 14 }}>
+                  {/* After the reboot there is no ADB handle and
                       runRebootAndWatch skips it, so a second click only opens
                       the port picker — say so. The picker times out if emOS
                       takes longer to appear than the operator waits. */}
@@ -9553,6 +10156,26 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                     {t('wizResetStateGo')}
                   </Pill>
                 </div>
+                <div className="em-label" style={{ marginBottom: 6 }}>The ring</div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.7 }}>
+                  <div><strong>Blue arc growing</strong> — booting.</div>
+                  <div><strong>Two blue segments throbbing at the bottom</strong> — booted, waiting for WiFi (next step).</div>
+                  <div><strong style={{ color: 'var(--ok)' }}>Filling to the top, then white</strong> — on the network. Done.</div>
+                  <div><strong style={{ color: 'var(--warn)' }}>Solid amber</strong> — restoring its last good image. Leave it.</div>
+                  <div><strong style={{ color: 'var(--warn)' }}>Red, stopped</strong> — a boot stage failed. Recoverable, below.</div>
+                  <div><strong style={{ color: 'var(--error)' }}>One segment orbiting a full blue ring for over a minute</strong> — emOS never started. Needs you, below.</div>
+                </div>
+                {/* Kept whatever it costs in length: it asks somebody to act
+                    on their own hardware, and the wrong reaction (power
+                    cycling) is what makes a recoverable Echo unrecoverable. */}
+                <p style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: 'var(--text2)', lineHeight: 1.7, margin: '10px 0 0' }}>
+                  <strong>If it does not come up, do not keep power cycling it</strong> — that turns a
+                  recoverable Echo into a case-opening job. Instead: unplug it, hold <strong>mute</strong> or{' '}
+                  <strong>+</strong> (<a href="https://xdaforums.com/t/unlock-root-twrp-unbrick-amazon-echo-dot-2nd-gen-2016-biscuit.4761416/" target="_blank"
+                  rel="noreferrer">which one depends on your amonet version</a>) and plug it back in to
+                  reach TWRP, reconnect here and use <strong>Restore escrowed boot image</strong>. About
+                  ten seconds, and /data is untouched.
+                </p>
               </div>
             )}
             {isEmos && step === 8 && stepState[8] !== 'done' && !running && (
@@ -9565,6 +10188,7 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
                   .catch(e => addLog(`Scan failed: ${e.message}`, 'error'))}
                 networks={wifiNetworks}
                 onConnect={() => { if (wifiSsid) runStep(8); }}
+                onSkip={() => runStep(8, true)}
               />
             )}
             {/* Step 10: WiFi configuration (FireOS flow — emOS configures WiFi over the console at step 8) */}
@@ -9686,6 +10310,8 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
               </div>
             )}
 
+            </div>
+
             {/* Log output — same console treatment as the Updates tab.
                 The copy action matters more than it looks: this transcript is
                 the entire record of a provision, and it is what gets pasted
@@ -9707,10 +10333,10 @@ function ProvisionWizard({ token, onClose, knownDevices }) {
             <div
               ref={logRef}
               className="em-console"
-              style={{ flex: 1, minHeight: 0, marginTop: 10 }}
+              style={{ flex: '1 0 120px', minHeight: 120, marginTop: 10 }}
             >
               {log.length === 0
-                ? <span style={{ color: 'var(--lcd-faint)' }}>— no output yet —</span>
+                ? <span style={{ color: 'var(--lcd-dim)' }}>— no output yet —</span>
                 : log.map((e, i) => (
                   <div key={i} className={_wizardLogClass(e.msg, e.type)}>
                     {e.msg}
@@ -9802,18 +10428,20 @@ function DeviceDiagram({ activeMics, patternType }) {
       <circle cx="0" cy="0" r="82" fill="url(#dcfgr)" clipPath="url(#dcfsc)"/>
       <circle cx="0" cy="0" r="82" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="1"/>
 
-      {/* Buttons */}
+      {/* Buttons. The printed marks are the device's own grey (the login page
+          draws them the same), not a theme token: --sheen is 5% white in the dark
+          theme, which left them invisible there. */}
       <circle cx="0"   cy="-44" r="15" fill="url(#dcfbg)" stroke="rgba(255,255,255,0.05)" strokeWidth="0.5"/>
-      <text x="0" y="-39" textAnchor="middle" fontSize="15" fill="var(--sheen)" fontFamily="sans-serif" fontWeight="300">+</text>
+      <text x="0" y="-39" textAnchor="middle" fontSize="15" fill="#b0b0b0" fontFamily="sans-serif" fontWeight="300">+</text>
       <circle cx="44"  cy="0"   r="15" fill="url(#dcfbg)" stroke="rgba(255,255,255,0.05)" strokeWidth="0.5"/>
-      <circle cx="44"  cy="0"   r="4.5" fill="var(--sheen)"/>
+      <circle cx="44"  cy="0"   r="4.5" fill="#b0b0b0"/>
       <circle cx="0"   cy="44"  r="15" fill="url(#dcfbg)" stroke="rgba(255,255,255,0.05)" strokeWidth="0.5"/>
-      <text x="0" y="50" textAnchor="middle" fontSize="15" fill="var(--sheen)" fontFamily="sans-serif" fontWeight="300">−</text>
+      <text x="0" y="50" textAnchor="middle" fontSize="15" fill="#b0b0b0" fontFamily="sans-serif" fontWeight="300">−</text>
       <circle cx="-44" cy="0"   r="15" fill="url(#dcfbg)" stroke="rgba(255,255,255,0.05)" strokeWidth="0.5"/>
       <g transform="translate(-44,0)">
-        <rect x="-3.5" y="-7.5" width="7" height="10" rx="3.5" fill="var(--sheen)"/>
-        <path d="M-6,1.5 Q-6,8 0,8 Q6,8 6,1.5" fill="none" stroke="var(--sheen)" strokeWidth="1.5" strokeLinecap="round"/>
-        <line x1="0" y1="8" x2="0" y2="11" stroke="var(--sheen)" strokeWidth="1.5" strokeLinecap="round"/>
+        <rect x="-3.5" y="-7.5" width="7" height="10" rx="3.5" fill="#b0b0b0"/>
+        <path d="M-6,1.5 Q-6,8 0,8 Q6,8 6,1.5" fill="none" stroke="#b0b0b0" strokeWidth="1.5" strokeLinecap="round"/>
+        <line x1="0" y1="8" x2="0" y2="11" stroke="#b0b0b0" strokeWidth="1.5" strokeLinecap="round"/>
       </g>
 
       {/* Centre mic */}
@@ -10019,11 +10647,11 @@ const STAGE_MONO = "'DM Mono',monospace";
 // control sitting under a toggle that does not govern it would look fine and
 // be silently wrong.
 const CONFIG_SECTIONS = {
-  "playback": ["eqBands", "eqLoudness", "duckDb", "limiterEnabled", "limiterThreshold", "limiterRelease", "bassGuardEnabled", "bassGuardDb", "bassGuardJackBypass", "audioHoldoffMs"],
-  "wakeword": ["owwModel", "owwThreshold", "owwSpeexNs", "bargeInEnabled", "bargeInThreshold", "wakeArbitrationMs", "owwOnDevice"],
+  "playback": ["eqBands", "eqLoudness", "duckDb", "limiterEnabled", "limiterThreshold", "limiterRelease", "bassGuardEnabled", "bassGuardDb", "bassGuardJackBypass", "audioHoldoffMs", "streamReply"],
+  "wakeword": ["owwModel", "owwThreshold", "owwSpeexNs", "bargeInEnabled", "bargeInThreshold", "wakeArbitrationMs", "owwOnDevice", "wakeSound", "wakeSoundLevel"],
   "microphones": ["adcMicpga", "adcDigitalGain", "micGainDb", "beamformingEnabled", "beamAngle", "aecEnabled", "aecDelayMs", "aecTailMs", "aecRefSource", "nsAsr", "saveUtterances"],
   "ring": ["ledScene", "ledListenColor", "ledThinkColor", "meterAttack", "meterDecay", "meterFloor", "meterGamma", "meterRef", "meterCurve"],
-  "advanced": ["agcEnabled", "vadThreshold", "vadSpeechMs", "vadSilenceMs", "buttonSingleTapEvent", "buttonMultiTapMs", "consolePassword", "consoleTimeoutMin"],
+  "advanced": ["agcEnabled", "vadThreshold", "vadSpeechMs", "vadSilenceMs", "buttonSingleTapEvent", "buttonMultiTapMs", "consolePassword", "consoleTimeoutMin", "controllerEndpoints"],
   "bluetooth": ["bleProxyEnabled"],
   "streaming": ["sendspinEnabled", "spotifyEnabled", "spotifyName", "airplayEnabled", "airplay2Enabled", "airplayName", "airplayVolumeControl", "spotifyVolumeControl"]
 };
@@ -10154,14 +10782,16 @@ function Stage({ n, title, chips, desc, children, scope, dim, footer }) {
 
 function StageAdvanced({ open, onToggle, disabledStyle, children }) {
   return (
-    <div style={{ marginTop: 16, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
-      <div onClick={onToggle} style={{
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--hairline)', paddingTop: 10 }}>
+      {/* A button, so the keyboard and assistive tech can open it too. */}
+      <button type="button" onClick={onToggle} aria-expanded={!!open} style={{
         fontFamily: STAGE_MONO, fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase',
         letterSpacing: '0.15em', cursor: 'pointer', userSelect: 'none',
         display: 'flex', alignItems: 'center', gap: 6,
+        background: 'none', border: 'none', padding: 0,
       }}>
-        <span>{open ? '▾' : '▸'}</span> Advanced
-      </div>
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span> {t('cfgAdvanced')}
+      </button>
       {open && <div style={{ marginTop: 14, ...disabledStyle }}>{children}</div>}
     </div>
   );
@@ -10175,18 +10805,51 @@ function onDeviceMode(config) {
   return ['off', 'shadow', 'on'].includes(v) ? v : 'off';
 }
 
+// What an Echo is actually doing with its microphone, from its own report
+// (em_listen.resolve via /api/devices `listen`). One line, and it never says
+// private unless the Echo said so: `streams === null` is "not known yet".
+function listenStatusText(listen) {
+  switch (listen.state) {
+    case 'local':      return t('listenNowPrivate');
+    case 'degraded':   return `${t('listenNowButtonOnly')} — ${listen.reason}`;
+    case 'controller': return t('listenNowStreaming');
+    case 'diagnostic': return t('listenNowDiagnostic');
+    case 'legacy':     return `${t('listenNowStreamingWhy')} — ${listen.reason}`;
+    default:           return listen.streams
+                         ? `${t('listenNowStreamingShort')} — ${listen.reason}`
+                         : `${t('listenNowPrefix')}: ${listen.reason || t('listenNotReported')}`;
+  }
+}
+
+// The fleet line: shown only when a connected Echo streams all the time, or
+// has not said whether it does — never a line announcing that none do (Wil,
+// 2026-09-27: too verbose). Counts only what Echoes have reported, so an
+// unknown is never folded into private.
+function listenFleetText(devices) {
+  const live = devices.filter(d => d.connected && d.listen);
+  const streaming = live.filter(d => d.listen.streams === true).length;
+  const unknown = live.filter(d => d.listen.streams === null).length;
+  const parts = [];
+  if (streaming) parts.push(live.length === 1
+    ? `${streaming} ${t('fleetStreamsOne')}`
+    : `${streaming}/${live.length} ${t('fleetStreamsMany')}`);
+  if (unknown) parts.push(`${unknown} ${t('fleetNotReported')}`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
 function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                             shadowCapable = true, mixCapable = true,
                             audioStateCapable = true,
                             jackBypassCapable = true,
                             holdCapable = true, triggerCapable = true,
+                            localCapable = true, listen = null,
                             hwEchoRef = false, hwRefCapable = true,
                             sendspinCapable = true,
                             spotifyCapable = true, spotifyStatus = null,
                             airplayCapable = true, airplay2Capable = true,
                             deviceBaseOs = null, airplayStatus = null,
                             endpointHealth = null, endpointHealthCapable = false,
-                            emosFleet = true }) {
+                            emosFleet = true, wakeCueCapable = true }) {
   // null means "we have not heard from this device", which is neither
   // "installed" nor "missing" — an offline device must not be told its
   // binary is absent.
@@ -10445,6 +11108,11 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
             <div style={inputStyle}>
               <Toggle label={t('cfgSpeechBoost')} sub={t('cfgSpeechBoostSub')} value={config.eqLoudness ?? false} onChange={v => set('eqLoudness', v)}/>
             </div>
+            <div style={{ marginTop: 8, ...inputStyle }}>
+              <Toggle label={t('cfgStreamReply')}
+                sub={t('cfgStreamReplySub')}
+                value={config.streamReply ?? false} onChange={v => set('streamReply', v)}/>
+            </div>
             {/* Speaker protection: ONE toggle for the bass guard, and the
                 limiter is not offered at all.
 
@@ -10589,6 +11257,24 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 <span style={{ fontFamily: mono, fontSize: 9, color: 'var(--muted)' }}>{t('cfgSensitivityHigh')}</span>
               </div>
               <Slider label={t('cfgArbitrationWindow')} sub={t('cfgArbitrationWindowSub')} value={config.wakeArbitrationMs ?? 700} min={0} max={2000} step={50} unit="ms" onChange={v => set('wakeArbitrationMs', v)}/>
+              {/* Accessibility first: the ring is the only other sign the Echo
+                  is listening. Disabled with the reason on firmware that cannot
+                  play it, never a switch that saves and stays silent. */}
+              <Toggle label={t('cfgWakeSound')}
+                sub={wakeCueCapable ? t('cfgWakeSoundSub') : t('cfgNoWakeCue')}
+                disabled={!wakeCueCapable}
+                value={config.wakeSound ?? false}
+                onChange={v => set('wakeSound', v)}/>
+              {wakeCueCapable && (config.wakeSound ?? false) && (
+                <Select label={t('cfgWakeSoundLevel')}
+                  value={config.wakeSoundLevel ?? 'medium'}
+                  options={[
+                    { value: 'quiet',  label: t('cfgLevelQuiet') },
+                    { value: 'medium', label: t('cfgLevelMedium') },
+                    { value: 'loud',   label: t('cfgLevelLoud') },
+                  ]}
+                  onChange={v => set('wakeSoundLevel', v)}/>
+              )}
               {/* Three modes, so a select rather than a toggle. Each option is
                   offered only when the device says it can do it — capability,
                   not firmware version, because a control that silently does
@@ -10610,16 +11296,24 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                   { value: 'off',    label: 'Controller' },
                   { value: 'shadow', label: t('cfgBothCompare'), disabled: !shadowCapable },
                   // Needs the runtime + models installed as well as the
-                  // capability, which the Updates tab does — hence the hint
-                  // rather than a hard block we cannot verify from here.
-                  { value: 'on',     label: 'On device',      disabled: !triggerCapable },
+                  // capability, which the Updates tab does — an Echo without
+                  // them reports itself degraded (button only) below.
+                  { value: 'on',  label: 'On this Echo',      disabled: !triggerCapable },
+                  { value: 'off', label: 'On the controller' },
+                  ...(onDeviceMode(config) === 'shadow'
+                    ? [{ value: 'shadow', label: 'Diagnostic (streams)' }] : []),
                 ]}
                 onChange={v => set('owwOnDevice', v)}/>
-              {(config.owwOnDevice ?? 'off') !== 'off' && shadowCapable && (
-                <div className="em-label" style={{ marginTop: 6, color: 'var(--muted)' }}>
-                  {t('cfgOwwRuntimeNote')}
+              {listen && (
+                <div className="em-label" style={{ marginTop: 6,
+                  color: listen.state === 'degraded' ? 'var(--warn)' : 'var(--muted)' }}>
+                  {listenStatusText(listen)}
                 </div>
               )}
+              {onDeviceMode(config) !== 'off' && shadowCapable && (
+                <div className="em-label" style={{ marginTop: 6, color: 'var(--muted)' }}>
+                  Needs the wake word runtime installed on this Echo (Updates tab) — costs ~0.4 of a core while it runs.
+                </div>              )}
             </div>
           </div>
         </div>
@@ -10669,7 +11363,10 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
                 : t('cfgAecDelaySub')}
               disabled={hwEchoRef}
               value={config.aecDelayMs ?? 250} min={0} max={1000} step={10} unit="ms" onChange={v => set('aecDelayMs', v)}/>
-            <Slider label={t('cfgAecTail')} sub={t('cfgAecTailSub')} value={config.aecTailMs ?? 300} min={50} max={500} step={10} unit="ms" onChange={v => set('aecTailMs', v)}/>
+            <Slider label={t('cfgAecTail')}
+              sub={hwEchoRef ? t('cfgAecTailHw') : t('cfgAecTailSub')}
+              disabled={hwEchoRef}
+              value={config.aecTailMs ?? 300} min={50} max={500} step={10} unit="ms" onChange={v => set('aecTailMs', v)}/>
             {/* Three values, so a select. "Auto" is right almost always —
                 these exist so the two reference paths can be compared on one
                 device without editing an init script on it and restarting
@@ -10817,6 +11514,12 @@ function DeviceConfigForm({ config, onChange, disabled, sections, onScopeChange,
             min={0} max={90} unit="min"
             disabled={!emosFleet}
             onChange={v => set('consoleTimeoutMin', v)}/>
+        </div>
+        {subHeader(t('cfgControllerAddress'))}
+        <div style={{ ...inputStyle }}>
+          <ControllerEndpointsField readOnly={scoped || disabled}
+            value={config.controllerEndpoints}
+            onChange={v => onChange('controllerEndpoints', v)}/>
         </div>
         {subHeader(t('cfgTurnProcessing'))}
         <div className="em-grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px', ...inputStyle }}>
@@ -10973,7 +11676,7 @@ function DeployAllModal({ release, devices, deployState, onStarted, onDismiss, o
   const target = view?.version || release?.version;
   const byId = Object.fromEntries(devices.map(d => [d.device_id, d]));
   const eligible = devices.filter(d =>
-    d.approved && d.connected && d.firmware_ver !== release?.version);
+    d.approved && d.connected && d.firmware_update);
 
   const SKIP_REASONS = {
     not_approved:       t('deploySkipNotApproved'),
@@ -11132,6 +11835,51 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
     }
   }
 
+  // system_config. The table has had mutable keys and a PATCH endpoint since
+  // long before anything called them, so `update_check_interval = 0` — the
+  // documented way to stop the controller talking to GitHub (#159) — was
+  // reachable only with curl. Loaded on tab open rather than with the panel:
+  // it is admin-only, and a read-only account opening Settings would take a
+  // 401 for a tab it cannot see.
+  const [sys, setSys]           = useState(null);   // stored values, as strings
+  const [sysEdit, setSysEdit]   = useState({});     // pending changes only
+  const [sysSaving, setSysSaving] = useState(false);
+  const [sysMsg, setSysMsg]     = useState(null);   // {ok, text}
+
+  // What to restore when update checks are switched back on. Seeded from the
+  // stored value so turning them off and on again does not silently reset a
+  // chosen interval to the default.
+  const lastInterval = useRef(3600);
+
+  function loadSystem() {
+    API.get('/api/system/config')
+       .then(c => {
+         setSys(c);
+         const n = Number(c.update_check_interval);
+         if (Number.isFinite(n) && n > 0) lastInterval.current = n;
+       })
+       .catch(e => setSysMsg({ ok: false, text: e.error || 'Failed to load system settings' }));
+  }
+  useEffect(() => { if (tab === 'system') loadSystem(); }, [tab]);
+
+  const sysVal = (k, d) => sysEdit[k] ?? sys?.[k] ?? d;
+  function setSysVal(k, v) { setSysEdit(p => ({ ...p, [k]: String(v) })); setSysMsg(null); }
+
+  async function saveSystem() {
+    setSysSaving(true); setSysMsg(null);
+    try {
+      // Only the keys actually touched. PATCH is a partial update, so sending
+      // the whole table would rewrite settings this screen does not show.
+      await API.patch('/api/system/config', sysEdit);
+      setSys(s => ({ ...s, ...sysEdit }));
+      setSysEdit({});
+      setSysMsg({ ok: true, text: 'Saved' });
+    } catch(e) {
+      setSysMsg({ ok: false, text: e.error || 'Failed to save system settings' });
+    }
+    setSysSaving(false);
+  }
+
   // Object URLs pin their blob in memory until revoked; the panel closing is
   // the last moment we can still reach this one.
   useEffect(() => () => { if (bundle) URL.revokeObjectURL(bundle.url); }, [bundle]);
@@ -11155,7 +11903,15 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
     setBundling(false);
   }
 
-  function setConf(k, v) { setConfig(c => ({ ...c, [k]: v })); setDirty(true); setSaveMsg(null); }
+  // Edits made while a save is in flight: the save's reply must not mark
+  // them saved. Switching the Bluetooth proxy on holds the reply for about a
+  // second per Echo while the proxies start, and a change made in that window
+  // was shown as saved and never sent (UAT 2026-09-27).
+  const editedDuringSave = useRef(false);
+  function setConf(k, v) {
+    setConfig(c => ({ ...c, [k]: v })); setDirty(true); setSaveMsg(null);
+    editedDuringSave.current = true;
+  }
 
   // Inline, non-blocking save feedback — was a browser alert(), which
   // demanded a click to dismiss for what is a routine success message.
@@ -11163,10 +11919,11 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
 
   async function saveGlobalConfig() {
     setSaving(true);
+    editedDuringSave.current = false;
     try {
       const res = await API.post('/api/global/config', config);
       onGlobalConfigChange(config);
-      setDirty(false);
+      setDirty(editedDuringSave.current);
       const n = res.pushed_to?.length ?? 0;
       setSaveMsg({ ok: true, text: n > 0
         ? `Saved — pushed live to ${n} device${n === 1 ? '' : 's'} on fleet config`
@@ -11194,9 +11951,13 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
 
   // Support is admin-only because the endpoint is: the bundle spans the whole
   // fleet, so a tab a non-admin can only be refused by is worse than no tab.
-  const TABS = isAdmin ? ['fleet', 'users', 'account', 'support'] : ['fleet', 'account'];
+  // System is admin-only because both its endpoints are. Kept separate from
+  // Config, which is device config pushed to the fleet — these are settings
+  // for the controller process itself and never reach a device.
+  const TABS = isAdmin ? ['fleet', 'system', 'users', 'account', 'support'] : ['fleet', 'account'];
   const SETTINGS_TAB_LABELS = {
-    fleet: t('settingsTabConfig'), users: t('settingsTabUsers'),
+    fleet: t('settingsTabConfig'), system: t('settingsTabSystem'),
+    users: t('settingsTabUsers'),
     account: t('settingsTabAccount'), support: t('settingsTabSupport'),
   };
 
@@ -11242,8 +12003,8 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
                 emosFleet={emosFleet}/>
               {dirty && (
                 <div style={{ display:'flex', gap:10, marginTop:24 }}>
-                  <Pill accent disabled={saving} onClick={saveGlobalConfig}>{saving ? 'Saving…' : 'Save & push to fleet'}</Pill>
-                  <Pill onClick={() => { setConfig({...globalConfig}); setDirty(false); setSaveMsg(null); }}>Revert</Pill>
+                  <Pill accent disabled={saving} onClick={saveGlobalConfig}>{saving ? t('saving') : t('savePushFleet')}</Pill>
+                  <Pill onClick={() => { setConfig({...globalConfig}); setDirty(false); setSaveMsg(null); }}>{t('revert')}</Pill>
                 </div>
               )}
               {saveMsg && (
@@ -11253,6 +12014,101 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
                 </div>
               )}
             </>
+          )}
+
+          {tab === 'system' && (
+            <div style={{ maxWidth: 560 }}>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', marginBottom:20, lineHeight:1.6 }}>
+                {t('sysIntro')}
+              </div>
+
+              {!sys && !sysMsg && <div className="help">{t('loading')}</div>}
+
+              {sys && (() => {
+                const secs     = Number(sysVal('update_check_interval', '3600'));
+                const checksOn = Number.isFinite(secs) && secs > 0;
+                const hours    = checksOn ? Math.max(1, Math.round(secs / 3600)) : 0;
+                return (
+                  <>
+                    <div className="em-panel" style={{ padding:'16px 18px', marginBottom:18 }}>
+                      <div className="em-label" style={{ marginBottom:14 }}>{t('sysUpdates')}</div>
+                      <Toggle
+                        label={t('sysCheckGithub')}
+                        value={checksOn}
+                        onChange={on => setSysVal('update_check_interval',
+                                                  on ? lastInterval.current : 0)}/>
+                      {checksOn ? (
+                        <NumberField
+                          label={t('sysHowOften')} unit={t('sysHours')} value={hours} min={1} max={168}
+                          sub={t('sysHowOftenSub')}
+                          onChange={h => { lastInterval.current = h * 3600;
+                                           setSysVal('update_check_interval', h * 3600); }}/>
+                      ) : (
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', lineHeight:1.6 }}>
+                          {t('sysChecksOff')}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="em-panel" style={{ padding:'16px 18px', marginBottom:18 }}>
+                      <div className="em-label" style={{ marginBottom:14 }}>{t('sysDevices')}</div>
+                      <Select
+                        label={t('sysApproval')}
+                        value={sysVal('device_approval', 'strict')}
+                        sub={t('sysApprovalSub')}
+                        options={[
+                          { value: 'strict', label: t('sysApproveByHand') },
+                          { value: 'auto',   label: t('sysApproveAuto') },
+                        ]}
+                        onChange={v => setSysVal('device_approval', v)}/>
+                    </div>
+
+                    <div className="em-panel" style={{ padding:'16px 18px', marginBottom:18 }}>
+                      <div className="em-label" style={{ marginBottom:14 }}>{t('sysSessions')}</div>
+                      <NumberField
+                        label={t('sysSignInExpiry')} unit={t('sysDays')} min={1} max={365}
+                        value={Number(sysVal('session_expiry_days', '30')) || 30}
+                        sub={t('sysSignInExpirySub')}
+                        onChange={v => setSysVal('session_expiry_days', v)}/>
+                    </div>
+
+                    <div className="em-panel" style={{ padding:'16px 18px', marginBottom:18 }}>
+                      <div className="em-label" style={{ marginBottom:14 }}>{t('sysReleaseSource')}</div>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:'var(--text2)', marginBottom:6 }}>
+                        {t('sysGithubRepo')}
+                      </div>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:'var(--muted)', lineHeight:1.6, marginBottom:8 }}>
+                        {t('sysGithubRepoSub')}
+                      </div>
+                      <input type="text" autoComplete="off" spellCheck="false"
+                        aria-label={t('sysGithubRepo')}
+                        value={sysVal('github_repo', 'FelixTechgiti/Revoice')}
+                        onChange={e => setSysVal('github_repo', e.target.value)}
+                        className="em-inset"
+                        style={{ fontFamily:"'DM Mono',monospace", fontSize:11, width:'100%',
+                                 boxSizing:'border-box', color:'var(--text)',
+                                 border:'1px solid var(--field-line)' }}/>
+                    </div>
+
+                    {Object.keys(sysEdit).length > 0 && (
+                      <div style={{ display:'flex', gap:10 }}>
+                        <Pill accent disabled={sysSaving} onClick={saveSystem}>
+                          {sysSaving ? t('saving') : t('save')}
+                        </Pill>
+                        <Pill onClick={() => { setSysEdit({}); setSysMsg(null); }}>{t('revert')}</Pill>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+              {sysMsg && (
+                <div style={{ marginTop: 14, fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  color: sysMsg.ok ? 'var(--ok)' : 'var(--error)' }}>
+                  {sysMsg.ok ? '✓ ' : ''}{sysMsg.text}
+                </div>
+              )}
+            </div>
           )}
 
           {tab === 'users' && (
@@ -11277,7 +12133,7 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
                     : <Pill accent onClick={() => setUserRole(u.id, 'admin')}>Promote to admin</Pill>}
                 </div>
               ))}
-              {!users && !usersMsg && <div className="help">Loading…</div>}
+              {!users && !usersMsg && <div className="help">{t('loading')}</div>}
               {usersMsg && (
                 <div style={{ marginTop: 14, fontFamily: "'DM Mono',monospace", fontSize: 11,
                   color: usersMsg.ok ? 'var(--ok)' : 'var(--error)' }}>
@@ -11291,13 +12147,14 @@ function SettingsPanel({ globalConfig, onGlobalConfigChange, onClose, username, 
             <div style={{ maxWidth: 360 }}>
               <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'0.15em', marginBottom:20 }}>Change Password · {username}</div>
               {[
-                ['Current password', curPw, setCurPw],
-                ['New password',     newPw, setNewPw],
-                ['Confirm new',      confirmPw, setConfirmPw],
-              ].map(([label, val, setter]) => (
+                ['Current password', curPw, setCurPw, 'current-password'],
+                ['New password',     newPw, setNewPw, 'new-password'],
+                ['Confirm new',      confirmPw, setConfirmPw, 'new-password'],
+              ].map(([label, val, setter, purpose]) => (
                 <div key={label} style={{ marginBottom:16 }}>
                   <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:'var(--text2)', marginBottom:6 }}>{label}</div>
                   <input type="password" value={val} onChange={e => setter(e.target.value)}
+                    aria-label={label} autoComplete={purpose}
                     style={{ width:'100%', boxSizing:'border-box' }}/>
                 </div>
               ))}
@@ -12072,6 +12929,7 @@ function App() {
           setCtrlRelease(msg);
           break;
         case 'device_pending':
+        case 'device_pair_request':
           API.get('/api/devices').then(setDevices).catch(() => {});
           break;
         case 'device_deleted':
@@ -12132,7 +12990,11 @@ function App() {
 
   const summary  = fleetSummary(devices, release);
   const approved = devices.filter(d => d.approved);
-  const pending  = devices.filter(d => !d.approved);
+  // Connected at least once: a row the wizard made for a device that has not
+  // yet dialled in is not asking for anything (#453).
+  const pending  = devices.filter(d => !d.approved && d.last_seen != null);
+  const updates  = approved.filter(d => d.firmware_update).length;
+  const active   = approved.filter(d => d.speaking || d.listening || d.thinking).length;
 
   const selectedDevice = selected ? devices.find(d => d.device_id === selected) : null;
 
@@ -12245,6 +13107,14 @@ function App() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Privacy, in one line (docs/listening.md) — from what each Echo
+          reports, never from configuration alone. */}
+      {listenFleetText(devices) && (
+        <div className="em-label" style={{ marginBottom: 10, color: 'var(--muted)' }}>
+          {listenFleetText(devices)}
         </div>
       )}
 

@@ -248,3 +248,6 @@ func (g *BassGuard) Process(x []float64) {
 		x[i] = g.low[i]*math.Pow(10.0, g.gain[i]/20.0) + g.high[i]
 	}
 }
+
+// ResetMaxReduction clears the worst-reduction watermark, for TakeStats.
+func (g *BassGuard) ResetMaxReduction() { g.bass.maxReductionDB = 0 }

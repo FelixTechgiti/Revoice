@@ -301,11 +301,13 @@ Boot-Image zurückzulegen.
 **TWRP auf einem Gerät erreichen, das nicht bootet:**
 
 1. Strom trennen.
-2. Die **Mute**-Taste gedrückt halten und weiter halten.
+2. Die **Mute**-Taste oder **+** (lauter) gedrückt halten und weiter halten.
+   Welche der beiden es ist, hängt davon ab, mit welcher amonet-Version das
+   Gerät entsperrt wurde; [R0rt1z2s
+   Thread](https://xdaforums.com/t/unlock-root-twrp-unbrick-amazon-echo-dot-2nd-gen-2016-biscuit.4761416/) nennt sie.
 3. Strom anlegen, die Taste weiter gedrückt.
-4. Warten, bis der Ring ein **abwechselndes cyanfarbenes Muster** zeigt — das
-   ist die Bestätigung, dass du im Recovery bist, und dann kannst du
-   loslassen.
+4. Warten, bis der Ring wechselt — das ist die Bestätigung, dass du im
+   Recovery bist, und dann kannst du loslassen.
 
 `adb reboot recovery` ist der einfache Weg und braucht ein Gerät, das schon
 oben ist — genau das, was du hier nicht hast.
@@ -325,8 +327,8 @@ Der Lichtring sagt dir, in welchem Fall du bist:
 
 | Ring | Was es bedeutet | Was zu tun ist |
 |---|---|---|
-| Füllt sich, dann weiß, dann verblassend | Oben und im Netzwerk | Nichts — fertig, etwa 30 Sekunden |
-| Zwei leuchtende Segmente oben, pulsierend | Wartet auf das Netzwerk | Nichts — das ist der größte Teil des Starts |
+| Füllt sich, dann weiß, dann verblassend | Läuft und ist im Netz | Nichts — fertig, etwa 30 Sekunden |
+| Zwei leuchtende Segmente unten, pulsierend | Wartet auf das Netzwerk | Nichts — das ist der größte Teil des Starts |
 | Dauerhaft bernsteinfarben | emOS stellt sein eigenes letztes funktionierendes Image wieder her | **Lass es.** Es startet sich selbst neu |
 | Rot, stehend | Eine Bootstufe ist gescheitert | Rettbar — nach TWRP gehen und wiederherstellen |
 | Ein Segment kreist um einen vollen blauen Ring, länger als eine Minute | emOS ist nie gestartet | Nach TWRP gehen und wiederherstellen |

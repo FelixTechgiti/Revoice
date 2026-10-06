@@ -112,11 +112,13 @@ Sprache des Geräts in diesem Zwei-Sekunden-Gedächtnis nachhallen —
 Folgegespräche bekommen die schwächere Fassung dieser Funktion, bis die
 Arbeit an Barge-in und AEC reift.
 
-## Stufe 5 — Der durchgehende Strom
+## Stufe 5 — Der durchgehende Strom (nur im Controller-Modus)
 
-Alle 32 Millisekunden geht der verarbeitete Ton per WLAN an den Controller.
-Immer. Es gibt bewusst **kein** „nur senden, wenn es nach Sprache klingt"
-vor diesem Strom.
+Steht ein Echo darauf, das Wakeword **auf dem Controller** erkennen zu lassen,
+geht der verarbeitete Ton alle 32 Millisekunden per WLAN dorthin. Immer. Es
+gibt bewusst **kein** „nur senden, wenn es nach Sprache klingt" vor diesem
+Strom.
+
 
 **Nutzen:** Die Wakeword-Erkennung sieht gleichmäßiges, ununterbrochenes
 Audio, was ihre Genauigkeit messbar verbessert — und es gibt keine Logik auf
@@ -124,10 +126,11 @@ dem Gerät, die driften, den Raum falsch einschätzen oder über Tage
 schlechter werden kann (beides ist bei früheren, klügeren Entwürfen
 tatsächlich passiert; langweilig hat gewonnen).
 
-Dieser ununterbrochene Strom macht es außerdem möglich, *dieselbe* Erkennung
-auf dem Dot selbst laufen zu lassen und beide auf bytegleichem Audio zu
-vergleichen — genau das tut der experimentelle Bewertungsmodus auf dem Gerät,
-ohne auf das Ergebnis reagieren zu dürfen. Es ist auch der Grund, warum ein
+**Diesen Strom gibt es nur für einen Echo, der das Wakeword auf dem Controller
+erkennen lässt.** Standardmäßig lässt der Echo dieselbe Erkennung selbst
+laufen und schickt nichts, bis er das Wakeword hört; danach schickt er, was
+folgt, bis du aufhörst zu sprechen ([listening.md](listening.md)). Der Rest
+dieser Stufe beschreibt den Controller-Modus. Er ist auch der Grund, warum ein
 „klingt nach Sprache"-Gatter vor diesem Strom schwieriger wäre, als es
 aussieht: Die internen Puffer der Erkennung setzen Kontinuität voraus, und
 zusammengesetzte gegatterte Stücke drücken ihre Werte messbar.
@@ -135,22 +138,28 @@ zusammengesetzte gegatterte Stücke drücken ihre Werte messbar.
 **Haken:** dauerhaft rund 32 KB/s pro Gerät in deinem WLAN — etwa ein Sechstel
 dessen, was das Streamen der *Antwort* braucht, in der Praxis also in keinem
 Heimnetz ein Thema. Und zur Klarheit in Sachen Privatsphäre: Der Strom geht an
-*deinen* Controller in *deinem* LAN und nirgendwo sonst.
+*deinen* Controller in *deinem* LAN und nirgendwo sonst — und ein Echo, der
+auf sein eigenes Wakeword horcht, schickt ihn gar nicht erst.
+
 
 ## Stufe 6 — Wakeword-Erkennung
 
-Der Controller lässt openwakeword, ein kleines neuronales Netz, über den
-Strom jedes Geräts laufen und bewertet jeden Moment: „Wie sehr klang das nach
-dem Wakeword?" Wird die Empfindlichkeitsschwelle überschritten, beginnt das
-Gespräch.
+openwakeword, ein kleines neuronales Netz, bewertet jeden Moment des Tons:
+„Wie sehr klang das nach dem Wakeword?" Wird die Empfindlichkeitsschwelle
+überschritten, beginnt das Gespräch. Standardmäßig läuft es **auf dem Echo**,
+weshalb bis dahin nichts ihn verlassen muss; bei einem Echo im
+Controller-Modus lässt der Controller es stattdessen über den Strom laufen.
+Dasselbe Modell, dieselbe Schwelle.
 
 Sind mehrere Geräte online, antwortet der **erste** Echo, der dich hört,
-sofort; jedes andere Gerät, das dasselbe Wort innerhalb des
-**Arbitrierungsfensters** erkennt (standardmäßig 700 ms, einstellbar), tritt
-still zurück, und sein Ring erlischt, sobald das andere Gerät das Gespräch
-für sich beansprucht. Eine Äußerung, eine Antwort, auch in Hörweite zweier
-Geräte — und ohne zusätzliche Verzögerung, weil der Gewinner das Gespräch
-sofort beansprucht, statt das Fenster abzuwarten.
+sofort — beurteilt danach, wann jeder den Ton aufgenommen hat, nicht wann
+seine Nachricht beim Controller ankam. Jedes andere Gerät, das dasselbe Wort
+innerhalb des **Arbitrierungsfensters** erkennt (standardmäßig 700 ms,
+einstellbar), tritt still zurück, und sein Ring erlischt, sobald das andere
+Gerät das Gespräch für sich beansprucht. Eine Äußerung, eine Antwort, auch in
+Hörweite zweier Geräte — und ohne zusätzliche Verzögerung, weil der Gewinner
+das Gespräch sofort beansprucht, statt das Fenster abzuwarten.
+
 
 Ein früherer Entwurf wartete das Fenster stattdessen ab und gab das Gespräch
 dem Gerät, das dich am *besten* gehört hatte. Er wurde aus zwei gemessenen
@@ -185,6 +194,19 @@ und die Fehlwecken-Sicherung passt sich jedem Raum von allein an — ein ruhiges
 Arbeitszimmer und ein lautes Wohnzimmer verhalten sich beide vernünftig, ohne
 dass du etwas einstellst.
 
+**Zu Home Assistant geht nichts, bevor wirklich jemand spricht.** Der
+Controller lässt eine kleine Spracherkennung (Silero, die im Wakeword-Paket
+mitkommt) über den Ton des Gesprächs laufen und hält ihn zurück, bis er
+Sprache hört; dann geht alles Zurückgehaltene der Reihe nach hinaus, Home
+Assistant bekommt also genau das, was es sonst bekommen hätte, einen
+Sekundenbruchteil später. Ein Fehlauslöser, oder ein Wecken gefolgt von
+Stille, schickt nichts, und das Gespräch endet nach fünf Sekunden still. Das
+gibt es, weil das Spracherkennungsmodell für Nicht-Sprache nicht nichts
+zurückgibt: Heruntergeregelte Musik kam früher als „Danke." zurück und bekam
+eine höfliche Antwort auf eine Frage, die niemand gestellt hatte. Gespräche
+per Taste und Nachfragen bekommen dasselbe Modell auf dem Dot selbst, sobald
+der Controller es mit den Wakeword-Dateien installiert hat.
+
 **Es gibt eine zweite Sicherung, für den Fall, dass diese Erkennung gar nicht
 erst anspringt.** Home Assistant muss etwa eine drittel Sekunde Sprache hören,
 bei der es sich sicher ist, bevor es entscheidet, dass du angefangen hast zu
@@ -194,6 +216,7 @@ dann wartet Home Assistant sein eigenes Fünfzehn-Sekunden-Limit ab und meldet
 das Gespräch, als hättest du einfach zu Ende gesprochen. Nichts, was es
 sendet, sagt etwas anderes — deshalb sah das lange so aus, als wäre der Echo
 langsam.
+
 
 Also achtet der Controller auf genau dieses Muster — Sprache gehört, und Home
 Assistant hat immer noch nicht gesagt, dass es das bemerkt hat — und beendet
@@ -227,13 +250,17 @@ STT-Modell ersetzen sie nicht.
 
 ## Stufe 9 — Die Antwort
 
-Der Antwortton kommt durch den Controller zurück, der den Klang bearbeitet
-und ihn zum Dot streamt, der ihn abspielt, während eine Kopie an die
-Echo-Auslöschung geht (Stufe 3), damit die Mikrofone ihn abziehen können. Der
-Ton kommt in der nativen Rate der Hardware an: Der Satellit sagt Home
-Assistant, welches Format der Lautsprecher will (48 kHz mono), sodass neuere
-HA-Versionen an der Quelle umwandeln; ffmpeg deckt beim Dekodieren alles
-Übrige ab.
+Der Antwortton kommt durch den Controller zurück und wird zum Dot gestreamt,
+der ihn bearbeitet und abspielt, während eine Kopie an die Echo-Auslöschung
+geht (Stufe 3), damit die Mikrofone ihn abziehen können. Der Satellit fragt
+Home Assistant nach dem Format, das der Lautsprecher selbst will — 48 kHz
+mono, als WAV —, der Ton geht also durch, ohne dass etwas zu dekodieren wäre.
+Früher war es FLAC, und der Dekoder hielt bis zu 1,7 Sekunden Sprache in sich;
+machte Home Assistant zwischen zwei Sätzen eine Pause (es wartet auf das
+Sprachmodell für den nächsten), kam dieser Ton zu spät, und eine lange Antwort
+verstummte mitten im Satz. Alles, was Home Assistant in einem anderen Format
+schickt, wird weiterhin mit ffmpeg dekodiert.
+
 
 Während der Wiedergabe pulsiert der Ring im Takt, und er erlischt, wenn der
 Dot meldet, dass er *tatsächlich* fertig ist — nicht, wenn der Controller
@@ -250,26 +277,50 @@ die ganze Antwort herunterhält, um Bassspitzen unterzubringen, die ohnehin
 niemand gehört hätte. Gemessen kommen die Mitten mit eingeschaltetem Schutz
 sogar etwas *lauter* heraus als ohne.
 
-**Nutzen:** Zentral angewandte Bearbeitung heißt, dass jedes Gerät gleichen,
-abgestimmten Klang bekommt, live im Dashboard änderbar — und nichts davon
-kostet den Dot CPU, was auf Hardware zählt, die schon eine Mikrofonpipeline
-und womöglich ein Wakeword-Modell betreibt.
+Die Bearbeitung läuft **auf dem Dot**, in dem Moment, in dem der Ton den
+Lautsprecher erreicht — eine Änderung im Dashboard ist also binnen eines
+Sekundenbruchteils zu hören statt erst nach den paar Sekunden, die schon
+gepuffert sind. Bei Firmware, die das nicht kann, bearbeitet der Controller
+den Ton wie bisher; die beiden Seiten handeln aus, wer es tut, der Ton wird
+also nie zweimal bearbeitet.
+
+**Nutzen:** gleicher, abgestimmter Klang auf jedem Gerät, live im Dashboard
+änderbar. Der Preis ist etwas CPU des Dots.
 
 Die Antwort wird **gestreamt, während Home Assistant sie noch erzeugt**: Sie
-läuft durch ffmpeg und zum Dot hinaus, sowie sie ankommt, statt erst
-vollständig geholt und dekodiert zu werden. Eine lange Antwort fängt etwa im
-selben Moment an zu sprechen wie eine kurze, statt dich auf die Synthese des
-letzten Worts warten zu lassen, bevor du das erste hörst. Alle drei Stufen
-tragen ihren Zustand über die Stücke hinweg, es knackt also nicht an den
-Nahtstellen.
+läuft zum Dot hinaus, sowie sie ankommt, statt erst vollständig geholt zu
+werden. Eine lange Antwort fängt etwa im selben Moment an zu sprechen wie eine
+kurze, statt dich auf die Synthese des letzten Worts warten zu lassen, bevor
+du das erste hörst. Alle drei Stufen tragen ihren Zustand über die Stücke
+hinweg, es knackt also nicht an den Nahtstellen.
+
+Standardmäßig beginnt das Sprechen, wenn Home Assistant die Antwort fertig
+hat. Mit **Sprechen, während die Antwort entsteht** (unter „Playback")
+beginnt es, sobald HA meldet, dass der erste Text der Antwort da ist (sein
+Signal `tts_start_streaming`) — bei einem langsamen Modell lange bevor die
+Antwort fertig ist. HA schickt dieses Signal nur, wenn sowohl der
+Gesprächsagent als auch die Sprachausgabe streamen; tut es das nicht (eine
+eingebaute Antwort, oder eine Sprachausgabe, die nicht synthetisieren kann,
+während noch Text kommt), beginnt das Sprechen ohnehin erst mit der fertigen
+Antwort. Ist die Einstellung an, müssen die 30 Sekunden, die der Controller
+auf den Anfang einer Antwort wartet, von den ersten Worten erfüllt werden,
+nicht von den letzten.
+
+Die Antwort erreicht den Lautsprecher nicht schneller, als sie entsteht — ein
+Modell oder eine Sprachausgabe, die langsamer ist als Sprache, lässt also
+Lücken zwischen den Sätzen. Deshalb ist die Einstellung standardmäßig aus.
 
 **Haken:** Eine Antwort per Stimme zu unterbrechen (**Barge-in**)
 funktioniert, wenn es aktiviert ist — sag das Wakeword darüber, und die
 Antwort bricht ab —, aber es ist standardmäßig aus und hängt davon ab, dass
 AEC an und abgestimmt ist (Stufe 3): Die Mikrofone bleiben während der
 Wiedergabe scharf, und die Echo-Auslöschung ist das, was das Gerät davon
-abhält, sich selbst zu wecken. Unterbrechen durch *bloßes Reden* (ohne
-Wakeword) wird bewusst nicht versucht.
+abhält, sich selbst zu wecken. Es funktioniert ab der ersten Antwort nach
+einem Neustart: Der Dot sichert, was seine Echo-Auslöschung über den eigenen
+Lautsprecher gelernt hat, und lädt es beim Start wieder, statt die ersten
+10–20 Sekunden Sprache mit Neulernen zu verbringen. Unterbrechen durch
+*bloßes Reden* (ohne Wakeword) wird bewusst nicht versucht.
+
 
 ## Jenseits von Sprache — Musik
 
@@ -283,14 +334,17 @@ werfen ihn weg.
 
 Das Wakeword über Musik zu sagen macht sie **leiser** (Ducking): Die Musik
 sinkt zu einem leisen Bett unter der Antwort und kommt danach wieder hoch. Sie
-pausiert nicht. Das ist wichtig, weil diese paar Sekunden Vorlauf beim
-Sprechen schon im Dot liegen, das Absenken also auf dem Gerät passieren muss
-— und weil sich ein Flow-Stream von Music Assistant nicht spulen lässt, eine
-Pause dich also früher so viel kostete, wie das Gespräch dauerte, und dich
-mitunter im nächsten Titel absetzte. Die Stimme selbst wird nie leiser
-gedreht, nur das Bett darunter. Wie weit es absinkt, entscheidest du
-(**Ducking**, im Abschnitt „Playback") — eine Geschmacksfrage, die man am
-besten im echten Raum nach Gehör trifft.
+pausiert nicht. Der Dot regelt sie selbst herunter, sobald er sein eigenes
+Wakeword hört und der Ring angeht, statt auf die Antwort des Controllers zu
+warten. Das ist wichtig, weil diese paar Sekunden Vorlauf beim Sprechen schon
+im Dot liegen, das Absenken also auf dem Gerät passieren muss — und weil sich
+ein Flow-Stream von Music Assistant nicht spulen lässt, eine Pause dich also
+früher so viel kostete, wie das Gespräch dauerte, und dich mitunter im
+nächsten Titel absetzte. Die Stimme selbst wird nie leiser gedreht, nur das
+Bett darunter. Wie weit es absinkt, entscheidest du (**Ducking**, im Abschnitt
+„Playback") — eine Geschmacksfrage, die man am besten im echten Raum nach
+Gehör trifft.
+
 
 Damit das Aufwecken über Musik zuverlässig klappt, aktiviere AEC und Barge-in
 (Stufe 3): Dieselbe Echo-Auslöschung, mit der du die eigene Stimme des

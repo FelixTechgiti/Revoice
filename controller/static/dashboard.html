@@ -72,6 +72,24 @@
       --surface-alt: #f9f6f0;
       --raised:      #ebe6db;
 
+      /* Borders */
+      --border:      #b8b4ac;
+      --border-soft: #c0bdb6;
+      --border-hard: #b0aca4;
+      --field-line: #777268;
+
+      /* Text */
+      --text:   #1e1c18;
+      --text2:  #4a4844;
+      --muted:  #575450;
+      --faint:  #767269;
+
+      /* Semantic state — one value each */
+      --ok:     #285e3f;
+      --warn:   #854212;
+      --error:  #973020;
+      --error-deep: #782020;
+      --on-error:   #f0d8d8;
       /* Borders. Two weights: the hairline everything is divided by, and
          the one an active or emphasised element is drawn with. */
       --line:        #ded7c9;
@@ -80,7 +98,7 @@
       /* Text, loudest to quietest. --faint is strokes only. */
       --text:   #1b1a17;
       --text2:  #53504a;
-      --muted:  #6d6860;
+      --muted:  #645f58;
       --faint:  #ded7c9;
       --empty:  #8c8478;
 
@@ -97,8 +115,34 @@
       --media-card: #c9d8ef;
       --media-face: #f6f8fc;
 
+      /* Accent */
+      --accent:      #3e5675;
+      --accent-hi:   #4d698c;
+      --accent-deep: #304860;
+      --accent-lit:  #8ab0d0;
+      --accent-tint: #dde8f4;
+      --accent-line: #ccd8ec;
+
+      /* Inset dark regions: the LCD readouts, the console, the wizard
+         transcript. These stay dark in BOTH themes — they are meant to
+         read as a lit panel set into the surface. */
+      --lcd-bg:    #1e2219;
+      --lcd-green: #9aba80;
+      --lcd-amber: #c8a141;
+      --lcd-dim:   #95ae86;
+      --lcd-line:  #1a1c18;
+      --lcd-face:  #2a2e28;
+      --lcd-deep:  #1c1f18;
+      --lcd-faint: #3a4a30;
+      /* A device state's NAME on an LCD readout: the LED colour lifted to
+         4.5:1. The LED itself keeps its exact colour (deviceState.dot). */
+      --lcd-offline: #df956b;
+      --lcd-muted: #dc9393;
+      --lcd-speaking: #7eaadf;
+      --lcd-thinking: #c9a128;
+      --lcd-listening: #5db88d;
       /* Waiting for you, update available. */
-      --warn:      #9a5a0c;
+      --warn:      #8d520b;
       --warn-bg:   #fdf6ea;
       --warn-line: #e6d3b0;
 
@@ -125,7 +169,7 @@
       --console-line:   #1e201d;
       --console-line-2: #2c2f2b;
       --console-text:   #b8b2a8;
-      --console-dim:    #7d7770;
+      --console-dim:    #8a847e;
       --console-voice:  #4ad9a4;
       --console-media:  #7fb3ff;
       --console-warn:   #e8a13c;
@@ -142,14 +186,22 @@
       --border-soft: var(--line);
       --border-hard: var(--line-strong);
       --ok:          var(--voice);
-      --error-deep:  var(--error-line);
-      --on-error:    var(--error);
+      /* These two were pointed at the wrong end of the error ramp: --on-error
+         is the LABEL on an error fill and resolved to the fill itself (1.0:1,
+         an invisible danger pill), and --error-deep is the DARK end of that
+         fill and resolved to the pale line. Literals, because the new palette
+         has no token meaning either of those. */
+      --error-deep:  #7f2a1f;
+      --on-error:    var(--error-bg);
       --notice-bg:   var(--warn-bg);
       --notice-line: var(--warn-line);
       --accent:      var(--media);
       --accent-hi:   var(--media);
       --accent-deep: var(--media-line);
       --accent-lit:  var(--media);
+      /* Literal, not var(--media): --accent-lit is read as TEXT on the
+         LCD panels, where the light theme's media blue is 3.2:1. */
+      --accent-lit:  #6fa4ef;
       --accent-tint: var(--media-bg);
       --accent-line: var(--media-line);
       --lcd-bg:    var(--console-bg);
@@ -177,6 +229,21 @@
       --surface-alt: #1e1c1a;
       --raised:      #221f1c;
 
+      --border:      #343a2b;
+      --border-soft: #2c3124;
+      --border-hard: #414736;
+      --field-line: #7f8b69;
+
+      --text:   #ddd9d1;
+      --text2:  #b2ada4;
+      --muted:  #aaa8a4;
+      --faint:  #8a867f;
+
+      --ok:     #82b489;
+      --warn:   #d79b56;
+      --error:  #da978a;
+      --error-deep: #c16a5a;
+      --on-error:   #2a1512;
       --line:        #2c2926;
       --line-strong: #3a3632;
 
@@ -197,6 +264,29 @@
       --media-card: #2f3a4d;
       --media-face: #161b24;
 
+      --accent:      #8caac9;
+      --accent-hi:   #8fb0d0;
+      --accent-deep: #4a6a8c;
+      --accent-lit:  #a8c8e4;
+      --accent-tint: #1f2c3a;
+      --accent-line: #2f4054;
+
+      /* The panel has to stay distinguishable from a ground that is now
+         nearly as dark, so it goes slightly darker still and leans on its
+         own border. */
+      --lcd-bg:    #12150e;
+      --lcd-green: #9aba80;
+      --lcd-amber: #c8a141;
+      --lcd-dim:   #95ae86;
+      --lcd-line:  #0c0e08;
+      --lcd-face:  #1e2219;
+      --lcd-deep:  #14170f;
+      --lcd-faint: #3a4a30;
+      --lcd-offline: #df956b;
+      --lcd-muted: #dc9393;
+      --lcd-speaking: #7eaadf;
+      --lcd-thinking: #c9a128;
+      --lcd-listening: #5db88d;
       --warn:      #e8a13c;
       --warn-bg:   #2a1d1a;
       --warn-line: #4a2f28;
@@ -214,7 +304,7 @@
       --console-line:   #1e201d;
       --console-line-2: #2c2f2b;
       --console-text:   #b8b2a8;
-      --console-dim:    #7d7770;
+      --console-dim:    #8a847e;
       --console-voice:  #4ad9a4;
       --console-media:  #7fb3ff;
       --console-warn:   #e8a13c;
@@ -226,8 +316,13 @@
       --border-soft: var(--line);
       --border-hard: var(--line-strong);
       --ok:          var(--voice);
-      --error-deep:  var(--error-line);
-      --on-error:    var(--error);
+      /* These two were pointed at the wrong end of the error ramp: --on-error
+         is the LABEL on an error fill and resolved to the fill itself (1.0:1,
+         an invisible danger pill), and --error-deep is the DARK end of that
+         fill and resolved to the pale line. Literals, because the new palette
+         has no token meaning either of those. */
+      --error-deep:  #d4695c;
+      --on-error:    var(--error-bg);
       --notice-bg:   var(--warn-bg);
       --notice-line: var(--warn-line);
       --accent:      var(--media);
@@ -251,7 +346,7 @@
       --hairline:     var(--surface-alt);
     }
 
-    html, body { height: 100%; background: var(--bg); }
+    html, body { height: 100%; background: var(--bg); color: var(--text); }
     /* No transition on the toggle itself — a 200ms cross-fade of an
        entire dense dashboard reads as a glitch, not a flourish. */
 
@@ -284,6 +379,9 @@
     .em-iconbtn--accent {
       background: var(--voice); border-color: var(--voice); color: var(--on-accent);
     }
+    /* Hover keeps the resting fill and adds a ring: a lighter fill dropped
+       the glyph under WCAG AA in light mode, and the themes would need
+       opposite fixes (dark mode puts dark ink on this accent). */
     .em-iconbtn--accent:hover:not(:disabled) {
       background: var(--voice-hi); border-color: var(--voice-hi); color: var(--on-accent);
     }
@@ -424,6 +522,16 @@
       border: 1px solid var(--line);
       border-radius: var(--em-inset-radius, 12px);
       padding: var(--em-inset-pad, 14px 18px);
+    }
+
+    /* Surfaces that are dark in BOTH themes. Text tokens inside them take the
+       dark theme's values, whatever the page theme is: a light-theme token is
+       tuned for a light panel and fails WCAG AA on these. test_contrast.py
+       holds these values equal to the dark theme's. Anything light nested
+       inside one (a pill, say) must set its own colours. */
+    .em-lcd, .em-inset, .em-console, .em-ctrl-update, .em-on-dark {
+      --text: #f2efe9; --text2: #b8b2a8; --muted: #a39c91; --faint: #575249;
+      --ok: #4ad9a4; --warn: #e8a13c; --error: #e8705c; --accent: #7fb3ff;
     }
 
     /* Scrolling log/transcript output. This one stays dark in both themes —

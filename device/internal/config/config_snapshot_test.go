@@ -43,7 +43,15 @@ var snapshotExempt = map[string]string{
 	"BassGuardDb":         "read via OutputChain()",
 	"BassGuardJackBypass": "read via OutputChain()",
 	"DuckDb":              "read via OutputChain()",
+	"WakeSound":           "read via WakeSoundSetting()",
+	"WakeSoundLevel":      "read via WakeSoundSetting()",
 }
+
+// applyHelpers are the functions Apply delegates a group of keys to. Named
+// here rather than discovered, for the same reason the exemptions are: a new
+// helper has to be added deliberately, and until it is, the guard reports
+// every key it took away as unstored rather than quietly covering it.
+var applyHelpers = map[string]bool{"applyOutput": true}
 
 func parseConfigGo(t *testing.T) *ast.File {
 	t.Helper()
@@ -64,7 +72,7 @@ func appliedFields(t *testing.T, f *ast.File) map[string]bool {
 	out := map[string]bool{}
 	for _, d := range f.Decls {
 		fn, ok := d.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "Apply" {
+		if !ok || (fn.Name.Name != "Apply" && !applyHelpers[fn.Name.Name]) {
 			continue
 		}
 		ast.Inspect(fn, func(n ast.Node) bool {

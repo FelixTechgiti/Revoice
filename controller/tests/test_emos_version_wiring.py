@@ -63,7 +63,7 @@ def test_it_rides_the_register_message_and_not_the_stats_tick():
 def test_the_controller_stores_it():
     assert "ALTER TABLE devices ADD COLUMN emos_ver TEXT" in DB
     assert "def set_device_emos_ver" in DB
-    assert "db.set_device_emos_ver(device_id, _ver)" in CONTROLLER
+    assert "em_dbwriter.submit(db.set_device_emos_ver, device_id, _ver)" in CONTROLLER
 
 
 def test_a_falsy_value_never_overwrites_a_stored_one():
@@ -75,7 +75,7 @@ def test_a_falsy_value_never_overwrites_a_stored_one():
     device being on emOS again.
     """
     block = CONTROLLER.split("device._emos_ver = _ver")[1][:300]
-    assert re.search(r"if _ver:\s*\n\s*db\.set_device_emos_ver", block), (
+    assert re.search(r"if _ver:\s*\n\s*em_dbwriter\.submit\(db\.set_device_emos_ver", block), (
         "the store is no longer guarded on a truthy value"
     )
 

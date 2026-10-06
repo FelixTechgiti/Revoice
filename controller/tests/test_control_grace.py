@@ -30,9 +30,9 @@ def test_teardown_is_deferred_not_immediate():
     # most time; the invariant has no opinion about how much prose sits
     # between the log line and the handover.
     seg = _finally_src()
-    assert "asyncio.create_task(" in seg, \
+    assert "em_tasks.spawn(" in seg, \
         "the close path no longer hands over to a task at all"
-    task_call = seg.index("asyncio.create_task(")
+    task_call = seg.index("em_tasks.spawn(")
     sync_path = seg[:task_call]
     for call in ("esphome.device_disconnected",
                  "em_ble_proxy.device_disconnected",
@@ -54,7 +54,7 @@ def test_a_blipped_device_is_held_link_down_not_popped():
     — the one window in which the difference is the whole point.
     """
     seg = _finally_src()
-    task_call = seg.index("asyncio.create_task(")
+    task_call = seg.index("em_tasks.spawn(")
     sync_path = "\n".join(
         l for l in seg[:task_call].splitlines()
         if not l.lstrip().startswith("#")

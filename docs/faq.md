@@ -41,9 +41,26 @@ genügt — das Entsperren ist der einzige Schritt, der Linux braucht. Alles
 danach, auch der Einrichtungsassistent, läuft in einem Chromium-Browser auf
 jedem Betriebssystem.
 
-### `brick.sh` verweigert mit „restricted on locked hw".
+### `brick.sh` verweigert mit „restricted on locked hw", oder `fastbrick.sh` bleibt bei „Sending payload..." stehen.
 **Dein Dot ist nicht auf dem neuesten FireOS.** Der Exploit funktioniert nur
-mit aktueller Firmware.
+mit aktueller Firmware. Bei amonet 2.0.0 kann `fastbrick.sh` die Verweigerung
+verdecken: Ein Besitzer hat festgestellt, dass seine Wiederholschleife den
+Fehler schluckt — es wartet dann bei „Sending payload..." statt
+abzubrechen. Ein Dot, dessen Fastboot LK `41fb3ce-20221007_151724` meldet,
+ist ebenfalls in diesem Zustand. Drei Besitzer sind darüber hinweggekommen,
+indem sie Amazon zuerst auf Fire OS 6574.1 aktualisieren ließen
+(Softwareversion `13222530692` oder neuer in der Alexa-App,
+[#567](https://github.com/wilbowes/EchoMuse/issues/567)).
+
+1. Den Dot mit einem Amazon-Konto koppeln (irgendeinem — ein Wegwerfkonto
+   genügt), damit er ins WLAN kommt.
+2. Stummschalten und 20–30 Minuten eingesteckt stehen lassen. Das
+   Stummschalten verhindert, dass Wakewords das Update unterbrechen.
+   Womöglich braucht es zwei solcher Runden ohne Aufsicht.
+3. Dann „Alexa, check for software updates" sagen, um ihn auf den aktuellen
+   Stand zu bringen.
+4. `brick.sh` (oder `fastbrick.sh`) erneut versuchen.
+
 
 1. Verbinde den Dot mit einem Amazon-Konto (irgendeinem — leg dir ein
    Wegwerfkonto an), damit er ins WLAN kommt.
@@ -123,6 +140,37 @@ Jeder gescheiterte Schritt bietet eine Diagnose an. Hol sie dir vor dem
 nächsten Versuch — der Zustand, in dem das Gerät ist, *ist* die Diagnose, und
 ein erneuter Versuch zerstört ihn.
 
+### The wizard says `/data` is not mounted in TWRP.
+**The userdata partition may have no filesystem yet.** The unlock can leave
+it blank, and a device that goes straight from the unlock into TWRP never
+boots Android, which is what would normally format it. One TWRP build has
+also been seen with no filesystem type on its `/data` line.
+
+The fix is TWRP's **Wipe → Format Data**. It **erases everything on `/data`**,
+which on a freshly unlocked Dot is nothing. On a Dot you have been using, stop
+and ask on [#598](https://github.com/wilbowes/EchoMuse/issues/598) first.
+
+### The Build emOS step fails.
+Check anything between your browser and Home Assistant. This step sends your
+boot image (about 9 MB) to the controller, and a reverse proxy with a small
+upload limit refuses it. NGINX's default is 1 MB; raise `client_max_body_size`
+([#556](https://github.com/wilbowes/EchoMuse/issues/556)).
+
+### The Echo boot-loops straight after provisioning.
+In both reports so far, the unlock hadn't finished. On amonet 2.0.0, check
+FireOS 6 was flashed to **both** slots, and redo that step from R0rt1z2's
+thread if not ([#619](https://github.com/wilbowes/EchoMuse/issues/619),
+[#603](https://github.com/wilbowes/EchoMuse/issues/603)). Your escrowed boot
+image puts the boot partition back from TWRP if you need to start over.
+
+### Connect Console fails on Linux.
+Two Linux users with Chromium have hit this and it isn't root-caused yet
+([#605](https://github.com/wilbowes/EchoMuse/issues/605)). Our guess is
+another program holding the Echo's serial port. ModemManager probes new USB
+serial devices on many distributions, so try `sudo systemctl stop
+ModemManager` and `adb kill-server` before clicking Connect Console. If it
+still fails, open the console yourself (below) and finish the WiFi step there.
+
 ---
 
 ## emOS
@@ -131,12 +179,44 @@ ein erneuter Versuch zerstört ihn.
 Der Assistent bietet **emOS** zuerst an. Es ersetzt Android auf dem Echo
 vollständig und behält nur Amazons Kernel — und es ist der Grund, warum sich
 die 3,5-mm-Klinke dort korrekt verhält. **FireOS** ist einen beschrifteten
-Klick daneben und das, worauf die meisten Geräte im Feld laufen. Der
-emOS-Ablauf sichert dein ursprüngliches Boot-Image, bevor er irgendetwas
-schreibt, und es zurückzuspielen dauert etwa zehn Sekunden; der FireOS-Ablauf
-tut das noch nicht
-([#468](https://github.com/wilbowes/EchoMuse/issues/468)). Beide brauchen den
-amonet-Unlock **v1.1.0**; siehe die erste Frage auf dieser Seite.
+Klick daneben und das, worauf die meisten Geräte im Feld laufen. Beide Abläufe
+sichern dein ursprüngliches Boot-Image, bevor sie irgendetwas schreiben (der
+FireOS-Ablauf seit Controller 2.24.0), und es aus TWRP zurückzuspielen dauert
+etwa zehn Sekunden. emOS läuft nach beiden amonet-Versionen; der FireOS-Ablauf
+braucht **v1.1.0**. Siehe die erste Frage auf dieser Seite.
+
+### Wie öffne ich die emOS-Konsole selbst?
+Den Echo per USB anstecken und seinen seriellen Port in einem Terminal
+öffnen, mit 115200 Baud:
+
+- **Linux:** `screen /dev/ttyACM0 115200`. Die Nummer wechselt;
+  `ls /dev/ttyACM*` listet die Kandidaten.
+- **macOS:** `screen /dev/tty.usbmodem* 115200`
+- **Windows:** ein serielles Terminal wie PuTTY, auf dem COM-Port, den der
+  Geräte-Manager für den Echo zeigt.
+
+`screen` unter Linux ist von Nutzern bestätigt; die Zeilen für macOS und
+Windows sind die üblichen Namen für ein serielles USB-Gerät und wurden an
+emOS noch nicht bestätigt. Hast du ein Konsolenpasswort gesetzt, fragt es
+zuerst danach.
+
+Das Banner, das es ausgibt, nennt die Adresse des Echos, den Controller, mit
+dem er verbunden ist (oder `not connected`), und wo die Logs liegen.
+`/tmp/server.log` ist das von Revoice.
+
+### Der Echo ist im WLAN, verbindet sich aber nie mit dem Controller.
+Der Echo findet den Controller per mDNS, und das überquert weder Subnetze
+noch VLANs. Beide ins selbe Netz stellen, oder dem Echo eine
+[feste Controller-Adresse](configuration.md#controller-adresse) geben. Zum
+Nachsehen die Konsole öffnen und `tail -n 40 /tmp/server.log` laufen lassen:
+wiederholte Zeilen `mDNS: no server found` heißen, dass die Suche das Problem
+ist.
+
+### Kein Ton unter emOS mit FireOS 6.
+Controller auf **2.24.1** und Gerät auf **v2.16.0** aktualisieren. Ältere
+Firmware ließ einen Teil des Lautsprecherwegs auf FireOS 6' Kernel
+abgeschaltet ([#587](https://github.com/wilbowes/EchoMuse/issues/587)).
+
 
 ### Wie führe ich den Assistenten auf einem emOS-Gerät noch einmal aus?
 emOS hat kein adb, der Assistent sieht das Gerät also nicht direkt. Öffne die
@@ -324,9 +404,19 @@ Erkennung des Sprechendes manchmal gar nicht erst anlief und ihr eigenes
 Fünfzehn-Sekunden-Limit auslief. Passiert es weiterhin, melde es mit einem
 Support-Bundle. [#485](https://github.com/wilbowes/EchoMuse/issues/485).
 
+### Lange Antworten fangen spät an zu sprechen.
+Standardmäßig spricht der Dot erst, wenn Home Assistant die ganze Antwort
+hat — eine lange Antwort von einem langsamen Modell beginnt also spät.
+Schalte **Konfiguration → Playback → Sprechen, während die Antwort entsteht**
+ein, dann beginnt es mit dem ersten Satz. Es braucht einen Gesprächsagenten
+und eine Sprachausgabe, die beide streamen, und ein Modell, das langsamer ist
+als Sprache, kann zwischen den Sätzen stocken — kommt es also ruckweise,
+schalte es wieder aus.
+
 ### Lange Antworten brechen mittendrin ab.
 Behoben; aktualisiere den Controller. Bricht eine lange Antwort weiterhin
 früh ab, ist ein Support-Bundle mit dem Zeitpunkt die richtige Meldung.
+
 [#324](https://github.com/wilbowes/EchoMuse/issues/324).
 
 ### Kann ich ihn unterbrechen, während er spricht?
@@ -420,9 +510,16 @@ ein Update gibt. Firmware wird von GitHub geladen, wenn du dich für ein Update
 entscheidest. Setze `update_check_interval` auf `0`, um auch das abzustellen.
 
 ### Wird mein Sprachton irgendwohin geschickt?
-Er geht vom Gerät zu deinem Controller zu deinem Home Assistant, über dein
-LAN. Wohin er danach geht, entscheidet die Spracherkennung, die du in HA
+Standardmäßig erst nach dem Wakeword. Der Echo horcht selbst darauf und
+schickt nichts, bis er es hört; danach geht, was du sagst, zu deinem
+Controller und zu deinem Home Assistant, über dein LAN, bis du aufhörst zu
+sprechen. Wohin er danach geht, entscheidet die Spracherkennung, die du in HA
 eingerichtet hast — das ist deine Wahl, nicht unsere.
+
+Ein Echo, der das Wakeword **auf dem Controller** erkennen lässt, sendet
+stattdessen dauerhaft dorthin, und das Dashboard sagt, welche das tun. Siehe
+[listening.md](listening.md).
+
 
 ### Kann ich ein Support-Bundle bedenkenlos an ein öffentliches Issue hängen?
 Ja, das ist so entworfen. Es ist eine Positivliste: keine Transkripte, kein
@@ -432,23 +529,32 @@ schlichtes JSON — [mach es lieber selbst auf](support-bundle.md), statt uns
 zu glauben.
 
 ### Ist die Verbindung zwischen Gerät und Controller verschlüsselt?
-Sie kann es sein und sollte es sein. Gerät → **Status** → auf **Secure link**
-drücken, wenn in der Zeile „Link" `plain ws` steht. **Die ESPHome-Verbindung
-zu Home Assistant ist weiterhin unverschlüsselt**, einschließlich
-Mikrofonton — [#341](https://github.com/wilbowes/EchoMuse/issues/341).
+Ja, sobald der Echo gekoppelt ist. Einen neuen Echo freizugeben koppelt ihn.
+Einen Echo, der noch auf `plain ws` steht (Zeile „Verbindung" im
+Status-Reiter), koppelst du, indem du seine Aktionstaste fünf Sekunden hältst
+und die Kopplung im Dashboard freigibst; bei Firmware, die zu alt zum Fragen
+ist, bietet der Status-Reiter stattdessen **Koppeln** an. **Die
+ESPHome-Verbindung zu Home Assistant ist weiterhin unverschlüsselt**,
+einschließlich Mikrofonton —
+[#341](https://github.com/wilbowes/EchoMuse/issues/341).
+
 
 ---
 
 ## Hardware und Umfang
 
 ### Funktioniert das mit einem Echo Dot Gen 3 / Show / Studio?
-Unterstützt wird heute nur der Echo Dot Gen 2 („biscuit"). **Unterstützung für
-den Echo Show 8 liegt in Review**
-([#358](https://github.com/wilbowes/EchoMuse/pull/358)), und am Echo Show 5
-wird gearbeitet ([#36](https://github.com/wilbowes/EchoMuse/issues/36)).
+Unterstützt wird heute nur der Echo Dot Gen 2 („biscuit"). An Portierungen aus
+der Community wird gearbeitet: Echo Show 8
+([#358](https://github.com/wilbowes/EchoMuse/pull/358)), Echo Show 5
+([#36](https://github.com/wilbowes/EchoMuse/issues/36)) und Echo 2
+([#554](https://github.com/wilbowes/EchoMuse/pull/554)); der ursprüngliche
+Echo Dot Gen 3 wird gerade vermessen
+([#527](https://github.com/wilbowes/EchoMuse/issues/527)).
 Andere Boards sind willkommen — die Android-spezifische Fläche umfasst rund
 zwanzig Aufrufstellen, ein neues Board ist also überwiegend ein Binding für
 Mikrofon, Lautsprecher, LEDs und Tasten.
+
 
 ### Hängt es von Amazons Software ab?
 Kaum, und das bleibt bewusst so. Es ist ein Linux-Dienst auf ALSA, i2c, evdev

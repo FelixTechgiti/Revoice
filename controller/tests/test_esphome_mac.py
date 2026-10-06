@@ -176,7 +176,10 @@ def test_migrations_are_append_only():
     rather than edited — which is the mistake this guards, and the one that
     broke every stats write and disconnect-looped the fleet when it happened.
     """
-    assert len(db.MIGRATIONS) == 25
+    assert len(db.MIGRATIONS) == 28
+    # v28 is its own entry (token_confirmed_at), not appended onto v27.
+    assert "token_confirmed_at" in db.MIGRATIONS[27]
+    assert "token_confirmed_at" not in db.MIGRATIONS[26]
     assert "esphome_mac" in db.MIGRATIONS[18]
     assert "esphome_mac" not in db.MIGRATIONS[17]
     # v20 is its own entry and did not get appended onto v19's.
@@ -200,3 +203,10 @@ def test_migrations_are_append_only():
     assert "emos_ver" in db.MIGRATIONS[24]
     assert "emos_ver" not in db.MIGRATIONS[23]
     assert "emos_ver" not in db.MIGRATIONS[22]
+    # v27: the TCP loss columns are their own entry. Note they sit AFTER
+    # the fork's emos_ver rather than at upstream's v26 — the stored
+    # version is an INDEX into this list, so a database that already ran
+    # the fork's v25 would re-run the renumbered one and fail on a
+    # duplicate column. Appending is the only safe resolution.
+    assert "tcp_down_segs_sum" in db.MIGRATIONS[26]
+    assert "tcp_down_segs_sum" not in db.MIGRATIONS[25]

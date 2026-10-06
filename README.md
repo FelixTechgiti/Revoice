@@ -60,7 +60,7 @@ hör die Antwort aus dem Dot. Gebrauchte Geräte kosten um die 10 €.
 | **Eigene Wakewords** | „Hey Biscuit", der Name deiner Katze, was du willst. Der mitgelieferte [Trainer](oww_forge/README.md) baut das Modell aus synthetischer Sprache — du musst nichts einsprechen. Fertiges Modell im Dashboard hochladen, fertig. |
 | **Dazwischenreden** | Sag das Wakeword mitten in die Antwort hinein und der Assistent hält an. Ein Echo-Canceller auf dem Gerät sorgt dafür, dass er sich dabei nicht selbst hört. |
 | **Mehrere Räume, eine Antwort** | Hören zwei Dots denselben Satz, antwortet genau einer — der, der dich am besten verstanden hat. Kein Chor aus dem Nachbarzimmer. |
-| **Wakeword auf dem Gerät** | Optional übernimmt der Dot die Worterkennung selbst. Standardmäßig läuft sie auf dem Controller, wo neue Modelle ohne Firmware-Update ankommen. |
+| **Wakeword auf dem Gerät** | Der Dot erkennt das Wakeword selbst und schickt nichts, bis er es hört — die Voreinstellung für neue Installationen. Umstellbar auf den Controller, wo neue Modelle ohne Firmware-Update ankommen; welcher Echo was tut, steht im Dashboard. [Wie es funktioniert](docs/listening.md). |
 | **Timer** | Laufen dort, wo sie gestellt wurden, und klingeln auch dort. |
 
 ### 🎵 Musik und Audio
@@ -190,6 +190,7 @@ Schalter, der stillschweigend nichts tut.
 | [Rooting](docs/rooting.md) | Den Dot einmalig entsperren |
 | [Auf emOS umstellen](docs/emos-migration.md) | Ein Gerät, das schon läuft, ohne Neueinrichtung auf emOS bringen |
 | [Konfiguration](docs/configuration.md) | Jeder Regler, in verständlichen Worten erklärt |
+| [Zuhören und Privatsphäre](docs/listening.md) | Wann genau Ton einen Echo verlässt — und was ehrlich darüber zu sagen ist |
 | [FAQ](docs/faq.md) | Die Dinge, die am häufigsten schiefgehen |
 | [Sprachpipeline](docs/voice-pipeline.md) | Der ganze Weg vom Mikrofon zur Antwort |
 | [LED-Ring](docs/led-ring-states.md) · [Audio-Zustände](docs/audio-states.md) | Was der Ring gerade sagen will |

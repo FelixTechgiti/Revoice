@@ -69,37 +69,42 @@ def test_no_task_is_started_without_something_holding_it():
     )
 
 
-def test_the_spawn_helpers_hold_a_reference_and_report_failures():
+def test_the_spawn_helper_holds_a_reference_and_reports_failures():
     """
     Holding the task is half of it. A task nobody awaits also swallows its
     exception until some later collection surfaces it as "Task exception
     was never retrieved", by which point the context is gone.
+
+    One helper for the whole controller since the 2026-09-28 upstream sync:
+    em_tasks.spawn. It replaced a per-module `_spawn` in em_api and
+    em_controller and a per-connection one on the ESPHome satellite, all
+    three of which did exactly this and none of which were reachable from
+    the others.
     """
-    for module in ("em_controller.py", "em_api.py"):
+    src = (CONTROLLER / "em_tasks.py").read_text()
+    body = src[src.index("def spawn("):]
+    assert "_live.add" in body, "em_tasks.spawn must hold the task"
+    assert "add_done_callback" in body, "and release it again, or the set is a leak"
+    finished = src[src.index("def _finished("):]
+    assert "_live.discard" in finished, "the set must be released, or it leaks"
+    assert "exception" in finished and "log.error" in finished, \
+        "and a failure must be reported where it happens"
+
+
+def test_nothing_starts_a_task_outside_that_helper():
+    """
+    The helper only helps where it is used. Each module that starts
+    background work goes through em_tasks, so there is one place that can be
+    got wrong rather than four.
+    """
+    strays = {}
+    for module in MODULES:
         src = (CONTROLLER / module).read_text()
-        assert "_background_tasks" in src, \
-            f"{module} needs somewhere to hold its tasks"
-        body = src[src.index("def _spawn("):]
-        body = body[:body.index("\n\n\n")] if "\n\n\n" in body else body
-        assert "_background_tasks.add" in body, \
-            f"{module}: _spawn must hold the task"
-        assert "_background_tasks.discard" in body, \
-            f"{module}: _spawn must release it again, or the set is a leak"
-        assert "add_done_callback" in body and "exception" in body, \
-            f"{module}: _spawn must surface a failure"
-
-
-def test_the_satellite_helper_does_the_same():
-    """
-    em_esphome's lives on the satellite rather than at module level: its
-    message handlers are plain generators and cannot await, and the tasks
-    they start belong to one connection.
-    """
-    src  = (CONTROLLER / "em_esphome.py").read_text()
-    body = src[src.index("def _spawn(coro"):]
-    body = body[:body.index("self._spawn = _spawn")]
-    assert "self._timer_tasks.add(task)" in body, \
-        "the satellite's _spawn must hold the task"
-    assert "self._timer_tasks.discard" in body, \
-        "and release it, or the set grows for the life of the connection"
-    assert "exception()" in body, "and report a failure"
+        if "em_tasks" not in src:
+            continue
+        for name in ("_spawn(", "_background_tasks"):
+            if name in src:
+                strays.setdefault(module, []).append(name)
+    assert not strays, (
+        "these modules kept a second spawn helper beside em_tasks — one of "
+        f"them will be the one somebody forgets: {strays}")

@@ -34,7 +34,13 @@ def test_the_controller_updates_it_on_a_live_scene_change():
     """
     src = (CONTROLLER / "em_api.py").read_text()
     body = src[src.index("live.led_scene = em_scenes.resolve(effective)"):]
-    body = body[:1200]
+    # Bounded by the END OF THE ENCLOSING FUNCTION, not by a byte count — the
+    # same slow leak test_config_mirrors.py documents. A fixed 1200 characters
+    # failed the day a mirror was added above this line, and that is the
+    # direction that fails loudly; the other direction drops the assertion in
+    # silence, which is what this file exists to catch one level down.
+    end = re.search(r"\n {0,4}(async )?def ", body)
+    body = body[:end.start()] if end else body
     assert '"listeningAnim"' in body, \
         "a live scene change must refresh the device's cached animation"
 
@@ -82,6 +88,7 @@ def test_the_arbitration_loser_gets_its_ring_put_back_to_rest():
     switched off.
     """
     src = (CONTROLLER / "em_controller.py").read_text()
+    src = src[src.index("async def _stream_listen"):]
     branch = src[src.index("if not serves or won_by != device.device_id:"):]
     # The no-HA sub-branch ends at its own `continue`; ceding is what follows.
     stand = branch.index("if not serves:")
@@ -102,3 +109,24 @@ def test_the_arbitration_loser_gets_its_ring_put_back_to_rest():
     standdown = branch[stand:branch.index("continue", stand)]
     assert "_leds_turn_end(device)" in standdown, \
         "a device with no HA cues its state whether or not another Echo won"
+
+
+def test_the_private_path_darkens_a_loser_and_cues_a_device_with_no_ha():
+    """The same two exits on the private-listening path (docs/listening.md),
+    which returns where the stream path continues. Both must also close the
+    session, or the Echo keeps sending until its own ack timeout."""
+    src = (CONTROLLER / "em_controller.py").read_text()
+    body = src[src.index("async def _private_wake_turn"):]
+    body = body[:body.index("\nasync def ")]
+    branch = body[body.index("if not serves or won_by != device.device_id:"):]
+    branch = branch[:branch.index("await device.listen_ack(session)")]
+    code = "\n".join(l for l in branch.splitlines() if not l.lstrip().startswith("#"))
+    assert "listen_close(session" in code
+    standdown = code[code.index("if not serves:"):code.index("else:")]
+    cede = code[code.index("else:"):]
+    assert "_leds_turn_end(device)" in standdown
+    # leds_idle, not leds_off: on this fork the ring's resting state belongs
+    # to Home Assistant's light entity, so a ceding Echo hands the ring BACK
+    # rather than switching it off — see test_ring_light.py, which fails on a
+    # bare leds_off anywhere outside leds_idle itself.
+    assert "leds_idle(device)" in cede and "_leds_turn_end" not in cede

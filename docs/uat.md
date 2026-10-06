@@ -67,6 +67,9 @@ lieber deine Versionsnummern im bestehenden Issue.
 | Anderswo gestartete Musik bleibt stumm, bis ein Sprachgespräch endet | [#262](https://github.com/wilbowes/EchoMuse/issues/262) |
 | Doppel- und Dreifachtippen wird unzuverlässig erkannt | [#115](https://github.com/wilbowes/EchoMuse/issues/115) |
 | Hohe CPU-Last auf dem Gerät | [#176](https://github.com/wilbowes/EchoMuse/issues/176) |
+| Music Assistant zeigt den nächsten Titel 10–15 s, bevor er spielt | [#674](https://github.com/wilbowes/EchoMuse/issues/674) |
+| Musik setzt aus, wenn ein Sprachgespräch sie herunterregelt (2.25.0-ea.1) | [#671](https://github.com/wilbowes/EchoMuse/pull/671) |
+| Ein Stereokanal stumm, mit Knacken, am Line-Out | [#669](https://github.com/wilbowes/EchoMuse/issues/669) |
 
 ---
 
@@ -188,17 +191,24 @@ darauf auf.
 **Melde:** Ein Modell, das hochlädt und wählbar ist, aber nie auslöst — das
 ist eine bestimmte bekannte Fehlerklasse und eine Meldung wert.
 
-### C5 · Wakeword auf dem Gerät
-**Tu:** Config → Wake word → Erkennung auf dem Gerät einschalten.
-**Erwarte:** Aufwachen funktioniert weiterhin. Gerät → Activity zeichnet
-weiterhin Gespräche auf.
-**Melde:** Aufwachen, das ganz aufhört, oder eine merklich schlechtere
-Reaktionszeit.
+### C5 · Privates Zuhören
+**Tu:** Config → Wakeword-Erkennung → **Auf diesem Echo**. Warte, bis die
+Zeile darunter *hört privat zu* sagt.
+**Erwarte:** Aufwachen funktioniert weiterhin, das erste Wort deines Befehls
+wird nicht abgeschnitten, und eine lange Antwort lässt sich weiterhin mit dem
+Wakeword unterbrechen (wenn Barge-in an ist). Die Zeile auf der Startseite
+zählt diesen Echo als nicht sendend.
+**Melde:** Aufwachen, das ganz aufhört, ein abgeschnittenes erstes Wort,
+*nur per Taste* ohne einen Grund, mit dem du etwas anfangen kannst, oder die
+Zeile *hört privat zu*, während der Echo an anderer Stelle als sendend
+ausgewiesen wird.
 
 ### C6 · Mehrere Geräte antworten nicht beide
-**Tu:** Sag mit zwei Geräten in Hörweite einmal das Wakeword.
+**Tu:** Sag mit zwei Geräten in Hörweite einmal das Wakeword. Wiederhole es
+mit einem auf **Auf diesem Echo** und dem anderen auf **Auf dem Controller**.
 **Erwarte:** Ein Gerät antwortet. Das andere nicht.
 **Melde:** Beide antworten, oder keines.
+
 
 ---
 
@@ -238,6 +248,20 @@ merklich schlechter werden.
 **Erwarte:** Der Ton wechselt auf die Buchse.
 **Melde:** Alles, was über die bekannten Buchsenfehler in der Tabelle oben
 hinausgeht.
+
+### D7 · Speak while the reply is written
+**Do:** Config → Playback → turn on "Speak while the reply is written" and save.
+Ask for something long ("explain in two paragraphs how a refrigerator works").
+Turn it off, save, and ask again.
+**Expect:** With it on, speech starts at the first sentence and the controller
+log shows `TTS streaming early`. With it off, speech starts once the whole reply
+is ready. The words are the same either way, and neither change needs a restart.
+On a model or a TTS engine slower than speech, pauses between sentences with it
+on are expected, which is why it is off by default.
+**Flag:** Speech that never starts or stops part-way with it on; no difference in
+when speech starts between the two settings on a setup where Home Assistant's
+agent and TTS engine both stream; a change that needs a restart. Give the model,
+the TTS engine and the length of the reply.
 
 ---
 
@@ -358,12 +382,16 @@ Dienste nach.
 
 ## I — Sicherheit und die Geräteverbindung
 
-### I1 · Sichere Verbindung
-**Tu:** Gerät → Status. Steht bei „Link" `plain ws`, drücke **Secure link**.
+### I1 · Koppeln
+**Tu:** Gerät → Status. Steht bei „Verbindung" `plain ws`, halte die
+Aktionstaste des Echos fünf Sekunden und drücke dann **Kopplung freigeben**
+(bei älterer Firmware **Koppeln**).
 **Erwarte:** Das Gerät verbindet sich innerhalb weniger Sekunden neu, und
-„Link" liest `wss (TLS)`.
+„Verbindung" liest `wss (TLS)`.
 **Melde:** Ein Gerät, das offline geht und offline bleibt. (Es sollte neu
-wählen.)
+wählen.) Und: „Kopplung freigeben" taucht auf, ohne dass jemand die Taste
+gehalten hat.
+
 
 ### I2 · Zugangsdaten überstehen einen Neustart
 **Tu:** Starte ein TLS-Gerät neu.

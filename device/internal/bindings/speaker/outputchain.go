@@ -4,6 +4,7 @@ package speaker
 
 import (
 	"encoding/binary"
+	"log"
 	"sync"
 
 	"github.com/wilbowes/EchoMuse/internal/outchain"
@@ -95,12 +96,40 @@ func (p *PcmSpeaker) applyOutputChainParams() {
 	if !p.oc.haveCfg {
 		return
 	}
-	params := p.oc.cfg.ForJack(inserted)
-	if p.oc.chain == nil {
-		p.oc.chain = outchain.NewChain(sampleRate, params)
+	p.oc.chain.SetParams(p.oc.cfg.ForJack(inserted))
+}
+
+// SetOutputChainActive hands the output chain to this device (true) or back to
+// the controller (false).
+//
+// Only the controller's `output_chain` feature may turn it on. The device
+// announcing the capability says it CAN shape; a controller that does not
+// announce the feature back is still shaping the audio itself, and the chain
+// run at both ends is two limiters in series.
+func (p *PcmSpeaker) SetOutputChainActive(on bool) {
+	p.oc.mu.Lock()
+	defer p.oc.mu.Unlock()
+	if on == p.oc.chain.Active() {
 		return
 	}
-	p.oc.chain.SetParams(params)
+	where := "the controller"
+	if on {
+		where = "this device"
+	}
+	log.Printf("[speaker] output chain now runs on %s", where)
+	p.oc.chain.SetActive(on)
+}
+
+// outputChainStats drains the chain's work counters, and reports false when
+// the chain is not the one doing the work — a reading of 0.00dB from a chain
+// that is standing down would read as a stage that never engaged.
+func (p *PcmSpeaker) outputChainStats() (outchain.Stats, bool) {
+	p.oc.mu.Lock()
+	defer p.oc.mu.Unlock()
+	if !p.oc.chain.Active() {
+		return outchain.Stats{}, false
+	}
+	return p.oc.chain.TakeStats(), true
 }
 
 // applyOutputChain runs one mixed period through the chain.
@@ -115,18 +144,24 @@ func (p *PcmSpeaker) applyOutputChainParams() {
 // limiters on a stereo pair pull different gains and the image shifts, so it
 // wants a linked detector. Left as a single documented assumption rather than
 // a half-built stereo path nobody can test.
-func (p *PcmSpeaker) applyOutputChain(out []byte) []byte {
+// The second return says whether the chain WROTE a period. It is not a
+// slice comparison in the caller's place because Go has none, and that is not
+// a syntax detail: the caller needs it to decide whether to apply the volume
+// or let it settle, and `silencePeriod` is shared — writing a volume ramp into
+// the period this returns when it did nothing would be writing into it.
+func (p *PcmSpeaker) applyOutputChain(out []byte) ([]byte, bool) {
 	p.oc.mu.Lock()
 	chain := p.oc.chain
+	active := chain.Active()
 	p.oc.mu.Unlock()
-	if chain == nil {
-		return out
+	if !active {
+		return out, false
 	}
 
 	silent := isSilence(out)
 	if silent {
 		if p.oc.drain <= 0 {
-			return out
+			return out, false
 		}
 		p.oc.drain--
 	} else {
@@ -151,7 +186,7 @@ func (p *PcmSpeaker) applyOutputChain(out []byte) []byte {
 	// handle: fall back to the unprocessed mix rather than pumping a period of
 	// the wrong length.
 	if len(processed) != frames {
-		return out
+		return out, false
 	}
 
 	buf := p.oc.stereoOut[:len(out)]
@@ -161,7 +196,7 @@ func (p *PcmSpeaker) applyOutputChain(out []byte) []byte {
 		binary.LittleEndian.PutUint16(buf[i*4:], u)
 		binary.LittleEndian.PutUint16(buf[i*4+2:], u)
 	}
-	return buf
+	return buf, true
 }
 
 // isSilence reports whether a period is entirely zero. Cheaper than it looks —

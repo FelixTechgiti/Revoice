@@ -27,6 +27,9 @@ type DeviceStats struct {
 	TxErrors    uint64 `json:"txErrors"`
 	TxDropped   uint64 `json:"txDropped"`
 	RxCrcErrors uint64 `json:"rxCrcErrors"`
+	// Uplink TCP loss since the last report (LinkLoss); nil = not measured.
+	TcpUpRetrans *uint64 `json:"tcpUpRetrans,omitempty"`
+	TcpUpSegs    *uint64 `json:"tcpUpSegs,omitempty"`
 	// Ble carries the BLE scanner diagnostics snapshot (bluetooth.Stats),
 	// nil when the proxy has never been enabled this boot.
 	Ble interface{} `json:"ble,omitempty"`
@@ -106,6 +109,8 @@ func (c *ControlClient) SendStats(s DeviceStats) {
 		"txErrors":         s.TxErrors,
 		"txDropped":        s.TxDropped,
 		"rxCrcErrors":      s.RxCrcErrors,
+		"tcpUpRetrans":     s.TcpUpRetrans,
+		"tcpUpSegs":        s.TcpUpSegs,
 		"ble":              s.Ble,
 		"owwShadow":        s.OwwShadow,
 		"ambientLux":       s.AmbientLux,

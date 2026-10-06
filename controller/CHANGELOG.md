@@ -1,5 +1,73 @@
 # Changelog
 
+## 2.79.0-fx.1
+
+### Koppeln ersetzt den Knopf „Secure link"
+
+**Wer ein Echo neu verbindet, hält jetzt dessen Aktionstaste fünf Sekunden
+lang** und gibt die Kopplung im Dashboard frei. Danach bekommt es seine
+Zugangsdaten. Hat ein Echo sie einmal benutzt, wird eine Verbindung ohne sie
+abgewiesen — ein abgewiesenes Gerät zeigt das in der Zeile „Verbindung" und
+pulst orange; Taste halten, freigeben, fertig.
+
+Der Grund ist die Richtung, aus der die Anfrage kommt. „Secure link" war ein
+Knopf im Browser, und der unverschlüsselte Rückfall darunter ließ sich von
+jedem im selben Netz auslösen, indem er TLS scheitern ließ. Jetzt fragt das
+Gerät, und fragen kann nur, wer daneben steht.
+
+**Firmware, die noch nicht fragen kann, koppelt weiterhin per Knopf** — das
+Dashboard bietet ihn genau dort an und sagt dazu, warum.
+
+### Das Echo hört standardmäßig selbst zu
+
+Neu eingerichtete Echos erkennen das Wakeword ab sofort **auf dem Gerät**:
+bis sie es hören, verlässt sie kein Ton. Bestehende Installationen behalten
+ihre Einstellung — die Datenbank schreibt sie beim Update ausdrücklich fest,
+damit sich nichts hinter dem Rücken ändert. Umstellen geht unter
+Konfiguration → Wakeword.
+
+Was ein Echo gerade tut, steht unter der Einstellung und auf der
+Flottenübersicht, und es kommt **aus dem, was das Gerät meldet** — nie aus der
+Konfiguration allein. Ein Echo, dessen Zustand unbekannt ist, wird als
+unbekannt angezeigt, nicht als privat.
+
+### Weckton
+
+Optional spielt das Echo einen kurzen aufsteigenden Ton, sobald es das
+Wakeword gehört hat — in drei Lautstärken. Standardmäßig aus, weil er
+„<Wakeword>, mach das" unterbricht. Gedacht ist er zuerst für alle, die den
+LED-Ring nicht sehen können: sonst gibt es kein Zeichen, dass zugehört wird.
+
+### Ein eigener Tab für den Controller
+
+Die Einstellungen, die den **Controller** betreffen und nie an ein Gerät
+gehen, stehen jetzt unter **System**: GitHub-Abfragen samt Intervall, die
+Freigabe neuer Geräte, die Gültigkeit einer Anmeldung und die Release-Quelle.
+
+### Controller-Adresse für Echos ohne mDNS
+
+Wo mDNS nicht durchkommt — ein VLAN, ein Tunnel —, lässt sich eine Liste von
+Controller-Adressen hinterlegen. Sie wird der Reihe nach probiert, danach
+mDNS. Verbundene Echos bekommen sie beim Speichern, die übrigen beim nächsten
+Verbinden.
+
+### Kleineres
+
+- **Verbindungsqualität pro Minute** auf der Geräteseite, aus den
+  TCP-Zählern des Kernels. Die Funkzähler dieses Chips stehen strukturell auf
+  null, deshalb war genau das bisher nicht zu sehen.
+- **Sprechen, während die Antwort entsteht** — schneller mit einem flotten
+  Sprachmodell, kann mit einem langsamen stocken. Standardmäßig aus.
+- **Kontrast:** Mehrere Farben im Dashboard lagen unter den 4,5:1, die WCAG
+  2.2 AA für Text verlangt; sie sind nachgezogen. Die Beschriftung auf einem
+  roten Knopf hatte dieselbe Farbe wie der Knopf. Eine Lücke bleibt und ist
+  als [#354](https://github.com/FelixTechgiti/Revoice/issues/354) festgehalten.
+- Der Assistent sagt bei einem `/data`, das sich nicht einhängen lässt, was er
+  gefunden hat, statt auf ein Menü zu verweisen, in dem es auch nicht geht.
+
+**Dieses Release migriert die Datenbank (Schema v28).** Eine Sicherung wird
+daneben geschrieben.
+
 ## 2.78.0-fx.1
 
 ### Der Knopf „Zugangsdaten löschen" ist jetzt zu sehen

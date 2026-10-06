@@ -21,6 +21,7 @@ import em_limiter
 import em_mbc
 
 CONTROLLER = pathlib.Path(__file__).resolve().parent.parent
+ROOT = CONTROLLER.parent
 
 
 # ─── The decision ─────────────────────────────────────────────────────────
@@ -184,3 +185,41 @@ def test_the_guard_would_notice_an_ungated_site():
         fns = _chain_building_functions(p)
         assert "feed" in fns
         assert not _mentions_the_gate(fns["feed"])
+
+
+# ── The device's own defaults ────────────────────────────────────────────────
+#
+# Ported from upstream's test_output_chain_on_device.py, which this fork does
+# not otherwise keep: its other assertions name `Device.output_chain_on_device`
+# and `em_eq.Passthrough`, which are upstream's way of writing what
+# `em_outchain.controller_shapes` and `em_outchain.Bypass` already say above.
+# This one is not a duplicate of anything here.
+
+def test_device_defaults_match_the_controllers():
+    """
+    Until its first config push the device plays with its OWN defaults, and
+    they must be what the controller would have applied — otherwise a device
+    that has stood the controller down sounds different for the seconds after
+    every reconnect, which is a fault nobody can attribute.
+    """
+    import re
+    import em_db
+
+    chain_go = (ROOT / "device" / "internal" / "outchain" / "chain.go").read_text()
+    body = re.search(r"func DefaultParams\(\) Params \{(.*?)\n\}", chain_go, re.S).group(1)
+    go = dict(re.findall(r"(\w+):\s*([-\w.]+),", body))
+    d = em_db.DEFAULT_DEVICE_CONFIG
+
+    assert go["GuardEnabled"] == str(d["bassGuardEnabled"]).lower()
+    assert float(go["GuardDB"]) == d["bassGuardDb"]
+    assert go["LimiterEnabled"] == str(d["limiterEnabled"]).lower()
+    assert float(go["LimiterThresholdDB"]) == d["limiterThreshold"]
+    assert float(go["LimiterReleaseMS"]) == d["limiterRelease"]
+    # Bands, Loudness and GuardBypassOnJack take Go's zero values: flat, off
+    # and off. Asserting their ABSENCE rather than listing them is deliberate —
+    # a field that appears here later is one somebody gave a non-zero default.
+    for absent in ("Bands", "Loudness", "GuardBypassOnJack"):
+        assert absent not in go, f"{absent} now has an explicit default"
+    assert d["eqBands"] == [0.0] * 8
+    assert d["eqLoudness"] is False
+    assert d["bassGuardJackBypass"] is False

@@ -436,3 +436,16 @@ def test_both_write_paths_use_storable_keys():
         assert "keys_for(new_sections) | " not in src, name
         assert not re.search(r"keys_for\(sections\) \| \w+\.STATE_KEYS", src), (
             f"{name} rebuilds the union by hand — call storable_keys")
+def test_fleet_keys_are_shown_in_a_section_but_never_overridden():
+    import em_config_sections as cs
+    for key in cs.FLEET_KEYS:
+        assert any(key in s["keys"] for s in cs.SECTIONS.values())
+        assert key not in cs.keys_for(cs.SECTION_IDS)
+
+
+def test_a_device_value_for_a_fleet_key_never_wins():
+    import em_config_sections as cs
+    fleet = {"controllerEndpoints": [{"host": "10.0.0.1", "port": 8767, "tlsPort": 8770}]}
+    device = {"controllerEndpoints": []}
+    eff = cs.merge(fleet, device, list(cs.SECTION_IDS))
+    assert eff["controllerEndpoints"] == fleet["controllerEndpoints"]
