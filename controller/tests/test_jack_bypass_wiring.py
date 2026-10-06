@@ -115,13 +115,35 @@ def test_the_key_rides_the_config_push_as_a_pointer():
 
 def test_the_device_passes_it_into_the_output_chain():
     """
-    The one call site that builds outchain.Params. Without this line the key
-    arrives, is stored, and changes nothing — with the dashboard reporting a
-    saved setting the whole time.
+    The two seams between the push and the chain, and the condition that keeps
+    them down to two.
+
+    config.applyOutput folds the key into the SAME outchain.Params the rest of
+    the chain's settings live in, and cmd/server.go hands that value through
+    whole. So the guard is not that one literal names the field — it is that
+    the call site does not SPELL THE FIELDS OUT AT ALL. Any second enumeration
+    of them (an outchain.Params literal built from the snapshot, a helper that
+    copies field by field) is a place one can go missing, which is exactly how
+    this key arrived, got stored, and changed nothing before #231.
     """
-    block = SERVER_GO.split("pcmSpeaker.SetOutputChain(outchain.Params{")[1]
-    block = block.split("})")[0]
-    assert "GuardBypassOnJack:" in block and "c.BassGuardJackBypass" in block
+    block = CONFIG_GO.split("if msg.BassGuardJackBypass != nil {")[1]
+    block = block.split("}")[0]
+    assert "p.GuardBypassOnJack = *msg.BassGuardJackBypass" in block, (
+        "applyOutput reads the field but does not write it into the Params "
+        "the chain is given"
+    )
+
+    call = re.search(r"pcmSpeaker\.SetOutputChain\(([^\n]*)\)", SERVER_GO)
+    assert call, "cmd/server.go never hands the chain its parameters"
+    arg = call.group(1)
+    assert "outchain.Params{" not in arg, (
+        "the call site builds its own outchain.Params — every field it names "
+        "is a second spelling that can fall out of step with applyOutput; "
+        "pass the config's own value through instead"
+    )
+    assert "OutputChain()" in arg, (
+        f"the chain is not given the config's own parameters: {arg}"
+    )
 
 
 def test_the_capability_is_announced_only_where_the_jack_can_be_read():
