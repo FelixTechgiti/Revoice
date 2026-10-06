@@ -144,19 +144,24 @@ func (p *PcmSpeaker) outputChainStats() (outchain.Stats, bool) {
 // limiters on a stereo pair pull different gains and the image shifts, so it
 // wants a linked detector. Left as a single documented assumption rather than
 // a half-built stereo path nobody can test.
-func (p *PcmSpeaker) applyOutputChain(out []byte) []byte {
+// The second return says whether the chain WROTE a period. It is not a
+// slice comparison in the caller's place because Go has none, and that is not
+// a syntax detail: the caller needs it to decide whether to apply the volume
+// or let it settle, and `silencePeriod` is shared — writing a volume ramp into
+// the period this returns when it did nothing would be writing into it.
+func (p *PcmSpeaker) applyOutputChain(out []byte) ([]byte, bool) {
 	p.oc.mu.Lock()
 	chain := p.oc.chain
 	active := chain.Active()
 	p.oc.mu.Unlock()
 	if !active {
-		return out
+		return out, false
 	}
 
 	silent := isSilence(out)
 	if silent {
 		if p.oc.drain <= 0 {
-			return out
+			return out, false
 		}
 		p.oc.drain--
 	} else {
@@ -181,7 +186,7 @@ func (p *PcmSpeaker) applyOutputChain(out []byte) []byte {
 	// handle: fall back to the unprocessed mix rather than pumping a period of
 	// the wrong length.
 	if len(processed) != frames {
-		return out
+		return out, false
 	}
 
 	buf := p.oc.stereoOut[:len(out)]
@@ -191,7 +196,7 @@ func (p *PcmSpeaker) applyOutputChain(out []byte) []byte {
 		binary.LittleEndian.PutUint16(buf[i*4:], u)
 		binary.LittleEndian.PutUint16(buf[i*4+2:], u)
 	}
-	return buf
+	return buf, true
 }
 
 // isSilence reports whether a period is entirely zero. Cheaper than it looks —

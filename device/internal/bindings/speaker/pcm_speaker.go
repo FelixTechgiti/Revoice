@@ -285,9 +285,9 @@ func (p *PcmSpeaker) Init() error {
 
 	go p.silenceLoop()
 
-	time.Sleep(100 * time.Millisecond)     // silence reaches the DAC (~2 periods)
-	mixer.Set(mixer.SpeakerAmp, "On")      // enable amp onto a clocked, silent DAC
-	time.Sleep(50 * time.Millisecond)      // let amp settle
+	time.Sleep(100 * time.Millisecond)        // silence reaches the DAC (~2 periods)
+	mixer.Set(mixer.SpeakerAmp, "On")         // enable amp onto a clocked, silent DAC
+	time.Sleep(50 * time.Millisecond)         // let amp settle
 	mixer.Set(mixer.PlaybackVolume, dacUnity) // unmute: volume is applied in software
 
 	log.Println("PcmSpeaker initialised — silence stream running")
@@ -509,11 +509,14 @@ func (p *PcmSpeaker) silenceLoop() {
 		// It runs BEFORE the taps for the same reason the taps were moved
 		// after the mix: the AEC far-end reference has to be what the
 		// speaker emits, and after this stage that is no longer the mix.
-		out = p.applyOutputChain(out)
+		out, shaped := p.applyOutputChain(out)
 
 		// After the chain: it shapes the mix at unity, exactly as the
 		// controller-side chain does, and the volume scales what came out.
-		if audio || out != silencePeriod {
+		// `shaped` is what says the chain wrote a buffer of its own —
+		// without audio and without it, `out` is the SHARED silencePeriod
+		// and a volume ramp written into it would reach every other reader.
+		if audio || shaped {
 			p.vol.apply(out)
 		} else {
 			p.vol.settle()
@@ -767,6 +770,7 @@ func (p *PcmSpeaker) DropMusicQueue() { p.music.dropQueue() }
 // every handover re-arms the prime gate, so the incoming source waits for the
 // buffer to refill before anything is heard.
 func (p *PcmSpeaker) AllowMusic() { p.music.clearDiscard() }
+
 // dacUnity is the DAC digital volume's 0dB index. The DAC stays here while
 // audio is live and the user's volume is applied to the PCM (swvolume.go);
 // Init and Close still use the control to mute around amp and stream

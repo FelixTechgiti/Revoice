@@ -34,15 +34,14 @@ import (
 	"github.com/wilbowes/EchoMuse/internal/bootlog"
 	"github.com/wilbowes/EchoMuse/internal/client"
 	"github.com/wilbowes/EchoMuse/internal/config"
+	"github.com/wilbowes/EchoMuse/internal/cue"
 	"github.com/wilbowes/EchoMuse/internal/hostname"
+	"github.com/wilbowes/EchoMuse/internal/listen"
 	"github.com/wilbowes/EchoMuse/internal/logrelay"
 	"github.com/wilbowes/EchoMuse/internal/loopback"
 	"github.com/wilbowes/EchoMuse/internal/mcast"
 	"github.com/wilbowes/EchoMuse/internal/musicplane"
 	"github.com/wilbowes/EchoMuse/internal/netfilter"
-	"github.com/wilbowes/EchoMuse/internal/outchain"
-	"github.com/wilbowes/EchoMuse/internal/cue"
-	"github.com/wilbowes/EchoMuse/internal/listen"
 	"github.com/wilbowes/EchoMuse/internal/platform"
 	"github.com/wilbowes/EchoMuse/internal/sendspin"
 	"github.com/wilbowes/EchoMuse/internal/server"
@@ -224,7 +223,7 @@ func main() {
 
 	dataClient := client.NewDataClient(deviceID, microphone, pcmSpeaker, canceller)
 	canceller.SetStatePath(aec.DefaultStatePath) // saved echo path: loaded on the hardware reference
-	applyAecConfig(canceller, dataClient) // arm from env defaults before any config push
+	applyAecConfig(canceller, dataClient)        // arm from env defaults before any config push
 
 	// Direction callback — update LED ring to show estimated source angle
 	dataClient.OnDirectionChanged(func(angle float64) {
@@ -1547,17 +1546,11 @@ func applyOutputChainConfig(pcmSpeaker *speaker.PcmSpeaker) {
 	if pcmSpeaker == nil {
 		return
 	}
-	c := config.Get().OutputChain()
-	pcmSpeaker.SetOutputChain(outchain.Params{
-		Bands:              c.EqBands,
-		Loudness:           c.EqLoudness,
-		LimiterEnabled:     c.LimiterEnabled,
-		LimiterThresholdDB: c.LimiterThreshold,
-		LimiterReleaseMS:   c.LimiterRelease,
-		GuardEnabled:       c.BassGuardEnabled,
-		GuardDB:            c.BassGuardDb,
-		GuardBypassOnJack:  c.BassGuardJackBypass,
-	})
+	// Straight through since the 2026-09-28 sync: config holds the chain's
+	// settings as outchain.Params itself (upstream's shape), so there is no
+	// second spelling of the eight fields here to fall out of step with the
+	// first.
+	pcmSpeaker.SetOutputChain(config.Get().OutputChain())
 }
 
 func applyAecConfig(canceller *aec.Canceller, dataClient *client.DataClient) {
