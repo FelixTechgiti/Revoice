@@ -46,6 +46,7 @@ Ausdruck.
 | Controller-Version, Schemaversion | Fast jede „ist das behoben?"-Frage beginnt hier. |
 | Geräte-Seriennummern | Ohne sie korreliert nichts. Sie identifizieren deine Hardware für dich; darüber hinaus sagen sie nichts aus. |
 | Firmware-Version, Rückfall-Slot, Freigabestatus | Sagt uns, ob eine Behebung auf dem Gerät überhaupt vorhanden ist. |
+| Userspace und Kernel (`emos`/`fireos`, `armv7l`/`aarch64`, Kernel-Release) | FireOS 5 und FireOS 6 laufen auf verschiedenen Kerneln, und manche Fehler gibt es nur auf einem davon. |
 | **Fähigkeiten** (`mic`, `oww_shadow`, `ambient_light` …) | Entscheidet, welche Home-Assistant-Entitäten überhaupt existieren. „Der Lichtsensor tauchte nicht auf" wird hier in einer Zeile beantwortet. |
 | Konfiguration — Schwellwerte, EQ, LED-Szenen, Wake-Modell | Verhalten, nicht Identität. Schlüssel, deren *Name* nach Zugangsdaten aussieht, werden ohnehin geschwärzt. |
 | Gesprächs-Metadaten — Ausgang, Wake-Wert, Stufenlatenzen, Aussetzer | Was passiert ist und wie lange jede Stufe brauchte. Keine Worte, nur Zeiten und Ergebnisse. |

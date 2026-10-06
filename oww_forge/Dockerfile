@@ -9,7 +9,8 @@
 # v2.0.0 tag (the repo became a package afterwards). Don't bump that pin
 # without re-checking train.py's import.
 
-FROM python:3.11-slim
+# Pinned by the multi-arch index digest; Dependabot moves it with the tag.
+FROM python:3.11-slim@sha256:da047cb8f9d1d98e5c070f5300ba9f7274e33b8fc0e5be5ed88740aed1b95ba9
 
 ARG GPU=0
 
@@ -73,7 +74,7 @@ RUN sed -i 's/torch.load(checkpoint_path, map_location=device)/torch.load(checkp
       /usr/local/lib/python3.11/site-packages/dp/model/model.py \
     && grep -q "weights_only=False" /usr/local/lib/python3.11/site-packages/dp/model/model.py
 
-COPY forge.py model_metadata.py google_tts.py forge_web.py piper_voices.py training.template.yml /opt/forge/
+COPY forge.py model_metadata.py google_tts.py forge_web.py forge_progress.py piper_voices.py training.template.yml /opt/forge/
 COPY static/ /opt/forge/static/
 
 WORKDIR /data

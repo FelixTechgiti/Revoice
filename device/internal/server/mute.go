@@ -69,6 +69,7 @@ func (m *muteController) Toggle() {
 	if cb != nil {
 		cb(muted)
 	}
+	m.reconcilePrivacySoon()
 }
 
 // MuteOnly mutes, and can only mute. Idempotent: muting an already-muted

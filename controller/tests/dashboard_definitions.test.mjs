@@ -36,8 +36,13 @@ const src = readFileSync(JSX, "utf8");
 // everything up to the next quote — and getting that wrong makes the test
 // report whatever the damage happened to leave behind. The reference shape
 // below is narrow enough that a string cannot fake it.
+// A block comment's `/*` follows a line start, whitespace or an opening
+// bracket. Requiring that is not pedantry: the donor probe runs
+// `ls /dev/block/platform/*/by-name`, and the `/*` in that GLOB opened a
+// comment that swallowed 2000 lines, including a definition this file then
+// reported as missing. The failure named the symbol and not the cause.
 const code = src
-  .replace(/\/\*[\s\S]*?\*\//g, " ")
+  .replace(/(^|[\s({,;=])\/\*[\s\S]*?\*\//g, "$1 ")
   .replace(/^[ \t]*\/\/.*$/gm, " ")
   .replace(/([^:])\/\/.*$/gm, "$1");
 

@@ -89,17 +89,34 @@ def test_the_mute_message_carries_no_boolean():
     )
 
 
+# The SPEAKER's mute is a different control and has an unmute, which is
+# correct: it is this controller sending a volume, not a request to open a
+# microphone (em_output_mute, upstream #641). Named here rather than left to
+# a substring search, because "unmute" is a word the two share and the thing
+# this file protects is the microphone.
+_OUTPUT_MUTE = re.compile(
+    r"\b(?:om|output_mute|OutputMute|MEDIA_PLAYER_COMMAND_(?:UN)?MUTE)\b",
+    re.IGNORECASE)
+
+
 def test_the_controller_has_no_unmute_path():
     """
     No closure, no message, no handler. Searched over the whole controller
     rather than one function, because the point is that the capability is
     absent from the tree, not merely unused at one call site.
+
+    Lines belonging to the speaker's own mute are dropped first. That is the
+    narrow kind of exemption this file can afford: it names a different
+    control by the objects it is reached through, so a microphone unmute
+    cannot hide behind it without being written as one of them.
     """
     ctrl = _code_only((CONTROLLER / "em_controller.py").read_text())
     esp  = _code_only((CONTROLLER / "em_esphome.py").read_text())
     for name, src in (("em_controller.py", ctrl), ("em_esphome.py", esp)):
+        lines = [l for l in src.splitlines() if not _OUTPUT_MUTE.search(l)]
+        body = "\n".join(lines).lower()
         for forbidden in ("unmute", "_clear_mute", "mute_clear"):
-            assert forbidden not in src.lower(), (
+            assert forbidden not in body, (
                 f"{name} can {forbidden!r} — the microphone is opened at "
                 f"the device and nowhere else"
             )

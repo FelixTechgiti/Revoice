@@ -15,10 +15,10 @@ func sine(n int, amp, freq float64) []float64 {
 	return out
 }
 
-func flatBands() []float64 { return make([]float64, NumBands) }
+func flatBands() [NumBands]float64 { return [NumBands]float64{} }
 
-func boostBands(db float64) []float64 {
-	b := make([]float64, NumBands)
+func boostBands(db float64) [NumBands]float64 {
+	var b [NumBands]float64
 	for i := range b {
 		b[i] = db
 	}
@@ -69,7 +69,7 @@ func worstStep(x []float64) (float64, int) {
 func clickProbe() (src []float64, from, to Params, chunk, at int) {
 	chunk, at = 2048, 6
 	src = sine(chunk*12, 20000, 60)
-	bands := make([]float64, NumBands)
+	var bands [NumBands]float64
 	bands[0] = 12
 	from = Params{Bands: bands}
 	to = Params{Bands: bands, Loudness: true} // 8 -> 9 sections: state reset
@@ -94,7 +94,7 @@ func TestStateResetClicksWithoutTheCrossfade(t *testing.T) {
 	raw := newStages(testRate, from)
 	out := runSource(src, chunk, func(i int) {
 		if i == at {
-			raw.eq.SetBands(to.Bands, to.Loudness)
+			raw.eq.SetBands(to.Bands[:], to.Loudness)
 		}
 	}, raw.process)
 
@@ -119,11 +119,12 @@ func TestCrossfadeRemovesTheClick(t *testing.T) {
 	raw := newStages(testRate, from)
 	rawOut := runSource(src, chunk, func(i int) {
 		if i == at {
-			raw.eq.SetBands(to.Bands, to.Loudness)
+			raw.eq.SetBands(to.Bands[:], to.Loudness)
 		}
 	}, raw.process)
 
 	c := NewChain(testRate, from)
+	c.SetActive(true)
 	fadeOut := runSource(src, chunk, func(i int) {
 		if i == at {
 			c.SetParams(to)
@@ -172,6 +173,7 @@ func TestFadeDoesNotBulgeTheLevel(t *testing.T) {
 	b := Params{Bands: flatBands(), LimiterReleaseMS: 151}
 
 	c := NewChain(testRate, a)
+	c.SetActive(true)
 	out := runSource(src, chunk, func(i int) {
 		if i == at {
 			c.SetParams(b)
@@ -249,6 +251,7 @@ func TestCloneCarriesFilterState(t *testing.T) {
 // step the fade exists to remove.
 func TestRapidChangesQueueTheLatest(t *testing.T) {
 	c := NewChain(testRate, Params{Bands: flatBands()})
+	c.SetActive(true)
 	c.SetParams(Params{Bands: boostBands(3)})
 	if !c.Fading() {
 		t.Fatal("first change did not start a fade")
@@ -277,12 +280,13 @@ func TestIdenticalParamsDoNotFade(t *testing.T) {
 	p := Params{Bands: boostBands(3), LimiterEnabled: true,
 		LimiterThresholdDB: -1, LimiterReleaseMS: 150}
 	c := NewChain(testRate, p)
+	c.SetActive(true)
 	c.SetParams(p)
 	if c.Fading() {
 		t.Error("an identical parameter set started a fade")
 	}
-	// A copy with its own slice must also compare equal.
-	q := clonedParams(p)
+	// A copy must also compare equal.
+	q := p
 	c.SetParams(q)
 	if c.Fading() {
 		t.Error("an equal-but-not-aliased parameter set started a fade")
@@ -294,6 +298,7 @@ func TestIdenticalParamsDoNotFade(t *testing.T) {
 func TestChainIsSampleCountPreserving(t *testing.T) {
 	c := NewChain(testRate, Params{Bands: flatBands(), LimiterEnabled: true,
 		LimiterThresholdDB: -1, LimiterReleaseMS: 150})
+	c.SetActive(true)
 	for i := 0; i < 10; i++ {
 		if i == 3 {
 			c.SetParams(Params{Bands: boostBands(6), LimiterEnabled: true,
@@ -327,13 +332,13 @@ func TestParamsEqualCoversEveryField(t *testing.T) {
 		{"guard enabled", func(p *Params) { p.GuardEnabled = false }},
 		{"guard db", func(p *Params) { p.GuardDB = -20 }},
 	} {
-		q := clonedParams(base)
+		q := base
 		tc.mut(&q)
 		if base.Equal(q) {
 			t.Errorf("Params.Equal ignores %s — changing it would do nothing", tc.name)
 		}
 	}
-	if !base.Equal(clonedParams(base)) {
+	if !base.Equal(base) {
 		t.Error("Params.Equal says an identical copy differs")
 	}
 }

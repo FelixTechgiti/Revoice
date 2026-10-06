@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/wilbowes/EchoMuse/internal/outchain"
 )
 
 // Device holds all runtime-tunable parameters for this device.
@@ -47,28 +49,13 @@ type Device struct {
 	// via a firmware OTA per attempt.
 	DuckDb float64
 
-	// ─── Output chain ────────────────────────────────────────────────────
-	//
-	// EQ, bass guard and limiter, applied to the MIXED audio on the way to
-	// the speaker (internal/outchain). These seven keys have ridden the
-	// config push since the chain existed controller-side and were ignored
-	// by the device until 3.0.0 — see docs/audio-states.md section 8 for why
-	// the processing moved here, and note the controller stands down only
-	// for a device announcing the `output_chain` capability, so a mismatch
-	// double-processes rather than silently dropping the shaping.
-	EqBands          []float64
-	EqLoudness       bool
-	LimiterEnabled   bool
-	LimiterThreshold float64
-	LimiterRelease   float64
-	BassGuardEnabled bool
-	BassGuardDb      float64
-	// BassGuardJackBypass turns the bass guard off while a plug is in the
-	// headphone jack — see outchain.Params.GuardBypassOnJack for why it is a
-	// setting rather than automatic behaviour. Device-only: the controller
-	// is never told the plug position, so its own copy of the chain cannot
-	// implement this and does not read the key.
-	BassGuardJackBypass bool
+	// WakeSound plays a short rising two-tone when the wake word is
+	// recognised (#120). Off by default: it interrupts "<wakeword>, do this".
+	// An accessibility option first — the ring is the only other sign the
+	// device is listening, and no use to someone who cannot see it.
+	WakeSound bool
+	// WakeSoundLevel is "quiet", "medium" or "loud" (internal/cue).
+	WakeSoundLevel string
 
 	// OwwOnDevice selects on-device wake word scoring: "off", "shadow" or
 	// "on".
@@ -226,6 +213,12 @@ type Device struct {
 	// keeps the old behaviour.
 	ListeningAnim json.RawMessage
 
+	// Output is the speaker output chain's configuration (eqBands,
+	// eqLoudness, bassGuard*, limiter*). Held here whether or not the
+	// controller has handed the chain to this device, so the values are
+	// already correct the moment it does. Read with OutputChain().
+	Output outchain.Params
+
 	initialised bool
 }
 
@@ -256,20 +249,8 @@ func (d *Device) loadDefaults() {
 	d.OwwOnDevice = normaliseOnDevice(envStr("OWW_ON_DEVICE", OnDeviceOff))
 	d.BargeInThreshold = envFloat("BARGE_IN_THRESHOLD", 0.05)
 	d.DuckDb = envFloat("DUCK_DB", -18)
-	// Mirrors the controller's DEFAULT_DEVICE_CONFIG. A device that has
-	// announced `output_chain` is shaping its own audio from the first
-	// period, before any config arrives, so these defaults are what plays
-	// during that window and must not be silence-adjacent guesses.
-	d.EqBands = make([]float64, 8)
-	d.LimiterEnabled = envBool("LIMITER_ENABLED", true)
-	d.LimiterThreshold = envFloat("LIMITER_THRESHOLD", -1)
-	d.LimiterRelease = envFloat("LIMITER_RELEASE", 150)
-	d.BassGuardEnabled = envBool("BASS_GUARD_ENABLED", true)
-	d.BassGuardDb = envFloat("BASS_GUARD_DB", -30)
-	// Default OFF, and deliberately not mirrored from anything: the
-	// controller's DEFAULT_DEVICE_CONFIG has it false too, for the reason at
-	// outchain.Params.GuardBypassOnJack.
-	d.BassGuardJackBypass = envBool("BASS_GUARD_JACK_BYPASS", false)
+	d.WakeSound = envBool("WAKE_SOUND", false)
+	d.WakeSoundLevel = envStr("WAKE_SOUND_LEVEL", "medium")
 	d.AdcDigitalGain = envInt("ADC_DIGITAL_GAIN", 88)
 	d.AdcMicpga = envInt("ADC_MICPGA", 40)
 	d.MicGainDb = clampMicGainDb(envInt("MIC_GAIN_DB", 24))
@@ -303,6 +284,7 @@ func (d *Device) loadDefaults() {
 	d.AirplayVolumeControl = &airplayVolumeControl
 	spotifyVolumeControl := envBool("SPOTIFY_VOLUME_CONTROL", false)
 	d.SpotifyVolumeControl = &spotifyVolumeControl
+	d.Output = outchain.DefaultParams()
 }
 
 // Apply updates the config from a controller-pushed config message.
@@ -347,32 +329,11 @@ func (d *Device) Apply(msg ConfigMessage) {
 	if msg.DuckDb != nil {
 		d.DuckDb = *msg.DuckDb
 	}
-	// Output chain. eqBands arrives as a whole array or not at all — a
-	// partial curve is not a meaningful thing to merge, and the controller
-	// always sends the full eight.
-	if msg.EqBands != nil {
-		d.EqBands = append([]float64(nil), msg.EqBands...)
+	if msg.WakeSound != nil {
+		d.WakeSound = *msg.WakeSound
 	}
-	if msg.EqLoudness != nil {
-		d.EqLoudness = *msg.EqLoudness
-	}
-	if msg.LimiterEnabled != nil {
-		d.LimiterEnabled = *msg.LimiterEnabled
-	}
-	if msg.LimiterThreshold != nil {
-		d.LimiterThreshold = *msg.LimiterThreshold
-	}
-	if msg.LimiterRelease != nil {
-		d.LimiterRelease = *msg.LimiterRelease
-	}
-	if msg.BassGuardEnabled != nil {
-		d.BassGuardEnabled = *msg.BassGuardEnabled
-	}
-	if msg.BassGuardDb != nil {
-		d.BassGuardDb = *msg.BassGuardDb
-	}
-	if msg.BassGuardJackBypass != nil {
-		d.BassGuardJackBypass = *msg.BassGuardJackBypass
+	if msg.WakeSoundLevel != "" {
+		d.WakeSoundLevel = msg.WakeSoundLevel
 	}
 	if msg.StartupVolume > 0 {
 		d.StartupVolume = msg.StartupVolume
@@ -437,51 +398,60 @@ func (d *Device) Apply(msg ConfigMessage) {
 	if msg.ListeningAnim != nil {
 		d.ListeningAnim = msg.ListeningAnim
 	}
+	applyOutput(&d.Output, msg)
 }
 
-// Snapshot returns a consistent copy of all config values.
-// OutputChainConfig is the output chain's settings as plain values.
-//
-// A dedicated accessor rather than reading them off Snapshot(), because
-// ConfigMessage's fields are POINTERS — they have to be, since 0.0 and false
-// are legitimate settings for every one of these keys and must be
-// distinguishable from absent on the wire. Plain values are what the consumer
-// wants, and unwrapping seven pointers at the call site is where a nil deref
-// waits.
-type OutputChainConfig struct {
-	EqBands          []float64
-	EqLoudness       bool
-	LimiterEnabled   bool
-	LimiterThreshold float64
-	LimiterRelease   float64
-	BassGuardEnabled bool
-	BassGuardDb      float64
-	// Resolved against the plug position by the speaker, not here — this
-	// struct is what the controller pushed, and the jack is not its business.
-	BassGuardJackBypass bool
-}
-
-// OutputChain returns the current output-chain settings.
-//
-// EqBands is COPIED, never returned by reference: the caller reads it outside
-// the lock while Apply() may be writing the same slice. That is the C4 bug
-// noted on Snapshot below, and a slice makes it easier to reintroduce than a
-// bool did.
-func (d *Device) OutputChain() OutputChainConfig {
+// WakeSoundSetting reports whether the wake sound is on, and at what level.
+func (d *Device) WakeSoundSetting() (on bool, level string) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return OutputChainConfig{
-		EqBands:             append([]float64(nil), d.EqBands...),
-		EqLoudness:          d.EqLoudness,
-		LimiterEnabled:      d.LimiterEnabled,
-		LimiterThreshold:    d.LimiterThreshold,
-		LimiterRelease:      d.LimiterRelease,
-		BassGuardEnabled:    d.BassGuardEnabled,
-		BassGuardDb:         d.BassGuardDb,
-		BassGuardJackBypass: d.BassGuardJackBypass,
+	return d.WakeSound, d.WakeSoundLevel
+}
+
+// applyOutput merges the output-chain keys. Every one of them has a
+// legitimate zero — a flat band, a 0dBFS threshold, "off" — so each is a
+// pointer (or a slice) and absent means untouched. eqBands shorter than
+// NumBands pads with 0, as em_eq does; longer is truncated.
+func applyOutput(p *outchain.Params, msg ConfigMessage) {
+	if msg.EqBands != nil {
+		var b [outchain.NumBands]float64
+		copy(b[:], msg.EqBands)
+		p.Bands = b
+	}
+	if msg.EqLoudness != nil {
+		p.Loudness = *msg.EqLoudness
+	}
+	if msg.BassGuardEnabled != nil {
+		p.GuardEnabled = *msg.BassGuardEnabled
+	}
+	if msg.BassGuardDb != nil {
+		p.GuardDB = *msg.BassGuardDb
+	}
+	if msg.LimiterEnabled != nil {
+		p.LimiterEnabled = *msg.LimiterEnabled
+	}
+	if msg.LimiterThreshold != nil {
+		p.LimiterThresholdDB = *msg.LimiterThreshold
+	}
+	if msg.LimiterRelease != nil {
+		p.LimiterReleaseMS = *msg.LimiterRelease
+	}
+	// Policy rather than audio — the speaker resolves it against the plug
+	// position (outchain.Params.ForJack), which is not the controller's to
+	// know. Merged here because it arrives on the same push.
+	if msg.BassGuardJackBypass != nil {
+		p.GuardBypassOnJack = *msg.BassGuardJackBypass
 	}
 }
 
+// OutputChain returns the output chain's current configuration.
+func (d *Device) OutputChain() outchain.Params {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.Output
+}
+
+// Snapshot returns a consistent copy of all config values.
 func (d *Device) Snapshot() ConfigMessage {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -622,44 +592,46 @@ type ConfigMessage struct {
 	//
 	// Written to disk for init like the password above, and ignored on
 	// FireOS, which uses adbd.
-	ConsoleTimeoutMin *int     `json:"consoleTimeoutMin,omitempty"`
-	BargeInEnabled    *bool    `json:"bargeInEnabled,omitempty"`
-	BargeInThreshold  float64  `json:"bargeInThreshold,omitempty"`
-	DuckDb            *float64 `json:"duckDb,omitempty"`
-	// Output chain. Every one is a POINTER: 0.0 is a legitimate value for
-	// every band and for the limiter threshold, and false is legitimate
-	// for both toggles, so the usual "non-zero means set" rule cannot
-	// distinguish "set to zero" from "absent" for any of them.
-	EqBands          []float64 `json:"eqBands,omitempty"`
-	EqLoudness       *bool     `json:"eqLoudness,omitempty"`
-	LimiterEnabled   *bool     `json:"limiterEnabled,omitempty"`
-	LimiterThreshold *float64  `json:"limiterThreshold,omitempty"`
-	LimiterRelease   *float64  `json:"limiterRelease,omitempty"`
-	BassGuardEnabled *bool     `json:"bassGuardEnabled,omitempty"`
-	BassGuardDb      *float64  `json:"bassGuardDb,omitempty"`
 	// A pointer like every other bool here: false is the DEFAULT and the
 	// meaningful value to be able to send back, so `omitempty` on a plain
 	// bool would make turning it off indistinguishable from not sending it.
-	BassGuardJackBypass *bool    `json:"bassGuardJackBypass,omitempty"`
-	BeamAngle           *float64 `json:"beamAngle,omitempty"`
-	BeamformingEnabled  *bool    `json:"beamformingEnabled,omitempty"`
-	HasBeamforming      bool     `json:"hasBeamforming,omitempty"`
-	AgcEnabled          *bool    `json:"agcEnabled,omitempty"`
-	AecEnabled          *bool    `json:"aecEnabled,omitempty"`
-	AecDelayMs          *int     `json:"aecDelayMs,omitempty"`
-	AecTailMs           int      `json:"aecTailMs,omitempty"`
-	AecRefSource        string   `json:"aecRefSource,omitempty"`
-	BleProxyEnabled     *bool    `json:"bleProxyEnabled,omitempty"`
-	SendspinEnabled     *bool    `json:"sendspinEnabled,omitempty"`
-	SpotifyEnabled      *bool    `json:"spotifyEnabled,omitempty"`
-	SpotifyName         string   `json:"spotifyName,omitempty"`
-	AirplayEnabled      *bool    `json:"airplayEnabled,omitempty"`
-	Airplay2Enabled     *bool    `json:"airplay2Enabled,omitempty"`
-	AirplayName         string   `json:"airplayName,omitempty"`
+	BassGuardJackBypass *bool  `json:"bassGuardJackBypass,omitempty"`
+	SendspinEnabled     *bool  `json:"sendspinEnabled,omitempty"`
+	SpotifyEnabled      *bool  `json:"spotifyEnabled,omitempty"`
+	SpotifyName         string `json:"spotifyName,omitempty"`
+	AirplayEnabled      *bool  `json:"airplayEnabled,omitempty"`
+	Airplay2Enabled     *bool  `json:"airplay2Enabled,omitempty"`
+	AirplayName         string `json:"airplayName,omitempty"`
 	// Pointer, no omitempty: false is a meaningful value here and a plain
 	// bool would make "turn it off" indistinguishable from "not mentioned".
-	AirplayVolumeControl *bool `json:"airplayVolumeControl"`
-	SpotifyVolumeControl *bool `json:"spotifyVolumeControl"`
+	AirplayVolumeControl *bool    `json:"airplayVolumeControl"`
+	SpotifyVolumeControl *bool    `json:"spotifyVolumeControl"`
+	ConsoleTimeoutMin    *int     `json:"consoleTimeoutMin,omitempty"`
+	BargeInEnabled       *bool    `json:"bargeInEnabled,omitempty"`
+	BargeInThreshold     float64  `json:"bargeInThreshold,omitempty"`
+	DuckDb               *float64 `json:"duckDb,omitempty"`
+	BeamAngle            *float64 `json:"beamAngle,omitempty"`
+	BeamformingEnabled   *bool    `json:"beamformingEnabled,omitempty"`
+	HasBeamforming       bool     `json:"hasBeamforming,omitempty"`
+	AgcEnabled           *bool    `json:"agcEnabled,omitempty"`
+	AecEnabled           *bool    `json:"aecEnabled,omitempty"`
+	AecDelayMs           *int     `json:"aecDelayMs,omitempty"`
+	AecTailMs            int      `json:"aecTailMs,omitempty"`
+	AecRefSource         string   `json:"aecRefSource,omitempty"`
+	BleProxyEnabled      *bool    `json:"bleProxyEnabled,omitempty"`
+	// WakeSound: a pointer so "off" is distinguishable from absent.
+	WakeSound      *bool  `json:"wakeSound,omitempty"`
+	WakeSoundLevel string `json:"wakeSoundLevel,omitempty"`
+
+	// Output chain (internal/outchain). Pointers because zero is a real
+	// setting for every one of them; see applyOutput.
+	EqBands          []float64 `json:"eqBands,omitempty"`
+	EqLoudness       *bool     `json:"eqLoudness,omitempty"`
+	BassGuardEnabled *bool     `json:"bassGuardEnabled,omitempty"`
+	BassGuardDb      *float64  `json:"bassGuardDb,omitempty"`
+	LimiterEnabled   *bool     `json:"limiterEnabled,omitempty"`
+	LimiterThreshold *float64  `json:"limiterThreshold,omitempty"`
+	LimiterRelease   *float64  `json:"limiterRelease,omitempty"`
 
 	// ListeningAnim: raw led_anim spec for the listening ring (#263).
 	// Carried as raw JSON so this package does not depend on the

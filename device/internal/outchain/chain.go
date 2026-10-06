@@ -42,7 +42,11 @@ const fadeMS = 40.0
 // Params is the whole chain's settable state — seven config keys describing
 // the audio, plus one describing when to bypass part of it.
 type Params struct {
-	Bands              []float64
+	// Bands is an ARRAY, not a slice, so Params is comparable and copies by
+	// value: the chain hands parameter sets between goroutines and keeps a
+	// clone of the one it is fading from, and a shared backing array there
+	// would be aliasing nothing in the type says is there.
+	Bands              [NumBands]float64
 	Loudness           bool
 	LimiterEnabled     bool
 	LimiterThresholdDB float64
@@ -106,24 +110,12 @@ func (p Params) ForJack(inserted bool) Params {
 // a redundant push costs one comparison rather than a crossfade. The
 // controller re-sends the whole config on every change and on every reconnect.
 func (p Params) Equal(o Params) bool {
-	if len(p.Bands) != len(o.Bands) {
-		return false
-	}
-	for i := range p.Bands {
-		if p.Bands[i] != o.Bands[i] {
-			return false
-		}
-	}
-	return p.Loudness == o.Loudness &&
-		p.LimiterEnabled == o.LimiterEnabled &&
-		p.LimiterThresholdDB == o.LimiterThresholdDB &&
-		p.LimiterReleaseMS == o.LimiterReleaseMS &&
-		p.GuardEnabled == o.GuardEnabled &&
-		p.GuardDB == o.GuardDB
-	// GuardBypassOnJack is deliberately absent: it is policy, not audio, and
-	// ForJack has already turned it into a GuardEnabled above. Comparing it
-	// here would report a difference no listener can hear and buy a crossfade
-	// for it.
+	// GuardBypassOnJack is deliberately zeroed on both sides rather than
+	// compared: it is policy, not audio, and ForJack has already turned it
+	// into a GuardEnabled above. Comparing it would report a difference no
+	// listener can hear and buy a crossfade for it.
+	p.GuardBypassOnJack, o.GuardBypassOnJack = false, false
+	return p == o
 }
 
 // stages is one complete signal path. Cloning one gives a second path with
@@ -138,7 +130,7 @@ type stages struct {
 
 func newStages(sampleRate int, p Params) *stages {
 	return &stages{
-		eq:    NewEQ(sampleRate, p.Bands, p.Loudness),
+		eq:    NewEQ(sampleRate, p.Bands[:], p.Loudness),
 		guard: NewBassGuard(sampleRate, p.GuardDB, p.GuardEnabled),
 		lim: NewLimiter(sampleRate, p.LimiterThresholdDB,
 			p.LimiterReleaseMS, p.LimiterEnabled),
@@ -163,7 +155,7 @@ func (s *stages) clone(p Params) *stages {
 		guard: s.guard.clone(),
 		lim:   s.lim.clone(),
 	}
-	c.eq.SetBands(p.Bands, p.Loudness)
+	c.eq.SetBands(p.Bands[:], p.Loudness)
 	c.guard.SetParams(p.GuardDB, p.GuardEnabled)
 	c.lim.SetParams(p.LimiterThresholdDB, p.LimiterReleaseMS, p.LimiterEnabled)
 	return c
@@ -207,6 +199,12 @@ type Chain struct {
 	pending     Params
 	havePending bool
 
+	// active is the ack-negotiated gate — see SetActive. Set from the
+	// control plane and read by Process on the audio goroutine; both run
+	// under the speaker's own lock (bindings/speaker/outputchain.go), which
+	// is what keeps this a plain bool.
+	active bool
+
 	scratch []float64
 }
 
@@ -215,7 +213,7 @@ type Chain struct {
 func (c *Chain) SetParams(p Params) {
 	if c.haveNext {
 		if !p.Equal(c.nextP) {
-			c.pending, c.havePending = clonedParams(p), true
+			c.pending, c.havePending = p, true
 		} else {
 			c.havePending = false
 		}
@@ -227,14 +225,7 @@ func (c *Chain) SetParams(p Params) {
 	c.startFade(p)
 }
 
-func clonedParams(p Params) Params {
-	q := p
-	q.Bands = append([]float64(nil), p.Bands...)
-	return q
-}
-
 func (c *Chain) startFade(p Params) {
-	p = clonedParams(p)
 	c.next = c.cur.clone(p)
 	c.nextP = p
 	c.haveNext = true
@@ -250,6 +241,12 @@ func (c *Chain) Fading() bool { return c.haveNext }
 func (c *Chain) Process(x []float64) []float64 {
 	if len(x) == 0 {
 		return nil
+	}
+	// Inactive is a passthrough, bit for bit: the caller's own slice back,
+	// untouched. See SetActive — while the controller still shapes, anything
+	// done here is the second of two chains.
+	if !c.active {
+		return x
 	}
 	if !c.haveNext {
 		return c.cur.process(x)
@@ -366,4 +363,94 @@ func (l *Limiter) clone() *Limiter {
 	}
 	c.tail = append([]float64(nil), l.tail...)
 	return c
+}
+
+// DefaultParams is what the chain runs on before any config arrives.
+//
+// It MIRRORS the controller's DEFAULT_DEVICE_CONFIG, and that is the whole
+// point of it being here rather than inline at the call site: a device that
+// announces `output_chain` shapes its own audio from the first period, before
+// the config push lands, so these values are what plays during that window.
+// A device that sounded different for the first seconds after every reconnect
+// would be a fault nobody could attribute. `tests/test_outchain_standdown.py`
+// reads this function and compares it against em_db.DEFAULT_DEVICE_CONFIG.
+//
+// Bands and Loudness are deliberately absent: Go's zero values are flat and
+// off, which is what the controller stores.
+func DefaultParams() Params {
+	return Params{
+		GuardEnabled:       true,
+		GuardDB:            -30,
+		LimiterEnabled:     true,
+		LimiterThresholdDB: -1,
+		LimiterReleaseMS:   150,
+	}
+}
+
+// New builds a chain at DefaultParams, INACTIVE.
+//
+// Inactive is the state every device starts in and the state it stays in
+// under a controller that still shapes the audio itself. See SetActive.
+func New(sampleRate int) *Chain {
+	c := NewChain(sampleRate, DefaultParams())
+	return c
+}
+
+// SetActive turns processing on or off, and is the device's half of a
+// negotiation that runs BOTH WAYS.
+//
+// The device announcing `output_chain` says it CAN run the chain. It may only
+// run it once the controller's ack carries the same feature, which is the
+// controller saying it has stopped — either half alone keeps the old path,
+// and both together must never process the same audio twice. Two chains in
+// series is two limiters in series: the second works against gain reduction
+// the first already applied, and the bass guard's law fires against a signal
+// its own band has already been removed from.
+//
+// Off is a passthrough, bit for bit. Crossing in either direction resets the
+// stages, because state learnt on one side of the handover belongs to audio
+// the other side never processed.
+func (c *Chain) SetActive(on bool) {
+	if on == c.active {
+		return
+	}
+	c.active = on
+	c.reset()
+}
+
+// Active reports whether the chain is shaping.
+func (c *Chain) Active() bool { return c.active }
+
+// reset drops every carried state and any fade in flight.
+func (c *Chain) reset() {
+	c.cur = newStages(c.rate, c.curP)
+	c.next, c.haveNext, c.havePending = nil, false, false
+	c.fadePos = -1
+}
+
+// Stats is the chain's instrumentation: the WORK done, as against Params,
+// which is what it was set to. A stage that is on and reports 0.00dB never
+// engaged, which is a different fault from one that is off — and the two are
+// indistinguishable from a listening seat.
+type Stats struct {
+	GuardReductionDB   float64
+	LimiterReductionDB float64
+	// Clipped counts samples the final clip caught. While the limiter is
+	// enabled it must stay 0 — see Limiter.Clipped for why the counter alone
+	// is not the whole claim.
+	Clipped int
+}
+
+// TakeStats returns the worst reductions since the last call and clears them.
+// Audio goroutine only, like Process.
+func (c *Chain) TakeStats() Stats {
+	lim, guard := c.MaxReductionDB()
+	s := Stats{
+		GuardReductionDB:   guard,
+		LimiterReductionDB: lim,
+		Clipped:            c.cur.lim.Clipped,
+	}
+	c.cur.lim.MaxReductionDB = 0
+	c.cur.guard.ResetMaxReduction()
+	return s
 }

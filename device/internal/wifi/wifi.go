@@ -59,6 +59,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -283,6 +284,18 @@ func composeConf(ssid []byte, psk string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
+// writeMarker creates the marker's directory first. Android's init.rc makes
+// /data/local/tmp on every boot and emOS's init does not, so on an Echo that
+// never ran FireOS the directory is absent and every WiFi change was refused
+// (upstream #632). 0771 is Android's own mode for it; an existing one is left
+// alone.
+func writeMarker(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o771); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
 func writeConf(content string) error {
 	// Traverse bit on the dir — 666 here made every file inside
 	// unopenable (provisioning finding).
@@ -478,7 +491,7 @@ func Change(ssidBytes []byte, psk string, connected func() bool) {
 		return
 	}
 	mk, _ := json.Marshal(marker{NewSSID: ssid, StartedAt: time.Now().Unix()})
-	if err := os.WriteFile(markerPath, mk, 0o600); err != nil {
+	if err := writeMarker(markerPath, mk); err != nil {
 		setResult(Result{OK: false, SSID: ssid, Error: fmt.Sprintf("cannot write pending marker: %v", err)})
 		return
 	}

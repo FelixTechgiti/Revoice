@@ -99,6 +99,28 @@ kleine Lautsprecher des Dots ist von Haus aus dröhnend und dumpf.
 Eine zusätzliche Präsenzanhebung für gesprochene Antworten. Probiere es, wenn
 Antworten aus der Entfernung dumpf klingen.
 
+### Speak while the reply is written
+Off by default. When it is off, the Dot starts speaking once Home Assistant
+has the whole reply. When it is on, it starts as soon as Home Assistant has the
+first sentence, so a long reply begins sooner. The gain is the time between the
+first words and the last, less about a second for the first sentence to be
+synthesised, and a short reply gains little.
+
+Home Assistant only offers this when both the conversation agent and the
+text-to-speech engine can stream. If either cannot, the setting has no effect
+and the reply plays when it is complete, as before.
+
+**The catch is speed.** Speech reaches the speaker no faster than it is
+produced. A model that writes more slowly than the reply is spoken (very
+roughly under four tokens a second), or a text-to-speech engine slower than
+realtime, leaves the Dot with nothing to play between sentences. It waits in
+silence and carries on when the next part arrives, so the reply is not lost, but
+it pauses. Try it with a few long replies. If they come out in fits and starts,
+turn it off.
+
+With it on, the 30 seconds the controller waits for a reply to begin only has to
+be met by the first words.
+
 ### Speaker protection
 Hält Bass, den der Treiber nicht liefern kann, davon ab, alles darüber zu
 vermatschen. Lass es an.
@@ -325,6 +347,23 @@ jedes Aufwachen mit rund 364 ms, selbst ohne Konkurrenz, und Felddaten zeigten,
 dass der Gewinner nach Signal-Rausch-Abstand ein *schlechteres* Transkript
 lieferte als das Gerät, das dich schlicht zuerst gehört hatte.
 
+### Wake sound
+Plays a short rising tone when the Echo hears the wake word. Off by
+default, because it adds a beat between the wake word and the request. It's
+there first as an accessibility option: without it the ring is the only sign
+the Echo is listening, which is no help from the next room or to someone who
+cannot see it.
+
+**Wake sound level** sets it to Quiet, Medium or Loud. The level is the
+same whatever the Echo's volume is set to, so a turned-down Echo still
+confirms it heard you.
+
+Only the Echo that answers plays it: one that stands down for another (see
+**Arbitration window**), or that has no Home Assistant behind it, stays
+silent. That means the Echo waits to hear back from the controller first,
+one network round trip. Needs firmware that announces `wake_cue`; on older
+firmware the toggle is disabled and says so.
+
 ### Sensitivity (Precise ↔ Eager)
 Die Vertrauensschwelle, die der Erkenner überschreiten muss.
 
@@ -344,7 +383,10 @@ das Wakeword, während er dir einen Absatz vorliest (oder noch über deine
 letzte Frage nachdenkt), und er hält an und hört zu. **Schalte zuerst Echo
 cancel (AEC) ein**: Barge-in funktioniert, indem die Mikrofone scharf bleiben,
 während das Gerät spricht, und AEC ist das, was es davon abhält, sich selbst
-zu hören.
+zu hören. Steht der Echo auf **Auf diesem Echo**, hört er selbst auf die
+Unterbrechung, und während die Antwort läuft, geht nichts hinaus, solange er
+das Wakeword nicht hört.
+
 
 Die **Barge-Schwelle** ist das Wake-Vertrauen, das während der Wiedergabe
 nötig ist, und sie liegt entgegen der Intuition *unter* der normalen
@@ -400,76 +442,51 @@ Versuch wert, wenn die Wake-Erkennung dort unzuverlässig ist. Standardmäßig
 aus — eine „ausprobieren und vergleichen"-Option.
 
 ### Wake word detection
-Wer entscheidet, dass du das Wakeword gesagt hast. Drei Einstellungen:
+Wo das Wakeword gehört wird. Pro Echo einstellbar, zwei Möglichkeiten:
 
-- **Controller** (Standard) — der Dot streamt Ton, und der Controller hört zu.
-  Was Revoice immer getan hat.
-- **Both (compare)** — der Echo lässt *ebenfalls* dasselbe Modell über
-  denselben Ton laufen und meldet, was er erkannt hätte, ohne darauf zu
-  handeln. Er löst nie ein Gespräch aus. Das ist die Einstellung, mit der man
-  anfängt: Sie sagt dir, ob die Erkennung auf dem Gerät auf deiner Hardware,
-  in deinem Raum vertrauenswürdig ist, bevor irgendetwas davon abhängt.
-- **On device** — der Echo entscheidet, und der Controller startet das
-  Gespräch auf sein Wort hin.
+- **Auf diesem Echo** (Voreinstellung für neue Installationen) — der Echo
+  horcht selbst auf das Wakeword und **schickt nichts, bis er es hört**.
+  Danach schickt er, was du sagst, bis du aufhörst zu sprechen, und geht von
+  allein zurück ins Zuhören. Auch das Hineinreden in eine Antwort (Barge-in)
+  hört der Echo selbst.
+- **Auf dem Controller** — der Echo **streamt sein Mikrofon dauerhaft an den
+  Controller**, über dein Netzwerk, und der Controller hört zu. So hat
+  Revoice vor dem privaten Zuhören gearbeitet, und bestehende Installationen
+  behalten diese Einstellung, bis du sie änderst.
 
-**Warum du „On device" wollen könntest.** Die Wake-Entscheidung überquert dein
-Netzwerk nicht mehr, wird also nicht von einem schlechten Moment auf der
-Strecke verzögert. Auf einer grenzwertigen Verbindung ist das der Unterschied
-zwischen einem Dot, der zügig reagiert, und einem, der unvorhersehbar hängt.
+Unter der Einstellung steht eine Zeile, was der Echo gerade wirklich tut —
+aus seiner eigenen Meldung, nicht aus der Konfiguration: privat zuhörend,
+sendend, oder **nur per Taste** mitsamt Grund. Die Startseite hat eine Zeile
+für die ganze Flotte, etwa *1 von 3 Echos sendet dauerhaft*. Die vollständigen
+Regeln, auch wann genau Ton einen Echo verlässt, stehen in
+[listening.md](listening.md).
 
-Sei dir im Klaren darüber, was es **nicht** tut:
-
-- **Es verringert den Netzwerkverkehr nicht.** Der Ton streamt weiterhin
-  durchgehend, weil der Controller den Rest des Gesprächs führt.
-- **Es funktioniert nicht ohne Controller weiter.** Das Wakeword ist nur der
-  erste Schritt; das Gespräch selbst braucht den Controller für Home
-  Assistant, den Mikrofonstrom und die gesprochene Antwort. Ein Aufwachen,
-  während der Controller weg ist, lässt den Ring leuchten und führt nirgendwo
-  hin.
-
-Der Controller hört weiterhin mit, was den Vergleich in **Activity** am Laufen
-hält, damit du siehst, ob die beiden übereinstimmen. Das kostet nichts
-*Zusätzliches* — es ist dieselbe Arbeit, die der Controller im Modus
-**Controller** ohnehin tat —, aber es ist Arbeit, die nicht mehr zwingend
-nötig ist, sobald du dem Gerät traust, und auf einer ausgelasteten
-Home-Assistant-Maschine willst du sie vielleicht nicht bezahlen. **Both
-(compare)** ist der Modus zum Messen; überlege, dorthin zurückzugehen, wenn du
-die Zahlen willst, statt sie ewig laufen zu lassen.
-
-Barge-in — eine Antwort durch Darüberreden zu unterbrechen — wird in jedem
-Modus vom Controller bewertet und ist von dieser Einstellung unberührt.
-
-Jede Zeile eines Sprachgesprächs in **Activity** zeigt beide Werte
-nebeneinander, und die Aktivitäts-API je Gerät liefert eine Zusammenfassung
-der Übereinstimmung (wie oft sie übereinstimmten, wie weit sie in
-Millisekunden auseinanderlagen, und Überschreitungen, die das Gerät sah und
-die nie ein Gespräch wurden).
-
-**Vorbehalt bei mehreren Geräten.** Wenn mehrere Echos einander hören können,
-stell vorerst nur einen auf **On device**. Die Regel, die verhindert, dass
-zwei Dots gleichzeitig antworten, beurteilt Ansprüche noch danach, wann sie
-eintreffen, und nicht danach, wann jeder Echo dich tatsächlich gehört hat —
-ein Gerät, dessen Nachricht verzögert wurde, kann also gegen eines verlieren,
-das dich schlechter gehört hat. Bei einem einzelnen so eingestellten Gerät
-oder bei Echos, die einander nicht hören, gilt das nicht.
-
-Drei Dinge, die du wissen solltest, bevor du Controller verlässt:
+Was du über **Auf diesem Echo** wissen solltest:
 
 - **Es braucht Dateien auf dem Dot**, die nicht Teil der Firmware sind — ONNX
   Runtime plus die Wakeword-Modelle, etwa 15 MB, abgelegt unter
-  `/data/local/share/revoice/oww`. Sie sind bewusst nicht im Firmware-Image,
-  denn das würde sowohl den Download als auch den Platz verdoppeln, den jeder
-  der beiden Firmware-Slots braucht. Bis sie da sind, tut die Einstellung
-  nichts, und das Gerätelog sagt, welche Datei fehlt.
-- **Es kostet dauerhaft etwa einen halben CPU-Kern**, weil der Wake-Strom
-  immer läuft. Gemessen auf einem Echo Dot Gen 2, der die Kapazität dafür hat
-  — die Mikrofonpipeline war über Stunden Nutzung unbeeinflusst, auch während
-  der Musikwiedergabe —, aber aktiviere es **auf einem Gerät nach dem
-  anderen** und beobachte das Feld **Resources** im Status-Reiter.
-- **Es braucht aktuelle Firmware**, und die beiden Einstellungen brauchen
-  unterschiedliche Jahrgänge: Das Bewerten kam vor dem Auslösen. Jede Option
-  ist auf einem Echo, dessen Firmware sie nicht kann, deaktiviert und sagt das
-  auch, statt so zu tun, als funktioniere sie.
+  `/data/local/share/revoice/oww`. Der Controller installiert sie, sobald der
+  Echo sich verbindet. Bis sie da sind, ist der Echo **nur per Taste**
+  bedienbar: Er fällt nicht still aufs Senden zurück, und das Dashboard sagt,
+  warum.
+- **Es kostet den Echo dauerhaft etwa 0,4 eines CPU-Kerns**, weil er das
+  Zuhören jetzt selbst erledigt. Der Dot 2 hat Luft dafür; das Feld
+  **Resources** im Status-Reiter zeigt es.
+- **Es braucht aktuelle Firmware.** Ältere Firmware sendet in jedem Modus
+  dauerhaft, und das Dashboard weist sie als sendend aus, mit „Firmware
+  aktualisieren für privates Zuhören", bis du es tust.
+- **Ein Fehlauslöser schickt ein paar Sekunden Ton, die du nicht gemeint
+  hast.** Das gilt für jedes Wakeword-System, Amazons eingeschlossen.
+- **In Activity gibt es für diese Gespräche keinen Controller-Wert**, und der
+  Zähler für Beinahe-Treffer zeigt `—`: Der Controller hört den Ton nie, es
+  gibt also nichts zu vergleichen.
+
+**Gemischte Flotten sind in Ordnung.** Weckt eine Äußerung mehrere Echos, so
+antwortet der, der dich **zuerst gehört hat** — gleich auf welcher Seite
+erkannt wurde. Ansprüche werden danach verglichen, wann der Ton aufgenommen
+wurde, nicht wann die Nachricht ankam, eine langsame Verbindung gibt die
+Antwort also nicht mehr an den falschen Raum.
+
 
 ---
 
@@ -697,7 +714,14 @@ sie bleibt von diesem Pfad verbannt).
 
 ### Sprachgatter
 
-Entscheidet, wann eine Äußerung per Tastendruck beginnt und endet:
+Entscheidet, wann eine Äußerung per Tastendruck oder als Nachfrage beginnt
+und endet. Auf aktueller Firmware entscheidet der Dot mit einem kleinen
+Sprachmodell (Silero), ob etwas Sprache ist, sobald der Controller es neben
+den Wakeword-Dateien installiert hat — lauter Nicht-Sprache wie heruntergeregelte
+Musik, ein Lüfter oder der Fernseher hält ein Gespräch dann nicht mehr offen.
+Der **Schwellwert** unten ist danach nur noch der Rückfall, bis das Modell
+installiert ist; die beiden Zeiten gelten in beiden Fällen:
+
 
 - **Threshold** — wie laut als „Sprache" zählt. Gemessen in Einheiten vor der
   Verstärkung (die Mikrofonverstärkung ändert nicht, was diese Zahl bedeutet).
@@ -744,6 +768,12 @@ Zwei Dinge vor dem Aktivieren:
   Verbindung zum Auslesen brauchen (manche smarten Schlösser, ältere
   BLE-Geräte), werden nicht unterstützt — Sensoren auf Advertisement-Basis und
   Anwesenheitserkennung schon.
+- WLAN und Bluetooth des Dots **teilen sich eine Antenne**, und das Scannen
+  kostet die WLAN-Verbindung. Deshalb **pausiert der Scan automatisch**,
+  während der Dot dir zuhört, während eine Antwort ankommt und während seine
+  Konsole oder ein Update läuft, und läuft danach weiter; die
+  Anwesenheitserkennung verliert pro Sprachgespräch ein paar Sekunden.
+
 
 Die Diagnose liegt im Reiter **Status** des Geräts (Feld
 „Bluetooth proxy"): Scannerzustand, gesehene Advertisements, Anzahl der Geräte
@@ -772,33 +802,44 @@ verschwindet und zurückkommt.
 ### Static controller endpoint
 
 Devices normally find the controller with link-local mDNS. If a device
-reaches the controller through a routed tunnel or an isolated VLAN where
-mDNS cannot cross, create `/data/local/etc/echomuse/controller.json` on the
-device with an ordered list of endpoints:
+reaches the controller through a routed tunnel or an isolated VLAN where mDNS
+cannot cross, list the controller's address under **Config → Advanced →
+Controller address**. It applies to the whole fleet, with no per-device
+override:
+
+- Each entry is an IP address or a host name, with the device port and the
+  encrypted (TLS) port. They start as this controller's own; a TLS port of `0`
+  means that address has no encrypted listener.
+- Echos try the addresses in order, twice each, then look for the controller
+  by mDNS once before starting again. A wrong address therefore slows a
+  reconnect down; it cannot leave an Echo unable to find its controller.
+- Saving writes the list to every connected Echo straight away; the rest get
+  it when they next connect. An Echo uses it from its next reconnect, with no
+  restart. The provisioning wizard writes it to a new Echo as it stands when
+  the wizard runs.
+- Needs firmware v2.16.0 or later. Older firmware ignores it and uses mDNS.
+
+The list lands on the device as `/data/local/etc/echomuse/controller.json`,
+which the firmware re-reads on every reconnect attempt. You can still write
+that file by hand, for example to turn the mDNS fallback off for a test fleet
+that must never reach another controller:
 
 ```json
 {
   "endpoints": [
     {"host": "10.20.40.110", "port": 8767, "tls_port": 8770},
-    {"host": "10.20.40.111", "port": 8767, "tls_port": 8770},
     {"host": "controller.example.internal", "port": 8767, "tls_port": 8770}
-  ]
+  ],
+  "mdns": false
 }
 ```
 
-A static address, a backup address and a DNS name all behave identically —
-list them in whatever order you want tried first. When this file is present
-and valid, the device skips mDNS and dials the first endpoint, even while
-it's initially unreachable, so a device-local tunnel can finish starting
-without leaving EchoMuse stranded in the mDNS retry loop. If an endpoint
-stays unreachable, the device falls through to the next one in the list on
-the following retry rather than pinning to a stale address; each `tls_port`
-may be `0` when that controller's encrypted device listener is disabled.
-
-The file is re-read on every reconnect attempt, so editing it (or removing
-it, to restore automatic mDNS discovery) takes effect on the device's next
-retry — no restart needed, which matters most on exactly the device this
-feature is for: one that can't currently reach its controller.
+The dashboard list wins. While it is empty the controller leaves a
+hand-written file alone; once you set a list, it replaces the file on every
+Echo, including any hand edits. The provisioning wizard goes further: it
+writes the list as set, and with none set it removes any `controller.json`
+the device already has, so a device from a previous setup cannot carry
+another controller's addresses.
 
 ---
 
@@ -812,7 +853,7 @@ Neustart des Controllers:
 | `SERVER_IP` | Die LAN-IP des Controller-Rechners — die Adresse, zu der Geräte verbinden sollen. Leer lassen, um sie von diesem Host zu erkennen; der Controller weigert sich zu starten, statt eine geratene Adresse anzukündigen, und warnt, wenn die erkannte nach einer Container-Bridge aussieht. |
 | `OWW_MODEL` / `OWW_THRESHOLD` | Startvoreinstellungen für Wakeword und Empfindlichkeit — die Werte im Dashboard überschreiben sie. |
 | `DEVICE_APPROVAL` | `strict` (du gibst jedes neue Gerät frei — empfohlen) oder `auto`. |
-| `SERVER_TLS_PORT` | Port für die verschlüsselte Geräteverbindung (wss) — Standard 8770, `0` schaltet ab. Geräte wechseln automatisch dorthin, sobald sie aufgespielte Zugangsdaten halten (Installation über den Assistenten oder die Schaltfläche **Secure link** im Status-Reiter des Geräts). |
+| `SERVER_TLS_PORT` | Port für die verschlüsselte Geräteverbindung (wss) — Standard 8770, `0` schaltet ab. Geräte wechseln automatisch dorthin, sobald sie Zugangsdaten halten: aus dem Einrichtungsassistenten, aus der Freigabe eines neuen Geräts, oder aus dem Koppeln (Aktionstaste des Echos 5 s halten, dann **Kopplung freigeben**). |
 | `REQUIRE_DEVICE_TLS` | Setze es auf `1` **erst, wenn jedes Gerät in seinem Status-Reiter „wss (TLS)" zeigt** — ab dann weist der Controller unverschlüsselte oder tokenlose Geräteverbindungen ab. |
 | `EM_EXTRA_CA_CERT` | Pfad zu einem PEM-CA-Zertifikat, dem vertraut werden soll — nötig, wenn Home Assistant oder ein Medienserver, von dem du streamst, per HTTPS mit deiner eigenen internen Zertifizierungsstelle ausgeliefert wird. Siehe unten. |
 
@@ -931,7 +972,10 @@ Anfrage, sie fragt GitHub also weiterhin, wenn du sie drückst.
 ### Was nie hinausgeht
 
 - **Sprachton und Transkripte.** Der Mikrofonton geht vom Gerät zu deinem
-  Controller und weiter zu deinem Home Assistant, über dein LAN. Was danach
+  Controller und weiter zu deinem Home Assistant, über dein LAN — bei einem
+  Echo auf **Auf diesem Echo** erst, nachdem er das Wakeword gehört hat, und
+  nur bis du aufhörst zu sprechen; bei einem auf **Auf dem Controller**
+  dauerhaft an den Controller. Was danach
   passiert, ist, was deine Assist-Pipeline tut — wenn du HA für eine
   Cloud-Spracherkennung konfiguriert hast, schickt HA ihn dorthin. Revoice
   selbst schickt ihn nirgendwohin außer zu HA.

@@ -8,6 +8,7 @@ Durchläufe sind willkommen.
 |---|---|
 | [Schnellstart](quickstart.md) | Von null bis zum Gespräch mit deinem Dot: Controller installieren, Ersteinrichtung, Gerät freigeben, Home Assistant anbinden, Alltag. |
 | [Konfigurationsleitfaden](configuration.md) | Jede Einstellung im Dashboard verständlich erklärt — was sie tut, wann man sie anfasst und wie man sie abstimmt. Am Ende steht [was dein Netzwerk verlässt](configuration.md#was-dein-netzwerk-verlässt) — es gibt keine Telemetrie, und die eine ausgehende Verbindung wird beim Namen genannt. |
+| [Zuhören und Privatsphäre](listening.md) | Wann genau Ton einen Echo verlässt: Wakeword-Erkennung auf dem Echo (die Voreinstellung) oder auf dem Controller, was der Status jedes Echos bedeutet und was man ehrlicherweise behaupten kann. Zugleich die Spezifikation, an der der Code gemessen wird. |
 | [Die Sprachpipeline, erklärt](voice-pipeline.md) | Wie deine Stimme von den Mikrofonen zu Home Assistant und zurück reist, Stufe für Stufe, mit Nutzen und Haken jeder Entwurfsentscheidung. |
 | [FAQ](faq.md) | Kurze Antworten und Umgehungen für das, was am häufigsten aufkommt — verweigertes Rooting, gescheiterte Assistentenschritte, Update-Probleme, Wakeword-Abstimmung, Privatsphäre. Vor einem Issue hier nachsehen. |
 | [Abnahmetests](uat.md) | Eine Checkliste, um zu bestätigen, dass Revoice auf deiner Hardware tut, was es verspricht — und wie du meldest, was nicht funktioniert. Enthält die bekannten Fehler, die kein weiteres Issue brauchen. |

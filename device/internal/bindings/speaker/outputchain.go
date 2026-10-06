@@ -4,6 +4,7 @@ package speaker
 
 import (
 	"encoding/binary"
+	"log"
 	"sync"
 
 	"github.com/wilbowes/EchoMuse/internal/outchain"
@@ -95,12 +96,40 @@ func (p *PcmSpeaker) applyOutputChainParams() {
 	if !p.oc.haveCfg {
 		return
 	}
-	params := p.oc.cfg.ForJack(inserted)
-	if p.oc.chain == nil {
-		p.oc.chain = outchain.NewChain(sampleRate, params)
+	p.oc.chain.SetParams(p.oc.cfg.ForJack(inserted))
+}
+
+// SetOutputChainActive hands the output chain to this device (true) or back to
+// the controller (false).
+//
+// Only the controller's `output_chain` feature may turn it on. The device
+// announcing the capability says it CAN shape; a controller that does not
+// announce the feature back is still shaping the audio itself, and the chain
+// run at both ends is two limiters in series.
+func (p *PcmSpeaker) SetOutputChainActive(on bool) {
+	p.oc.mu.Lock()
+	defer p.oc.mu.Unlock()
+	if on == p.oc.chain.Active() {
 		return
 	}
-	p.oc.chain.SetParams(params)
+	where := "the controller"
+	if on {
+		where = "this device"
+	}
+	log.Printf("[speaker] output chain now runs on %s", where)
+	p.oc.chain.SetActive(on)
+}
+
+// outputChainStats drains the chain's work counters, and reports false when
+// the chain is not the one doing the work — a reading of 0.00dB from a chain
+// that is standing down would read as a stage that never engaged.
+func (p *PcmSpeaker) outputChainStats() (outchain.Stats, bool) {
+	p.oc.mu.Lock()
+	defer p.oc.mu.Unlock()
+	if !p.oc.chain.Active() {
+		return outchain.Stats{}, false
+	}
+	return p.oc.chain.TakeStats(), true
 }
 
 // applyOutputChain runs one mixed period through the chain.
@@ -118,8 +147,9 @@ func (p *PcmSpeaker) applyOutputChainParams() {
 func (p *PcmSpeaker) applyOutputChain(out []byte) []byte {
 	p.oc.mu.Lock()
 	chain := p.oc.chain
+	active := chain.Active()
 	p.oc.mu.Unlock()
-	if chain == nil {
+	if !active {
 		return out
 	}
 

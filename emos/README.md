@@ -1039,8 +1039,9 @@ is not proof it rebooted — compare uptime or a build fingerprint.
   The other three paths remain, and none of them is in the wizard either:
 
   - **Return to stock, by hand.** Boot into TWRP — unplug the power, hold
-    **mute** down, and apply power with it still held, until the ring shows an
-    alternating cyan pattern — then wipe
+    **mute** or **+** (volume up) down, and apply power with it still held,
+    until the ring changes (which button depends on the amonet version) —
+    then wipe
     cache, wipe data, sideload the FireOS 5 image, **and then flash
     `f1r30s.zip`**. That last step is not optional: a stock flash restores
     dm-verity against a partition table the unlock modified, so **the OS will

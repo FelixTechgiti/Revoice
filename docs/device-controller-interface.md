@@ -47,7 +47,21 @@ Alle drei gibt es in einfacher (`ws://`) und TLS-Form (`wss://`); siehe
 [Link-Authentifizierung und TLS](#link-authentifizierung-und-tls). Die
 `/shell`-Ebene wird nicht gewählt, bevor der Controller darum bittet.
 
+**Keepalive und Verluste.** Der Controller sendet auf jeder Ebene alle 20 s
+einen WebSocket-Ping und schließt eine Verbindung nach **30 s** ohne Pong
+(`WS_PING_TIMEOUT_S`); beantworte Pings zügig, also blockiere nie die Goroutine
+oder den Thread, der den Socket liest. Heim-WLAN verliert Pakete, ein Gerät
+sollte auf seinen Sockets also **`TCP_THIN_LINEAR_TIMEOUTS`** setzen (Linux:
+auf einem linearen Zeitgeber erneut senden, solange weniger als vier Segmente
+unterwegs sind, statt zu verdoppeln); der Controller setzt es auf seiner
+Seite. Auf einem Board, dessen Funk sich eine Antenne mit Bluetooth teilt,
+**halte jeden BLE-Scan an, solange die Verbindung ein Gespräch, eine Antwort
+oder eine Shell-Sitzung trägt** — auf dem Dot führte ein laufender Scan dazu,
+dass der Access Point 47–150 % der Frames erneut sendete (siehe „The LE scan
+costs the WiFi link" in `device/CLAUDE.md`).
+
 ## Registrierung und Fähigkeiten
+
 
 Direkt nach dem Öffnen des `/control`-Sockets sendet das Gerät eine einzelne
 `register`-Nachricht (`device/internal/client/control.go`):
@@ -61,6 +75,7 @@ Direkt nach dem Öffnen des `/control`-Sockets sendet das Gerät eine einzelne
   "ip": "<lokale IP, weggelassen bei 127.0.0.1 oder unauflösbar>",
   "ambient_light_status": { "...": "..." },
   "base_os": "emos | fireos | unknown",
+  "pairing": true,  // nur während eines Kopplungsfensters (Fähigkeit `pairing`)
   "board": "<pkg/board id, oder unknown>",
   "kernel_arch": "<uname -m, z. B. aarch64>",
   "kernel_release": "<uname -r, z. B. 3.18.19+>"
@@ -77,6 +92,7 @@ bedingungslos an, dazu eine bedingte (`capabilities()` in `control.go`) — die
 Liste hier zählt sie bewusst nicht, weil eine Zahl in Prosa veraltet, ohne dass
 etwas rot wird:
 
+
 | Fähigkeit | Bedingung | Bedeutung |
 |------------|-----------|---------|
 | `mic` | immer | Streamt Mikrofon-PCM auf `/data` |
@@ -90,12 +106,15 @@ etwas rot wird:
 | `audio_mix` | immer | Hält Musik auf eigenen Frame-Typen und mischt sie unter Sprache, statt zu pausieren |
 | `aec_hw_ref` | immer | Kann die AEC-Fernreferenz aus einem Wiedergabe-Loopback in der Mikrofonaufnahme selbst nehmen und fällt auf den Software-Abgriff am ALSA-Schreibvorgang zurück, wenn das Board keinen hat |
 | `mute_set` | immer | Nimmt einen `mute_set`-Befehl an. Sagt nichts über das Aufheben — keine Firmware wird das je tun, und die Nachricht trägt dafür keinen Wahrheitswert |
-| `output_chain` | immer | Wendet EQ, Bass-Schutz und Limiter selbst an, nach dem Mischen. Der Controller muss dann unbearbeitetes Audio senden: an beiden Enden zu bearbeiten sind zwei Limiter hintereinander |
+| `output_chain` | immer | Wendet EQ, Bass-Schutz und Limiter selbst an, nach dem Mischen, aus den Konfigurationsschlüsseln `eqBands`, `eqLoudness`, `limiter*`, `bassGuard*`. Es tut das nur, wenn das `ack` des Controllers `output_chain` ebenfalls trägt — das ist der Controller, der sagt, dass er aufgehört hat. Eine Hälfte allein behält den alten Weg, Ton wird also nie zweimal bearbeitet |
 | `sendspin` | immer | Kann einer Music-Assistant-Gruppe direkt beitreten, ohne Umweg über den Controller |
 | `spotify` | immer | Kann einen Spotify-Connect-Endpunkt betreiben. Ob das librespot-Binary installiert ist, sagt `spotify_status`, siehe unten |
 | `airplay` | immer | Kann einen AirPlay-Empfänger betreiben. Ob shairport-sync installiert ist, sagt `airplay_status`, siehe unten |
 | `airplay2` | immer | Kann den **AirPlay-2-Empfänger** betreiben — ein zweites Binary an einem zweiten Pfad, ausgewählt durch `airplay2Enabled`. Getrennt von `airplay`, weil der klassische Empfänger zuerst ausgeliefert wurde: Firmware im Feld betreibt AirPlay, ignoriert den Schlüssel und hat nur einen Pfad. Ob die Datei da ist, sagt `airplay_status.ap2` |
 | `audio_state` | immer | Meldet, welche Quelle seine Musikebene besitzt (`audio_source`, siehe unten) |
+| `oww_local_only` | immer | Kann **privat zuhören**: das eigene Wakeword bewerten und nichts senden, bis es feuert. Ob er es tut, sagt `listen_state` — siehe [listening.md](listening.md) |
+| `wake_cue` | immer | Kann seinen eigenen Weckton erzeugen, mit `wakeSoundLevel`, unabhängig von der Lautstärke. Spielt ihn, wenn `wakeSound` an ist und ein Wecken GEWONNEN hat: bei `listen_ack` für eine private Zuhörsitzung, sonst bei `play_cue` — nie schon bei der Überschreitung, ein abgetretenes Wecken bleibt also still |
+| `pairing` | immer | Bittet selbst um Kopplung, wenn sein Besitzer die Aktionstaste 5 s hält: ein `pair_request` alle 5 s auf einer lebenden Verbindung, sonst eine Registrierung mit `"pairing": true` bei jedem Wählvorgang im Zwei-Minuten-Fenster, mit Rückfall auf unverschlüsselt (ohne Token), wenn wss nicht zustande kommt. Das Fenster schließt früh, sobald neue Zugangsdaten ankommen, damit der dadurch ausgelöste erneute Wählvorgang nicht noch einmal fragt. Ohne diese Fähigkeit bietet der Controller dem Admin stattdessen **Koppeln** an, weil das Gerät nicht fragen kann |
 | `ambient_light` | nur wenn der Sensor tatsächlich lesbar ist (`als.Present()`) | Meldet Lichtwerte |
 
 **`aec_hw_ref` ist eine Fähigkeit mit einem Laufzeitbegleiter, und beide
@@ -156,23 +175,31 @@ bzw. voreingestellte Verhalten.
 | `mute_state` | `muted` | Mute umgeschaltet (Mute ist gerätehoheitlich — siehe `device/CLAUDE.md`) |
 | `volume_state` | `level` | Lautstärke geändert; der Controller speichert sie als `startupVolume` |
 | `oww_shadow_cross` | Felder zu Wert, Schwelle, Alter | Wake-Überschreitung im Schattenmodus (nur Meldung) |
-| `oww_wake` | Wert, wirksame Schwelle, Alter | Auslöser auf dem Gerät gefeuert (`owwOnDevice=on`); landet in `Device.pending_wake` |
+| `oww_wake` | `score`, `threshold`, `ageMs`, `capturedMono`; `level`, `peak`, solange das überschreitende Frame noch gepuffert ist; beim privaten Zuhören zusätzlich `session`, `floor`, `barge` | Auslöser auf dem Gerät gefeuert (`owwOnDevice=on`). Mit `session` hat er eine private Zuhörsitzung eröffnet, deren Ton als `0x07` folgt ([listening.md](listening.md)); ohne landet es in `Device.pending_wake`, und der durchgehende Strom trägt den Ton. `level`/`peak` sind die Lautstärke des Wakewords in dBFS, `micGainDb` herausgerechnet, über die 2,0 s bis zum überschreitenden Frame (Definition: `controller/em_wakelevel.py`); protokolliert, nicht gehandelt |
+| `listen_state` | `state` (`local`/`stream`/`degraded`), `reason?` | Was das Gerät mit seinem Wake-Strom tut. Bei jeder Änderung gesendet und nach jedem `ack` |
+| `listen_end` | `session`, `reason` | Das Gerät hat eine Sitzung selbst geschlossen (`ack_timeout`, `max_open`, `muted`, `link`, `stopped`) |
 | `ambient_light` | `value` | Lichtwert (nur bei `ambient_light`) |
 | `audio_source` | `source` | Die Musikebene hat den Besitzer gewechselt: `"none"`, `"controller"`, `"sendspin"`, `"spotify"` oder `"airplay"` (nur bei `audio_state`). Der aktuelle Wert reitet auch auf `register` mit, damit ein Wiederverbinden mitten im Stück nicht als Stille gelesen wird. Es ist die EINZIGE Möglichkeit für den Controller zu erfahren, dass ein lokaler Endpunkt spielt — kein Frame dieses Tons kommt durch ihn hindurch |
+| `stats` | Hardware- und Verbindungstelemetrie (`internal/client/stats.go`, `DeviceStats`) | Alle ~30 s, dazu einmal beim Verbinden. Jedes Feld ist optional, und Abwesenheit heißt **nicht gemessen**, nie null. `tcpUpRetrans` sind die eigenen TCP-Wiederholungen des Geräts über seine Ebenen seit der letzten Meldung, `tcpUpSegs` die gesendeten Segmente, wo der Kernel sie zählt (FireOS 5' 3.18 tut es nicht); `ble` trägt die Zähler des Scanners, darunter `yields`/`yieldedMs` für die Zeit, die der Scan der Verbindung gewichen ist |
 | `ble_adverts` | `adverts[]` | Stapel vom passiven BLE-Scanner. **Alter Pfad** — sende diese auf `/data` als `0x06`, wann immer der Controller `ble_adverts_data` angekündigt hat, und nimm diese Nachricht nur, wenn er es nicht tat (#404) |
 | `wifi_scan_result` | `networks[]` aus `{ssid, ssid_hex, signal}`, oder `error` | Antwort auf `wifi_scan` |
 | `wifi_result` | `ok`, `ssid`, `error?` | Ergebnis eines `wifi_change`, erneut gesendet bis `wifi_commit` |
-| `pong` | — | Keepalive-Antwort |
+| `pair_request` | — | Der Besitzer hat die Aktionstaste an einem verbundenen Gerät gehalten (nur bei `pairing`). Der Controller zeigt **Kopplung freigeben**; die Freigabe stellt über die Shell-Ebene einen rotierten Token und die Zertifizierungsstelle zu und stößt die Verbindung an |
+| `pong` | `id`, `mono`, wenn ein `ping` mit `id` beantwortet wird | Keepalive-Antwort. `id` spiegelt die des Pings; `mono` ist die monotone Uhr des Geräts in ms (beliebiger fester Ursprung), die der Controller auf seine eigene abbildet, um `capturedMono` zu datieren. Unaufgeforderte Keepalive-Pongs tragen keines von beidem |
 
 **Controller → Gerät**
 
 | `type` | Nutzlast | Bedeutung |
 |--------|---------|---------|
-| `ack` | `device_id`, `features[]` | Registrierung angenommen. `features` ist die Fähigkeitsliste des CONTROLLERS — das Spiegelbild der Geräteliste, und genauso zu lesen: Eine fehlende Funktion ist eine, die der Controller nicht kann. Auf Controllern vor 2.23.0 ganz abwesend |
+| `ack` | `device_id`, `features[]` | Registrierung angenommen. `features` ist die Fähigkeitsliste des CONTROLLERS — das Spiegelbild der Geräteliste, und genauso zu lesen: Eine fehlende Funktion ist eine, die der Controller nicht kann. Auf Controllern vor 2.23.0 ganz abwesend. Derzeit: `ble_adverts_data`, `listen_session`, `output_chain` |
+| `refused` | — | Nicht zugelassen: Die Link-Prüfung hat die Zugangsdaten dieses Geräts abgewiesen (ein falscher Token, oder einer, den es nicht mehr vorlegt). Vor dem Schließen gesendet; Firmware mit `pairing` zeigt den Abweisungsring, der dem Besitzer sagt, dass er die Aktionstaste zum Koppeln halten soll. Ein Gerät behandelt auch ein TLS-Zertifikat, das seine Zertifizierungsstelle nicht signiert hat, als Abweisung. Ältere Firmware ignoriert es |
+| `pending` | `pairing?` | Nicht zugelassen: Das Gerät ist nicht freigegeben, oder — mit `pairing:true` — seine Kopplungsanfrage ist vermerkt und wartet auf einen Admin. Innerhalb des Fensters weiter wählen; eine Freigabe lässt den nächsten Wählvorgang durch |
 | `leds` | `leds[]`, `listening?` | Ein LED-Bild; `listening:true` markiert den Zuhör-Ring, damit die Richtungsüberlagerung daran anknüpft |
 | `led_anim` | `{pattern, colors, periodMs, ttlSec}` | Vorgabe für eine lokale Animation; nur bei `led_anim` gesendet |
 | `mic_start` | `lock_mic?` | Mikrofonstrom starten. `lock_mic:false`/abwesend = immer laufender, ungegatterter Wake-Strom; `true` = begrenztes, VAD-gegattertes Gespräch |
-| `mic_stop` | — | Mikrofonstrom stoppen |
+| `mic_stop` | — | Mikrofonstrom stoppen. Beim privaten Zuhören beendet es ein begrenztes Gespräch, aber **keine** Sitzung (das tut nur `listen_close`, über die id) und **nicht** das lokale Zuhören, das einen Barge-in hört |
+| `listen_ack` | `session` | Ein privates Wecken wurde angenommen; stoppt die 3-s-Ack-Uhr des Geräts |
+| `listen_close` | `session`, `reason` | Diese Sitzung beenden. Ignoriert, wenn es nicht die offene ist |
 | `beam_lock` / `beam_unlock` | — | Beamformer für ein Gespräch auf das gewählte Randmikrofon sperren / zurück auf Rundum |
 | `volume_set` | `level` | Absolute Lautstärke setzen |
 | `duck` | `on` | Musik unter einem Sprachgespräch absenken (Gesprächsbeginn/-ende) |
@@ -180,6 +207,7 @@ bzw. voreingestellte Verhalten.
 | `wifi_scan` | — | Nach Netzen suchen; beantwortet mit `wifi_scan_result` |
 | `wifi_change` / `wifi_commit` | `ssid`, `ssid_hex?`, `psk` / — | WLAN mit automatischem Rückfall wechseln; Commit macht es endgültig |
 | `shell_open` / `shell_close` | `pty?` | Das Gerät bitten, `/shell` zu wählen (`pty:true` = interaktiv) / zu schließen |
+| `play_cue` | `cue` | Einen Hinweiston abspielen, den das Gerät selbst erzeugt. Heute nur `"wake"`, gesendet, wenn `wakeSound` an ist und ein Wecken außerhalb einer privaten Zuhörsitzung die Arbitrierung gewonnen hat; unbekannte Namen werden ignoriert |
 | `music_flush` / `speaker_flush` | — | Musik- bzw. Sprachpuffer leeren (Barge-in nutzt `speaker_flush`) |
 
 **Eine SSID sind 0–32 beliebige Bytes**, ein Name allein kann ein Netz also
@@ -215,6 +243,7 @@ einzelne globale Tabelle lesen.
 | `0x04` | VAD-Ende | Begrenztes Gespräch: Sprache wurde erkannt und endete dann |
 | `0x05` | Keine-Sprache-Timeout | Begrenztes Gespräch: vor dem Timeout wurde nie Sprache erkannt |
 | `0x06` | BLE-Advertisements | Stapel gescannter BLE-Advertisements — **nur wenn der Controller `ble_adverts_data` angekündigt hat** |
+| `0x07` | Sitzungston | `[0x07][session u32 BE][seq u16 BE][PCM]` — Ton einer privaten Zuhörsitzung, **nur wenn der Controller `listen_session` angekündigt hat** |
 
 `0x04`/`0x05` lassen sich gefahrlos doppelt verwenden, weil Wiedergabe-Frames
 nur zum Gerät und Aufnahme-Frames nur von ihm fließen. Die beiden
@@ -231,6 +260,13 @@ Formen des Mikrofonstroms (`device/CLAUDE.md`, Device audio pipeline):
   einem Vorlaufring, endet mit einer `0x04`-Endmarke, wenn das Gatter nach
   Sprache schließt, und mit `0x05`, wenn innerhalb des Timeouts keine Sprache
   kam.
+- **Privates Zuhören** (`owwOnDevice=on`, Gerät kündigt `oww_local_only` an,
+  Controller kündigt `listen_session` an): Der immer laufende Strom läuft
+  weiter, aber nur auf dem Gerät — er speist die lokale Bewertung und sendet
+  nichts. Ein Wecken eröffnet eine Sitzung, und ihr Ton geht als `0x07` hinauf,
+  bis der Controller sie am Ende der Sprache schließt oder eine Grenze auf dem
+  Gerät es tut. Der vollständige Vertrag ist [listening.md](listening.md); ein
+  neues Board, das lokal bewertet, sollte ihn umsetzen statt zu senden.
 
 ### `0x06` — BLE-Advertisements
 
@@ -291,11 +327,12 @@ ledScene, ledListenColor, ledThinkColor,
 meterAttack, meterDecay, meterFloor, meterGamma, meterRef, meterCurve,
 wakeArbitrationMs, duckDb,
 buttonSingleTapEvent, buttonMultiTapMs,
-owwOnDevice, saveUtterances
+owwOnDevice, saveUtterances, streamReply,
+wakeSound, wakeSoundLevel
 ```
 
 Nicht auf jedes Feld reagiert das Gerät. Die Schlüssel der Klangkette
-(`limiter*`, `bassGuard*`), `eq*`, `saveUtterances`, `wakeArbitrationMs` und
+(`limiter*`, `bassGuard*`), `eq*`, `saveUtterances`, `streamReply`, `wakeArbitrationMs` und
 die `button*`-Zeitschlüssel sind **controllerseitig** — diese Verarbeitung
 passiert, bevor der Ton auf die Leitung geht, oder dient nur der
 Konfigurationszuordnung. `owwOnDevice` wird sowohl vom Controller verarbeitet
@@ -308,12 +345,16 @@ unbekannte Schlüssel werden ignoriert, was das korrekte Zurückfallen ist.
 - Alle drei Ebenen tragen einen `X-EM-Token`-Header, bei **jedem Wählvorgang**
   aus der Zugangsdatei des Geräts gelesen
   (`device/internal/client/tlscreds.go`) — eine aufgespielte Zugangsberechtigung
-  wirkt also beim nächsten Verbinden, ohne Neustart.
-- TLS wird gewählt, wenn das Gerät eine Zertifizierungsstelle auf der Platte
-  hat **und** der Controller einen `tls_port`-mDNS-TXT-Eintrag ankündigt →
-  `wss://` wählen. Zertifizierungsstelle vorhanden, aber kein TXT-Eintrag →
-  unverschlüsselt mit Warnung (bewusster Rückfall für die Einführung). Die
-  Serveridentität ist der feste DNS-SAN `revoice-controller`, nie eine IP.
+  wirkt also beim nächsten Verbinden, ohne Neustart. Ein Gerät, das eine
+  Zertifizierungsstelle hält, sendet seinen Token **nie** über eine
+  unverschlüsselte Verbindung.
+- Ein Gerät mit einer Zertifizierungsstelle auf der Platte wählt **nur**
+  `wss://`, auf dem `tls_port` aus dem mDNS-TXT-Eintrag oder seiner
+  Endpunktdatei; ohne `tls_port` wählt es gar nicht. Die eine Ausnahme ist ein
+  Kopplungsfenster (`pairing`, siehe oben): erst wss, dann unverschlüsselt
+  ohne Token, beide mit `"pairing": true` in der Registrierung. Ein Gerät ohne
+  Zertifizierungsstelle wählt unverschlüsselt. Die Serveridentität ist der
+  feste DNS-SAN `revoice-controller`, nie eine IP.
 - Zertifikate sind rückdatiert und langlebig, **und** das Gerät klemmt seine
   Prüfuhr auf die Bauzeit der Firmware, weil ein Echo vor NTP mit falscher Uhr
   startet und ein Gerät, das sich nicht verbinden kann, seine Uhr nicht
@@ -321,10 +362,19 @@ unbekannte Schlüssel werden ignoriert, was das korrekte Zurückfallen ist.
   Hälften.
 - Durchgesetzt wird das von `em_linkauth.decide`
   (`controller/em_linkauth.py`): Ein falscher Token wird immer abgewiesen; ein
-  gespeicherter Token ohne vorgelegten wird zugelassen (der Zugangs-Push
-  selbst reitet auf der unverschlüsselten Ebene); ein Token für ein Gerät, zu
-  dem nichts gespeichert ist, wird ignoriert, nicht abgewiesen.
-  `REQUIRE_DEVICE_TLS=1` macht TLS und Token verpflichtend.
+  gespeicherter Token ohne vorgelegten wird zugelassen, **aber nur, bis das
+  Gerät ihn einmal vorgelegt hat** (der Zugangs-Push selbst reitet auf der
+  unverschlüsselten Ebene), danach abgewiesen; ein Token für ein Gerät, zu dem
+  nichts gespeichert ist, wird ignoriert, nicht abgewiesen.
+  `REQUIRE_DEVICE_TLS=1` macht TLS und Token verpflichtend. **Ein
+  Geräte-Binary muss seinen Token auf allen drei Ebenen senden**, sonst wird
+  es auf denen abgewiesen, auf denen er fehlt, sobald der Controller ihn
+  einmal gesehen hat.
+- `/data` und `/shell` werden nur von der Adresse und mit dem Schema der
+  lebenden `/control`-Verbindung des Geräts zugelassen
+  (`em_linkauth.follows_control`) — ein echtes Gerät muss also alle drei von
+  einer Adresse aus wählen.
+
 
 ## Was dem Geräte-Binary gehört
 
@@ -424,6 +474,13 @@ bevor man crown-spezifische Bindings schreibt.
   Entitätsliste erneuert.
 - Ein deaktiviertes Bedienelement schreibt nicht stillschweigend, wenn seine
   Fähigkeit fehlt.
+- Privates Zuhören wird in beide Richtungen ausgehandelt: `oww_local_only`
+  vom Gerät, `listen_session` im `ack`, mit denselben Zeichenketten auf beiden
+  Seiten.
+
+Die Sitzungsregeln selbst — die Fristen auf dem Gerät, der Ring, welche
+Sitzung ein Frame erreichen darf — werden von `device/internal/listen` und
+`controller/tests/test_listen.py` festgehalten.
 
 Eine Board- oder Protokolländerung, die eine davon bricht, muss den Test mit
 Begründung anpassen, statt ihn zu umgehen.
