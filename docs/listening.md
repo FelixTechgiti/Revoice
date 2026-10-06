@@ -1,243 +1,271 @@
-# Listening: who decides, and when audio leaves the Echo
+# Zuhören: wer entscheidet, und wann Ton den Echo verlässt
 
-This is the specification for how an Echo listens for its wake word and when
-its microphone audio leaves the device. It is the reference for the firmware
-(`device/internal/listen/`), the controller (`controller/em_listen.py`), the
-wire protocol (`docs/device-controller-interface.md`) and every user-facing
-privacy statement. If code and this document disagree, one of them is a bug.
+Das ist die Spezifikation dafür, wie ein Echo auf sein Wakeword horcht und
+wann sein Mikrofonton das Gerät verlässt. Sie ist die Referenz für die
+Firmware (`device/internal/listen/`), den Controller
+(`controller/em_listen.py`), das Protokoll auf der Leitung
+(`docs/device-controller-interface.md`) und jede Aussage über Privatsphäre,
+die ein Nutzer zu sehen bekommt. Widersprechen sich Code und dieses Dokument,
+ist eines von beiden ein Fehler.
 
-## Two modes, chosen per Echo
+## Zwei Modi, pro Echo gewählt
 
-| Mode | Stored value (`owwOnDevice`) | Wake word runs on | Audio leaves the Echo |
-|------|------------------------------|-------------------|-----------------------|
-| **On this Echo** (default) | `on` | the Echo | only while you are talking to it |
-| **On the controller** | `off` | the controller | **all the time**, to the controller on your LAN |
+| Modus | Gespeicherter Wert (`owwOnDevice`) | Wakeword läuft auf | Ton verlässt den Echo |
+|-------|------------------------------------|--------------------|------------------------|
+| **Auf diesem Echo** (Voreinstellung) | `on` | dem Echo | nur, während du mit ihm sprichst |
+| **Auf dem Controller** | `off` | dem Controller | **dauerhaft**, an den Controller in deinem LAN |
 
-There is no third user-facing mode. `shadow` (both detectors scoring the same
-continuous stream, for comparing them) still exists as a **developer
-diagnostic**: it is not offered in the dashboard and is set through the config
-API. An Echo already in it shows it, labelled as streaming, because it does.
+Einen dritten Modus für Nutzer gibt es nicht. `shadow` (beide Erkennungen
+bewerten denselben durchgehenden Strom, um sie zu vergleichen) existiert
+weiterhin als **Diagnosewerkzeug für die Entwicklung**: Es wird im Dashboard
+nicht angeboten und über die Konfigurations-API gesetzt. Ein Echo, der schon
+darin steht, zeigt es an, als sendend gekennzeichnet — denn das ist er.
 
-Each Echo is in exactly one mode. A fleet can mix them, and arbitration works
-across the mix (see *Arbitration*). The dashboard shows each Echo's mode, says
-plainly when an Echo streams, and summarises the fleet ("1 of 3 Echoes streams
-audio continuously").
+Jeder Echo ist in genau einem Modus. Eine Flotte darf sie mischen, und die
+Arbitrierung funktioniert über die Mischung hinweg (siehe *Arbitrierung*). Das
+Dashboard zeigt den Modus jedes Echos, sagt klar, wenn ein Echo sendet, und
+fasst die Flotte zusammen („1 von 3 Echos sendet dauerhaft").
 
-The stored values are kept from the three-mode design (`off`/`shadow`/`on`) so
-existing configuration and firmware keep their meaning; only the presentation
-changed.
+Die gespeicherten Werte stammen aus dem ursprünglichen Entwurf mit drei Modi
+(`off`/`shadow`/`on`), damit bestehende Konfiguration und Firmware ihre
+Bedeutung behalten; geändert hat sich nur die Darstellung.
 
-## What "On this Echo" means, exactly
+## Was „Auf diesem Echo" genau heißt
 
-**No audio leaves the Echo until its own wake word detector fires.** Then it
-streams the audio that follows the wake word, until any one of:
+**Kein Ton verlässt den Echo, bevor seine eigene Wakeword-Erkennung feuert.**
+Danach sendet er den Ton, der auf das Wakeword folgt, bis eines davon
+eintritt:
 
-1. the controller says the utterance has ended (Home Assistant's end-of-speech,
-   or the controller's own endpoint when HA's never engages),
-2. the controller declines the wake (another Echo won arbitration, no Home
-   Assistant connection, a turn already running with barge-in off),
-3. the controller has not acknowledged the wake within `ackTimeout` (3s),
-4. the session has been open for `maxOpen` (30s),
-5. the Echo is muted, or its data connection drops.
+1. Der Controller sagt, die Äußerung sei zu Ende (Home Assistants Satzende,
+   oder der eigene Endpunkt des Controllers, wenn HAs nie anspringt).
+2. Der Controller lehnt das Wecken ab (ein anderer Echo hat die Arbitrierung
+   gewonnen, es gibt keine Home-Assistant-Verbindung, oder ein Gespräch läuft
+   schon und Barge-in ist aus).
+3. Der Controller hat das Wecken nicht innerhalb von `ackTimeout` (3 s)
+   bestätigt.
+4. Die Sitzung ist seit `maxOpen` (30 s) offen.
+5. Der Echo ist stummgeschaltet, oder seine Datenverbindung bricht ab.
 
-Rules 3–5 are enforced **on the Echo**, so a lost message, a crashed controller
-or a network partition cannot leave it streaming.
+Die Regeln 3 bis 5 setzt **der Echo selbst** durch, eine verlorene Nachricht,
+ein abgestürzter Controller oder eine getrennte Netzwerkhälfte können ihn also
+nicht sendend zurücklassen.
 
-While a reply plays, the Echo keeps listening **locally**. Saying the wake word
-over the reply (barge-in) is detected on the Echo, which then opens a new
-session exactly as above. Nothing streams during the reply unless the wake word
-is heard.
+Während eine Antwort läuft, hört der Echo **lokal** weiter. Das Wakeword über
+die Antwort zu sagen (Barge-in) wird auf dem Echo erkannt, der dann eine neue
+Sitzung eröffnet, genau wie oben. Während der Antwort wird nichts gesendet,
+solange das Wakeword nicht fällt.
 
-Only two things open the microphone without a local wake, and both are the
-user asking, or being asked, to speak: the **action button**, and a Home
-Assistant **follow-up question** ("continue conversation", or an
-`ask_question` / `start_conversation` action). Both use the bounded turn stream (`mic_start` with
-`lock_mic:true`), which the Echo gates on speech and ends itself after 5s of
-nothing; the controller ends it at end of speech exactly as it closes a
-session, and the Echo goes back to listening locally.
+Nur zwei Dinge öffnen das Mikrofon ohne ein lokales Wecken, und bei beiden
+bittet der Nutzer ums Sprechen oder wird darum gebeten: die **Aktionstaste**
+und eine **Nachfrage** von Home Assistant („continue conversation", oder eine
+Aktion `ask_question` / `start_conversation`). Beide nutzen den begrenzten
+Gesprächsstrom (`mic_start` mit `lock_mic:true`), den der Echo auf Sprache
+gattert und nach 5 s ohne etwas selbst beendet; der Controller beendet ihn am
+Satzende, genau wie er eine Sitzung schließt, und der Echo geht zurück ins
+lokale Zuhören.
 
-### What is honest to claim, and what is not
+### Was ehrlich zu behaupten ist, und was nicht
 
-- Say: *audio leaves the Echo only after it hears the wake word, and only
-  until you finish speaking.*
-- Say: *a false wake sends a few seconds of audio you did not intend.* That is
-  true of every wake word system, Amazon's included, and we publish it rather
-  than be caught by it.
-- Do not say *audio never leaves the device* or *fully local*: the command goes
-  to the controller and on to Home Assistant's speech-to-text, wherever the
-  user configured that to run.
+- Sag: *Ton verlässt den Echo erst, nachdem er das Wakeword gehört hat, und
+  nur, bis du zu Ende gesprochen hast.*
+- Sag: *ein Fehlauslöser schickt ein paar Sekunden Ton, die du nicht gemeint
+  hast.* Das gilt für jedes Wakeword-System, Amazons eingeschlossen, und wir
+  schreiben es hin, statt uns darauf ertappen zu lassen.
+- Sag **nicht** *Ton verlässt das Gerät nie* oder *vollständig lokal*: Der
+  Befehl geht an den Controller und weiter an Home Assistants
+  Spracherkennung, wo auch immer der Nutzer sie eingerichtet hat.
 
-## States an Echo can be in
+## Zustände, in denen ein Echo sein kann
 
-The controller resolves one of these per Echo (`em_listen.resolve`) and the
-dashboard shows it. Configuration says what was asked for; this says what is
-true.
+Der Controller löst pro Echo einen davon auf (`em_listen.resolve`), und das
+Dashboard zeigt ihn. Die Konfiguration sagt, was gewünscht war; das hier sagt,
+was wahr ist.
 
-| State | Meaning | Streams continuously? |
-|-------|---------|-----------------------|
-| `local` | On-Echo wake word, listening | no |
-| `controller` | Controller wake word, by configuration | **yes** |
-| `diagnostic` | `shadow`, both detectors on | **yes** |
-| `legacy` | Asked for On this Echo, but the firmware predates `oww_local_only` | **yes** — says "update firmware for private listening" |
-| `degraded` | Asked for On this Echo, but the Echo cannot score (runtime or model missing, or failed to load) | no — **button only**, and says why |
-| `unknown` | The Echo has not reported yet | shown as unknown, never as private |
+| Zustand | Bedeutung | Sendet dauerhaft? |
+|---------|-----------|-------------------|
+| `local` | Wakeword auf dem Echo, hört zu | nein |
+| `controller` | Wakeword auf dem Controller, laut Konfiguration | **ja** |
+| `diagnostic` | `shadow`, beide Erkennungen an | **ja** |
+| `legacy` | „Auf diesem Echo" gewünscht, aber die Firmware ist älter als `oww_local_only` | **ja** — sagt „Firmware aktualisieren für privates Zuhören" |
+| `degraded` | „Auf diesem Echo" gewünscht, aber der Echo kann nicht bewerten (Laufzeit oder Modell fehlt, oder ließ sich nicht laden) | nein — **nur per Taste**, mitsamt Grund |
+| `unknown` | Der Echo hat noch nichts gemeldet | wird als unbekannt gezeigt, nie als privat |
 
-**`degraded` never falls back to streaming.** A device that cannot run its
-own wake word is either broken or waiting on an install, and it still answers
-the button. Quietly streaming instead would make the dashboard's privacy
-statement false without anyone choosing it.
+**`degraded` fällt nie aufs Senden zurück.** Ein Gerät, das sein eigenes
+Wakeword nicht ausführen kann, ist entweder kaputt oder wartet auf eine
+Installation, und es beantwortet weiterhin die Taste. Still stattdessen zu
+senden machte die Aussage des Dashboards über Privatsphäre falsch, ohne dass
+irgendwer das gewählt hätte.
 
-`legacy` does stream, and is shown doing so. That is today's firmware
-behaviour; the fix is a firmware update, and the dashboard says so.
+`legacy` sendet tatsächlich und wird dabei auch so gezeigt. Das ist das
+Verhalten heutiger Firmware; die Behebung ist ein Firmware-Update, und das
+Dashboard sagt es.
 
-The state comes from the Echo itself (`listen_state` on `/control`), never from
-the controller's reading of configuration: the Echo is the only party that
-knows whether its scorer loaded. `oww_local_only` in `capabilities` says the
-firmware *can*; `listen_state` says whether it *is*.
+Der Zustand kommt vom Echo selbst (`listen_state` auf `/control`), nie aus
+der Lesart der Konfiguration durch den Controller: Der Echo ist der einzige
+Beteiligte, der weiß, ob seine Bewertung geladen hat. `oww_local_only` in
+`capabilities` sagt, dass die Firmware es *kann*; `listen_state` sagt, ob sie
+es *tut*.
 
-## The session protocol
+## Das Sitzungsprotokoll
 
-All of this is negotiated: the Echo announces `oww_local_only`, the controller
-announces `listen_session` on its `ack`. **Local listening engages only when
-both are present.** Against an older controller the Echo keeps its current
-behaviour (continuous stream, triggering on its own wake), because an old
-controller only acts on a device wake when frames are arriving.
+All das wird ausgehandelt: Der Echo kündigt `oww_local_only` an, der
+Controller kündigt `listen_session` in seinem `ack` an. **Lokales Zuhören
+greift nur, wenn beides da ist.** Gegen einen älteren Controller behält der
+Echo sein bisheriges Verhalten (durchgehender Strom, Auslösen auf das eigene
+Wecken hin), weil ein alter Controller auf ein Wecken des Geräts nur dann
+handelt, wenn Frames ankommen.
 
-### Messages
+### Nachrichten
 
-Echo → controller, `/control`:
+Echo → Controller, `/control`:
 
-| `type` | Fields | Meaning |
-|--------|--------|---------|
-| `listen_state` | `state` (`local`/`stream`/`degraded`), `reason?` | Sent on every change and after every `ack` |
-| `oww_wake` | `score`, `threshold`, `ageMs`, **`session`**, **`floor`**, **`barge`** | A local wake opened session `session`. `ageMs` is how long ago the wake word's last frame was **captured**. `floor` is the Echo's noise floor (RMS). `barge` is true when the speaker was playing |
-| `listen_end` | `session`, `reason` | The Echo closed a session on its own (`ack_timeout`, `max_open`, `muted`, `link`) |
+| `type` | Felder | Bedeutung |
+|--------|--------|-----------|
+| `listen_state` | `state` (`local`/`stream`/`degraded`), `reason?` | Bei jeder Änderung gesendet und nach jedem `ack` |
+| `oww_wake` | `score`, `threshold`, `ageMs`, **`session`**, **`floor`**, **`barge`** | Ein lokales Wecken hat Sitzung `session` eröffnet. `ageMs` ist, wie lange das letzte Frame des Wakewords her **aufgenommen** wurde. `floor` ist der Rauschteppich des Echos (RMS). `barge` ist wahr, wenn der Lautsprecher spielte |
+| `listen_end` | `session`, `reason` | Der Echo hat eine Sitzung selbst geschlossen (`ack_timeout`, `max_open`, `muted`, `link`) |
 
 Controller → Echo, `/control`:
 
-| `type` | Fields | Meaning |
-|--------|--------|---------|
-| `listen_ack` | `session` | The wake was taken; stops the `ackTimeout` clock |
-| `listen_close` | `session`, `reason` | End the session. **Ignored if `session` is not the open one** |
+| `type` | Felder | Bedeutung |
+|--------|--------|-----------|
+| `listen_ack` | `session` | Das Wecken wurde angenommen; stoppt die Uhr für `ackTimeout` |
+| `listen_close` | `session`, `reason` | Die Sitzung beenden. **Ignoriert, wenn `session` nicht die offene ist** |
 
-`mic_stop` changes meaning slightly under private listening: it ends a bounded
-turn stream but never a session (those end only by id) and never the Echo's
-local listening, which is what hears a barge-in over the reply. `mic_start` with `lock_mic:true` replaces the
-local wake stream for the length of the turn.
+`mic_stop` bedeutet beim privaten Zuhören etwas anderes: Es beendet einen
+begrenzten Gesprächsstrom, aber nie eine Sitzung (die enden nur über ihre id)
+und nie das lokale Zuhören des Echos, das einen Barge-in über die Antwort
+hört. `mic_start` mit `lock_mic:true` ersetzt den lokalen Wake-Strom für die
+Dauer des Gesprächs.
 
-Echo → controller, `/data`:
+Echo → Controller, `/data`:
 
-| Code | Layout | Meaning |
-|------|--------|---------|
-| `0x07` | `[0x07][session u32 BE][seq u16 BE][PCM]` | Session audio, mono `S16_LE` 16 kHz |
+| Code | Aufbau | Bedeutung |
+|------|--------|-----------|
+| `0x07` | `[0x07][session u32 BE][seq u16 BE][PCM]` | Sitzungston, mono `S16_LE` 16 kHz |
 
-### Why sessions are numbered
+### Warum Sitzungen nummeriert sind
 
-Control and data travel on different sockets, so a session's first audio can
-arrive before or after its `oww_wake`, and a late frame of one session can
-arrive after the controller has moved on. Tagging every frame with its session
-makes both harmless: the controller holds frames for a session it has not yet
-heard about (bounded, `PENDING_MAX_S`), delivers them the moment the wake
-arrives, and drops frames for any session it has closed. Untagged audio was
-routed by a flag, and a frame landing on the wrong side of a flag flip became
-the first half-second of the *next* user's command.
+Steuerung und Daten laufen über verschiedene Sockets, der erste Ton einer
+Sitzung kann also vor oder nach ihrem `oww_wake` ankommen, und ein spätes
+Frame einer Sitzung kann eintreffen, wenn der Controller schon weiter ist.
+Jedes Frame mit seiner Sitzung zu kennzeichnen macht beides harmlos: Der
+Controller hält Frames für eine Sitzung zurück, von der er noch nichts weiß
+(begrenzt, `PENDING_MAX_S`), liefert sie aus, sobald das Wecken ankommt, und
+verwirft Frames jeder Sitzung, die er geschlossen hat. Ungekennzeichneter Ton
+wurde über ein Flag geleitet, und ein Frame auf der falschen Seite eines
+Flag-Wechsels wurde zur ersten halben Sekunde des *nächsten* Befehls.
 
-### The first audio of a session
+### Der erste Ton einer Sitzung
 
-The Echo keeps a ring of recent processed audio (`ringMs`, 2s) with the
-capture time of every 80 ms frame. A wake reports the capture time of the
-frame that crossed; the session starts with every ringed frame captured
-**after** it, then continues live. The controller's existing
-`VOICE_PREROLL_DISCARD` removes the wake word's tail, exactly as it does for a
-controller-detected wake.
+Der Echo hält einen Ring des zuletzt verarbeiteten Tons (`ringMs`, 2 s) mit
+der Aufnahmezeit jedes 80-ms-Frames. Ein Wecken meldet die Aufnahmezeit des
+überschreitenden Frames; die Sitzung beginnt mit jedem Frame aus dem Ring, das
+**danach** aufgenommen wurde, und läuft dann live weiter. Das bestehende
+`VOICE_PREROLL_DISCARD` des Controllers entfernt das Ende des Wakewords, genau
+wie bei einem Wecken, das der Controller erkannt hat.
 
-Timestamps come from one `time.Now()` taken when the frame is handed to both
-the scorer and the ring, so the scorer's queue delay (up to 640 ms when busy)
-never shifts where the session starts, and `ageMs` measures from capture rather
-than from when inference finished.
+Die Zeitstempel kommen aus einem einzigen `time.Now()`, das genommen wird, wenn
+das Frame sowohl an die Bewertung als auch an den Ring geht — die Wartezeit in
+der Warteschlange der Bewertung (bis zu 640 ms unter Last) verschiebt den
+Sitzungsbeginn also nie, und `ageMs` misst ab der Aufnahme statt ab dem Ende
+der Inferenz.
 
-## Wake thresholds on the Echo
+## Wakeword-Schwellen auf dem Echo
 
-The Echo scores against:
+Der Echo bewertet gegen:
 
-- `owwThreshold` normally;
-- `bargeInThreshold` while its speaker plays a response or an alarm, **or**
-  music, when barge-in is enabled — the same rule the controller applies;
-- and while that lower bar is in force, it needs **two consecutive frames**
-  above it (`em_barge.decide`'s rule), because a single frame at a bar ten
-  times below the wake threshold fired on the assistant's own voice.
+- `owwThreshold` im Normalfall;
+- `bargeInThreshold`, während sein Lautsprecher eine Antwort oder einen Alarm
+  spielt, **oder** Musik, wenn Barge-in aktiviert ist — dieselbe Regel, die
+  der Controller anwendet;
+- und solange diese niedrigere Schwelle gilt, braucht es **zwei
+  aufeinanderfolgende Frames** darüber (die Regel aus `em_barge.decide`), weil
+  ein einzelnes Frame an einer Schwelle zehnmal unter der Weckschwelle auf die
+  eigene Stimme des Assistenten ansprang.
 
-With barge-in off, a wake heard while a reply plays is still reported and the
-controller declines it (`listen_close`), so the rule lives in one place.
+Ist Barge-in aus, wird ein Wecken, das während einer Antwort gehört wird,
+trotzdem gemeldet, und der Controller lehnt es ab (`listen_close`) — die Regel
+steht damit an einer Stelle.
 
-## Arbitration
+## Arbitrierung
 
-First to **hear** wins, not first to arrive. Each claim carries the time its
-audio was **captured**, in the controller's clock, measured so that time spent
-in flight cannot move it. A home WiFi link loses packets, TCP retransmits
-them, and a message can arrive seconds late; arrival time is exactly the
-number that lies.
+Wer zuerst **hört**, gewinnt, nicht wer zuerst ankommt. Jeder Anspruch trägt
+die Zeit, zu der sein Ton **aufgenommen** wurde, in der Uhr des Controllers,
+und so gemessen, dass Zeit auf der Leitung sie nicht verschieben kann. Eine
+Heim-WLAN-Verbindung verliert Pakete, TCP sendet sie erneut, und eine
+Nachricht kann Sekunden zu spät eintreffen; die Ankunftszeit ist genau die
+Zahl, die lügt.
 
-- **A wake the controller scored** is dated by the frame that crossed. The
-  continuous stream sends every 80 ms frame, silence included, so frame *n*
-  was captured *n* × 80 ms after the stream began; the controller learns
-  when that was from the frames that arrived with the least delay
-  (`em_listen.CaptureClock`, a sliding minimum that follows the Echo's clock
-  drifting against ours). A frame held a second in a retransmit is still
-  dated to its capture, and so is one that waited in the controller's own
-  queue before it was scored.
-- **A wake the Echo detected** carries `capturedMono`, the capture instant
-  on the Echo's monotonic clock. The controller maps that clock onto its own
-  from the ping replies it already exchanges every 5 s, each of which
-  carries the Echo's `mono`: the reply with the shortest round trip in the
-  last two minutes pins the mapping to within half that round trip
-  (`em_listen.DeviceClock`, the rule NTP uses). A retransmit only lengthens a
-  round trip, so it is never the one chosen. Firmware that sends no
-  `capturedMono` falls back to arrival − `ageMs` − half the smoothed RTT,
-  which is right only when the message was not delayed.
+- **Ein Wecken, das der Controller bewertet hat**, wird auf das
+  überschreitende Frame datiert. Der durchgehende Strom sendet jedes
+  80-ms-Frame, Stille eingeschlossen, Frame *n* wurde also *n* × 80 ms nach
+  Beginn des Stroms aufgenommen; wann das war, lernt der Controller aus den
+  Frames, die mit der geringsten Verzögerung ankamen
+  (`em_listen.CaptureClock`, ein gleitendes Minimum, das der Drift der Uhr des
+  Echos gegen unsere folgt). Ein Frame, das eine Sekunde in einer
+  Wiederholung hing, wird trotzdem auf seine Aufnahme datiert, und eines, das
+  in der Warteschlange des Controllers lag, bevor es bewertet wurde, ebenso.
+- **Ein Wecken, das der Echo erkannt hat**, trägt `capturedMono`, den
+  Aufnahmezeitpunkt auf der monotonen Uhr des Echos. Der Controller bildet
+  diese Uhr auf seine eigene ab, aus den Ping-Antworten, die er ohnehin alle
+  5 s austauscht und die jeweils das `mono` des Echos tragen: Die Antwort mit
+  der kürzesten Laufzeit der letzten zwei Minuten legt die Abbildung auf die
+  Hälfte dieser Laufzeit genau fest (`em_listen.DeviceClock`, die Regel, die
+  auch NTP nutzt). Eine Wiederholung verlängert eine Laufzeit nur, sie wird
+  also nie die gewählte. Firmware, die kein `capturedMono` sendet, fällt auf
+  Ankunft − `ageMs` − die halbe geglättete RTT zurück, was nur dann stimmt,
+  wenn die Nachricht nicht verzögert wurde.
 
-What remains uncorrected is the least delay any frame or ping had — a few
-milliseconds — and the Echo's send batching, at most one 80 ms frame; both
-are well inside `wakeArbitrationMs`. Neither estimate is ever later than
-arrival or more than 3 s before it.
+Unkorrigiert bleibt die geringste Verzögerung, die irgendein Frame oder Ping
+hatte — ein paar Millisekunden — und die Sendebündelung des Echos, höchstens
+ein 80-ms-Frame; beides liegt deutlich innerhalb von `wakeArbitrationMs`.
+Keine der beiden Schätzungen liegt je später als die Ankunft oder mehr als
+3 s davor.
 
-A claim cedes if it was heard within `wakeArbitrationMs` of the current
-winner's, whenever it arrives. A granted claim is **never revoked** — that
-would cut off a turn already listening — so the winner is the first claim to
-arrive among those heard within the window, and the winner is held for
-`wakeArbitrationMs` plus 3 s so a late claim still finds it. Holding costs
-nothing: a separate wake in another room is told apart by when it was heard,
-not by when it arrived. 3 s is the Echo's ack timeout; a private wake later
-than that has already closed its session, and the controller ignores a wake
-for a session the Echo has closed.
+Ein Anspruch tritt zurück, wenn er innerhalb von `wakeArbitrationMs` des
+aktuellen Gewinners gehört wurde, wann immer er eintrifft. Ein gewährter
+Anspruch wird **nie widerrufen** — das schnitte ein Gespräch ab, das schon
+zuhört —, der Gewinner ist also der erste eintreffende Anspruch unter denen,
+die innerhalb des Fensters gehört wurden, und der Gewinner wird
+`wakeArbitrationMs` plus 3 s gehalten, damit ein später Anspruch ihn noch
+findet. Das Halten kostet nichts: Ein eigenes Wecken in einem anderen Raum
+wird danach unterschieden, wann es gehört wurde, nicht wann es ankam. Die 3 s
+sind der Ack-Timeout des Echos; ein privates Wecken, das später kommt, hat
+seine Sitzung bereits geschlossen, und der Controller ignoriert ein Wecken für
+eine Sitzung, die der Echo geschlossen hat.
 
-**A mixed fleet waits; a uniform one does not.** When some Echoes detect the
-wake word themselves and others are scored by the controller, the two paths
-reach the arbiter at different speeds, so the first claim to arrive is not
-the first heard: on 2026-09-24 an Echo 10 m away, detecting on the device,
-arrived 16 ms ahead of one a metre from the speaker that the controller was
-scoring, and took the turn. So on a mixed fleet the first claim is held until
-250 ms after it was heard (`MIXED_HOLD_S`, less whatever it already spent in
-flight), every claim heard within the window by then is collected, and the
-one heard **earliest** wins. Nothing is revoked: no one holds the turn until
-the hold ends. A fleet that detects one way races on equal terms and grants
-the first arrival at once, as above. An Echo whose mode is not yet known
-counts as different, so the fleet holds rather than guesses. A barge-in
-during playback fires on the second of two frames and is dated from the
-first.
+**Eine gemischte Flotte wartet, eine einheitliche nicht.** Erkennen manche
+Echos das Wakeword selbst und werden andere vom Controller bewertet, erreichen
+die beiden Wege den Arbiter unterschiedlich schnell — der erste eintreffende
+Anspruch ist dann nicht der zuerst gehörte: Am 2026-09-24 traf ein Echo in 10 m
+Entfernung, der auf dem Gerät erkannte, 16 ms vor einem ein, der einen Meter
+vom Sprecher stand und vom Controller bewertet wurde, und nahm das Gespräch.
+Auf einer gemischten Flotte wird der erste Anspruch deshalb bis 250 ms nach
+dem Zeitpunkt gehalten, zu dem er gehört wurde (`MIXED_HOLD_S`, abzüglich
+dessen, was er schon auf der Leitung verbracht hat), jeder bis dahin innerhalb
+des Fensters gehörte Anspruch wird eingesammelt, und der **zuerst** gehörte
+gewinnt. Widerrufen wird nichts: Bis das Halten endet, hat niemand das
+Gespräch. Eine Flotte, die auf eine Art erkennt, läuft unter gleichen
+Bedingungen und gewährt sofort dem ersten Eintreffen, wie oben. Ein Echo,
+dessen Modus noch nicht bekannt ist, zählt als anders, die Flotte hält also,
+statt zu raten. Ein Barge-in während der Wiedergabe feuert auf dem zweiten
+zweier Frames und wird vom ersten datiert.
 
-The wake log line reports, for a controller-scored wake, how long after
-arrival it was scored and how long its frame spent in transit.
+Die Protokollzeile zum Wecken meldet bei einem vom Controller bewerteten
+Wecken, wie lange nach der Ankunft es bewertet wurde und wie lange sein Frame
+unterwegs war.
 
-## What each mode costs and loses
+## Was jeder Modus kostet und verliert
 
-| | On this Echo | On the controller |
-|--|--------------|-------------------|
-| Echo CPU | ~0.4 of a core, always | none for wake word |
-| WiFi | nothing while idle | ~32 KB/s per Echo, always |
-| Near-miss counter on the dashboard | `—`: the Echo's own window stats carry its peak score | counted on the controller |
-| Controller comparison score (`ctrl_wake_score`) | NULL — nothing to compare, and not logged as a miss | recorded |
-| Survives a controller restart | wake still detected, no one to answer | no |
+| | Auf diesem Echo | Auf dem Controller |
+|--|-----------------|--------------------|
+| CPU des Echos | ~0,4 eines Kerns, dauerhaft | nichts für das Wakeword |
+| WLAN | nichts im Leerlauf | ~32 KB/s pro Echo, dauerhaft |
+| Zähler für Beinahe-Treffer im Dashboard | `—`: Die Fensterstatistik des Echos trägt seinen Spitzenwert | auf dem Controller gezählt |
+| Vergleichswert des Controllers (`ctrl_wake_score`) | NULL — es gibt nichts zu vergleichen, und es wird nicht als Fehltreffer protokolliert | aufgezeichnet |
+| Übersteht einen Neustart des Controllers | Wecken wird weiterhin erkannt, niemand antwortet | nein |
 
-Absent measurements store as NULL, never 0: an Echo that did not stream has no
-controller score, which is not a controller that scored zero.
+Fehlende Messungen werden als NULL gespeichert, nie als 0: Ein Echo, der
+nichts gesendet hat, hat keinen Controller-Wert — das ist nicht dasselbe wie
+ein Controller, der null bewertet hat.

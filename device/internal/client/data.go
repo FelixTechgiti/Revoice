@@ -70,7 +70,8 @@ const (
 )
 
 // Listen states, reported to the controller as listen_state. See
-// docs/listening.md, "States an Echo can be in".
+// docs/listening.md, "Zustände, in denen ein Echo sein kann" (the doc is
+// German; the state names in it are these identifiers).
 const (
 	// ListenStream is the always-on wake stream: every frame goes upstream.
 	// Controller mode, shadow, and any device that cannot listen privately
