@@ -91,7 +91,10 @@ Für das Entsperren selbst (die maßgebliche Liste steht in R0rt1z2s Thread):
     aktualisieren kann, und deaktiviert dm-verity. **Flashe es immer nach
     einem Stock-Firmware-Image, sonst startet das System nicht** — ein
     Stock-Flash stellt Verity gegen eine Partitionstabelle wieder her, die
-    das Entsperren verändert hat.
+    das Entsperren verändert hat. Lass sie danach auf dem Speicher des Echos
+    liegen: Der FireOS-Assistent liest sie in Schritt 3 aus
+    `/sdcard/f1r30s.zip`. Ist sie nicht da, fragt er danach, prüft sie und
+    kopiert sie hinüber.
   - `Magisk-v17.3.zip` — von
     [GitHub](https://github.com/topjohnwu/Magisk/releases/tag/v17.3)
   - `server` — kompiliertes Revoice-Binary (ARM, API 22)
@@ -164,7 +167,8 @@ Alles Weitere setzt voraus, dass du bereits hast:
 
 - Einen Echo Dot Gen 2 (**biscuit**) mit angewandtem dauerhaftem Entsperren
 - **TWRP** installiert und startfähig
-- **FireOS 5** (Android 5.1) per Sideload aufgespielt
+- **FireOS 5** installiert (amonet v1.1.0) oder **FireOS 6** in beiden Slots
+  (v2.0.0)
 
 Sind die erledigt, übernimmt Revoice. Der Einrichtungsassistent im Dashboard
 erledigt den Rest — siehe den [Schnellstart](quickstart.md). Er beginnt bei
@@ -189,15 +193,20 @@ aus.
 Beide lassen bei einem gescheiterten Schritt das Gerät in TWRP zurück und
 sagen das auch. Der Unterschied, auf den es danach ankommt:
 
-**Ein Gerät auf emOS kann der Assistent nicht erneut einrichten, und der Weg
-zurück löscht es.** emOS betreibt kein adbd — es kann das nicht, denn adbd
-braucht Androids Property-Dienst —, der erste Schritt des Assistenten findet
-also kein Gerät zum Ansprechen. Zurück zu FireOS heißt: TWRP von Hand starten,
-Cache und Daten löschen, das FireOS-5-Image per Sideload aufspielen und danach
-`f1r30s.zip` flashen. Das löscht `/data` und nimmt Revoice, seine
-Konfiguration und seine Zugangsdaten mit. **`f1r30s.zip` ist nicht optional**
-— ein Stock-Flash stellt dm-verity gegen eine Partitionstabelle wieder her,
-die das Entsperren verändert hat, und ohne die Datei bootet das Gerät nicht.
+**Ein Gerät auf emOS hat kein adb, der Assistent sieht es also erst wieder,
+wenn es in TWRP ist.** Führe `/init recovery` auf der USB-Konsole von emOS aus
+(ab emOS 0.4), oder halte die Recovery-Taste beim Anlegen der Stromversorgung
+gedrückt — dann nimmt der erste Schritt des Assistenten es an. Aus TWRP gibt
+es zwei Wege zurück zu FireOS:
+
+- **Das gesicherte Boot-Image zurückschreiben.** Rund zehn Sekunden, und
+  `/data` bleibt unangetastet.
+- **Von Hand auf Stock zurück** (amonet v1.1.0): Cache und Daten löschen, das
+  FireOS-5-Image per Sideload aufspielen und danach `f1r30s.zip` flashen. Das
+  löscht `/data` und nimmt Revoice, seine Konfiguration und seine
+  Zugangsdaten mit. **`f1r30s.zip` ist nicht optional** — ein Stock-Flash
+  stellt dm-verity gegen eine Partitionstabelle wieder her, die das Entsperren
+  verändert hat, und ohne die Datei bootet das Gerät nicht.
 
 Bewahre das verwahrte Boot-Image auf, das dir der emOS-Ablauf in Schritt 3
 gibt. Es zurückzuschreiben dauert etwa zehn Sekunden, lässt `/data` in Ruhe
@@ -206,7 +215,12 @@ und ist das Rückgängig für alles Weitere.
 ## Was Revoice schreibt und was nicht
 
 Dieses Gerät hat mehrere Schichten unterhalb des Betriebssystems, und Revoice
-schreibt immer nur in die FireOS-Schicht. Die unterste zuerst:
+schreibt immer nur in die FireOS-Schicht. Die Partitionsnummern und -namen in
+diesem Abschnitt wurden auf einem Gerät mit amonet v1.1.0 gemessen. v2.0.0
+stellt die ursprüngliche Partitionstabelle wieder her, dort sind `boot_a` und
+`boot_b` also die Kernel-Partitionen (`p10`, `p11`), ohne Payload-Partition
+und ohne `/dev/block/other-boot`; der Assistent beherrscht beide Layouts. Die
+unterste zuerst:
 
 | Schicht | Was es ist | Von Revoice beschrieben |
 |---|---|---|
@@ -364,10 +378,11 @@ behandelt Wiederherstellung und Unbricking.
 
 # Referenz zur Handarbeit
 
-Der Assistent führt die folgenden Schritte für dich aus. Sie stehen hier für
-alle, die von Hand einrichten, einen Assistentenschritt debuggen oder genau
-wissen wollen, was mit ihrem Gerät passiert, bevor sie etwas automatisch
-machen lassen.
+Der Assistent führt die folgenden Schritte für dich aus. Es sind die des
+**FireOS-Wegs auf einem Gerät mit amonet v1.1.0**; der emOS-Weg macht keinen
+davon. Sie stehen hier für alle, die von Hand einrichten, einen
+Assistentenschritt debuggen oder genau wissen wollen, was mit ihrem Gerät
+passiert, bevor sie etwas automatisch machen lassen.
 
 ## Schritt 3 — Das Boot-Image auf SELinux permissive patchen
 
@@ -750,121 +765,21 @@ adb shell "su -c 'cat /tmp/server.log'"
 
 ## Endzustand
 
-Die Liste unten ist ein Meilenstein-Protokoll: was erreicht wurde und in
-welcher Version. Die Formulierungen sind absichtlich knapp und tragen
-Bezeichner aus dem Code, damit sich jeder Punkt einer Stelle im Quelltext
-zuordnen lässt.
+Nach dem Assistenten ist ein Echo in einem von zwei Zuständen:
 
-```
-✅ Dauerhaftes Entsperren (amonet-biscuit)
-✅ TWRP installiert
-✅ FireOS 5 (Android 5.1)
-✅ SELinux permissive — übersteht Neustarts
-✅ Magisk 17.3 — dauerhafter Root, übersteht Neustarts
-✅ Alexa-Sprachstack abgeschaltet
-✅ echoaudioservice behalten (für die DSP-Initialisierung nötig)
-✅ Revoice läuft beim Start als init-Dienst (exec-Modus, keine Absturzschleife)
-✅ Attrappen-Mixer-Dienst für die Init-Kompatibilität von Revoice
-✅ Audio-Mixer beim Start konfiguriert (tinymix in start_server.sh)
-✅ Mikrofonverstärkung über alle vier ADCs angeglichen — digitale Lautstärke 88, MICPGA 40
-✅ WLAN-Wake-Lock — FireOS kann die Funkschnittstelle nicht schlafen legen
-✅ p2p0 (WiFi Direct) abgeschaltet — keine mDNS-Störung
-✅ Volle RGB-Steuerung des LED-Rings (IS31FL3236A, 12 RGB-LEDs)
-✅ Mikrofon-Streaming (9 Kanäle, S24_3LE, 16 kHz, Karte 0 Gerät 24)
-✅ Lautsprecherausgabe funktioniert (Karte 0, Gerät 23, 48 kHz stereo, Periode 2048, Anzahl 4)
-✅ Tastenereignisse (evdev)
-✅ WLAN funktioniert
-✅ Stabiler Start
-✅ Kein HTTP-Server auf dem Gerät — keine eingehenden Ports, keine iptables-Regeln
-✅ Drei ausgehende WebSocket-Verbindungen (Control-, Daten- und Shell-Ebene)
-✅ Geräteidentität über ro.serialno — stabil über Neustarts, passt zu adb devices
-✅ Freigabeablauf für Geräte — strikter Modus (ausstehend) oder Automatikmodus
-✅ Oranges LED-Pulsieren bei getrennter Verbindung / Suche nach dem Server
-✅ Langsames weißes LED-Pulsieren, solange die Freigabe durch den Controller aussteht
-✅ Energie-VAD auf dem Gerät — VAD-Endsignal (0x04) bei Stille an den Controller
-✅ Wakeword-Erkennung auf ch6 (mittleres Rundum-Mikrofon) — gleich weit, keine Richtungsverzerrung
-✅ OpenWakeWord — „Hey Jarvis" serverseitig erkannt (Schwelle 0,3)
-✅ Kanalzuordnung der Mikrofone empirisch bestätigt (Toneinspeisung, analyse_capture.py)
-✅ Gerichtete Mikrofonwahl — bestes Randmikrofon zu Beginn eines Sprachgesprächs gesperrt
-✅ Richtungsschätzung — Onset-Verhältnis (schnelles/langsames EWMA), robust gegen Hintergrundgeräusche (Fernseher etc.)
-✅ LED-Richtungsüberlagerung — hellgrünes Segment auf dem Zuhör-Ring, nur während eines Sprachgesprächs
-✅ LED-Zuordnung kalibriert — LED 0 bei 240°, aus dem Lautstärkedurchlauf bestätigt
-✅ Audioverarbeitungspipeline — speexdsp-AEC (v2.7.3) + AGC; RNNoise auf dem Gerät am 2026-07-12 entfernt, die Rauschunterdrückung ist controllerseitiges DTLN auf dem STT-Strom (Flag `nsAsr`)
-✅ AGC gilt seit v2.7.0 nur für lock_mic-Gespräche (der Wake-Strom ist dauerhaft AGC-frei)
-✅ Ungegatterter durchgehender Wake-Strom (v2.7.0) — kein VAD-Gatter, kein AGC, kein Vorlauf auf dem immer laufenden Strom; OWW bewertet ununterbrochenes Audio; ~32 KB/s pro Gerät
-✅ Leck im Mikrofonstrom behoben (v2.7.0) — Besitzprüfung beim Verlassen von streamMic; Stop/Start-Paare können keinen parallelen Doppelstrom mehr lecken (die historische Ursache von „das Aufwachen wird über Tage schlechter, ein Neustart hilft")
-✅ Erfassung des Grundgeräuschpegels je Raum (v2.7.0, Controller) — rein messendes asymmetrisches EWMA; treibt die auf den Störabstand bezogene 5-s-Abschaltung ohne Sprache (Wakeword-dann-Stille endet wieder leise)
-✅ Beam-Sperre mitten im Strom (v2.7.0) — Kontrollnachrichten beam_lock/beam_unlock; Wake-Gespräche bekommen die Randmikrofonwahl ohne Neustart des Stroms
-✅ Lock-back-Auswahl des Beamformers (v2.7.2) — Lock() bewertet Richtungen über einen ~2-s-Energieverlaufsring, der das Wakeword abdeckt, statt über die abgeklungene Gegenwart (siehe Zustandstabelle der Pipeline)
-✅ Akustische Echoauslöschung (v2.7.3, funktionsfähig seit v2.7.7, Konvergenz hält seit v2.7.8, standardmäßig AUS) — speexdsp-Auslöschung auf dem gesamten Mikrofonpfad; Referenz am ALSA-Schreibvorgang des Lautsprechers abgegriffen. aecDelayMs auf 0 lassen (gemessen; höhere Werte sind nicht kausal — siehe v2.7.7). Konvergiert je Antwort auf ~14 dB und *bleibt* seit v2.7.8 über Gespräche hinweg konvergiert (Trimmungen des Reglers setzen den Filter nicht mehr zurück); die Telemetrie `[aec] att=` und `[mic] clock/stall` im Gerätelog zeigt Live-Dämpfung und Aufnahmegesundheit. Im Dashboard unter den erweiterten Mikrofoneinstellungen aktivierbar
-✅ Feste 24-Bit-Mikrofonverstärkung (v2.7.1) — `micGainDb` (Standard +24 dB) auf das volle 24-Bit-Sample während der S16-Extraktion angewandt; holt das niedrige Byte zurück, das die alte Abschneidung verwarf (Sprache lag in 16 Bit bei ~3–20 LSB). Validiert: Die Rate leerer STT-Transkripte fiel von 6/19 Gesprächen auf 0/5, das Erkennungs-RMS von 0,0003 auf 0,006–0,009, clipped=0
-✅ PTY-Shell im Dashboard (v2.7.1) — das Gerät legt ein echtes Pseudoterminal an (mksh-Prompt, Zeilenbearbeitung, top/vi, Größenänderung); das Dashboard-Terminal ist xterm.js; programmatische Sitzungen (OTA) behalten die rohe Pipe
-✅ Größenbegrenzung für /tmp/server.log (v2.7.1) — Trimmschleife in start_server.sh, begrenzt auf ~5,5 MB; VAD-Diagnose auf ~10 min verlangsamt, mit sofortiger Meldung der Clipping-Zählung
-✅ Zustandsbewusste Startseite (v2.7.1) — / zeigt Ersteinrichtung (bernsteinfarbener Ring) oder Anmeldung (grüner Ring) und leitet angemeldete Besucher nach /dashboard; Sitzungen im localStorage
-✅ Von HA gesteuerte Gesprächsfortsetzung — Flag continue_conversation verdrahtet; nach der TTS-Wiedergabe wird sofort ein neues Sprachgespräch ausgelöst, wenn HA das Flag im INTENT_END setzt (v2.6.4)
-✅ audioChanDepth des Lautsprechers auf 32 — verhindert Aussetzerstottern mitten im Strom bei längeren TTS-Antworten (v2.6.4)
-✅ Offline-IP-Anzeige im Dashboard — zeigt die zuletzt bekannte IP mit dem Zusatz „(last seen)", wenn offline; unterdrückt das Docker-NAT-Artefakt 127.0.0.1 (v2.6.4)
-✅ Strukturierte Spur je Gespräch — [TURN]-Logzeile mit vollständigen Stufenzeiten am Gesprächsende
-✅ Sichtbarkeit von OWW-Beinahe-Treffern — Werte > 0,05 auf INFO protokolliert (ratenbegrenzt, 1 alle 2 s je Gerät), dauerhafter Zähler im Status-Reiter des Dashboards (v2.6.5)
-✅ VAD-Schwelle bis 0,0001 einstellbar (Untergrenze des Dashboard-Reglers korrigiert)
-✅ Struktureller Beamformer-Fix — die Glätter laufen immer, die Ausgabe hängt vom Sperrzustand ab und nicht von einem Flag
-✅ AGC-Release während Stille eingefroren — verhindert, dass der Grundgeräuschpegel über die VAD-Schwelle verstärkt wird
-✅ Akustische Rückkopplung behoben — der Controller schläft nach dem EOS die Audiodauer ab, bevor das Mikrofon neu startet
-✅ Der Spinner läuft die volle Antwortdauer — Dauer aus der PCM-Länge berechnet
-✅ VAD-Schwelle standardmäßig 0,001 — passt zum gemessenen Bereich von Gesprächssprache auf 1,3 m (v2.6.5; war 0,003 und lag damit über leiser Sprache)
-✅ Mute-Taste — schaltet das Mikrofon stumm, roter LED-Ring, blockiert die Aktionstaste
-✅ Lautstärketasten — lokal abgefangen, cyanfarbene LED-Rückmeldung
-✅ Klicken des Verstärkers beim Start unterdrückt — Reihenfolge Mute → DAC mit Stille takten → Verstärker an → Mute aus in pcm_speaker.go Init (Reihenfolge korrigiert am 2026-07-10)
-✅ Rauschen des Verstärkers im Leerlauf beseitigt — geordnetes Herunterfahren per SIGTERM schaltet stumm und den Verstärker ab (PcmSpeaker.Close); start_server.sh wiederholt das Abschalten nach jedem Serverende als Rückfallsicherung für SIGKILL/Panik
-✅ LED-Denkspinner — vom THINKING-Signal des Voice-Servers ausgelöst
-✅ Vorlauf verwerfen — die ersten Frames des Mikrofonstroms werden verworfen, um ein Durchschlagen des Wakewords zu vermeiden
-✅ Sprachschwelle — leise Aufnahmen werden verworfen, ohne Whisper zu bemühen
-✅ OWW während der Lautsprecherwiedergabe unterdrückt — verhindert Fehlauslöser auf die eigene Stimme
-✅ Veraltete Mikrofon-Warteschlange nach einem Sprachgespräch geleert — verhindert sofortiges erneutes Auslösen
-✅ Konfiguration beim Verbinden vom Controller geschoben — VAD-/OWW-Parameter zur Laufzeit angewandt
-✅ Gerätelogs über den Control-WebSocket zum Controller gestreamt
-✅ Benachrichtigung bei Mute-Wechsel — das Gerät sendet eine mute_state-Nachricht an den Controller
-✅ Shell-Zugang — das Gerät wählt bei shell_open nach außen zum Controller, keine eingehenden Ports
-✅ OTA-Updates über das Controller-Dashboard — A/B-Slot-System, lokaler Binary-Upload, sofortiges Zurückrollen (Link umlegen, keine Übertragung)
-✅ Automatisches Zurückrollen auf dem Gerät — start_server.sh versucht es 3×, bevor es auf den inaktiven Slot umlegt; funktioniert ohne Controller
-✅ Parametrischer 8-Band-EQ (controllerseitig, SVG-Frequenzgangkurve, live aktualisierend)
-✅ Wakeword-Modell ohne Neuverbinden des Geräts austauschbar
-✅ Überwachung der Hardware-Ressourcen — CPU-%, RAM, Speicher, WLAN-RSSI alle 30 s; Signalbalken im Dashboard
-✅ Zeitlimit für Gespräche des Voice-Servers (45 s) — der Controller hängt nie an einem nicht reagierenden Voice-Server
-✅ Boot-Protokollierung nach /tmp/server.log
-✅ mDNS über grandcat/zeroconf — konform zu RFC 6762/6763, zuverlässiges Auffinden
-✅ Keepalives im WebSocket-Protokoll — tote Verbindungen innerhalb von 30 s erkannt
-✅ Verwaltungs-Dashboard des Controllers — React-SPA, mitgelieferte Assets, keine CDN-Abhängigkeit
-✅ Sicherer WLAN-Wechsel je Gerät (Reiter „WiFi" im Dashboard) — Ausführung auf dem Gerät mit automatischem Zurückrollen: vollständiger Ersatz der wpa_supplicant.conf, geschrieben *während das WLAN deaktiviert ist*, plus geprüfter `svc wifi`-Neustart (über sh — das Skript hat keine Shebang-Zeile), gekoppelt an Verbinden mit der Ziel-SSID ≤45 s → IP ≤20 s → Controller-Wiederverbindung ≤90 s; jeder Fehlschlag stellt die gesicherte Konfiguration wieder her; nicht bestätigte Änderungen rollen beim Start zurück (Wiederherstellung über eine Ausstehend-Markierung, dieselbe Philosophie wie bei den A/B-Slots); die Ergebniszustellung erfolgt mindestens einmal (wird wiederholt, bis der Controller mit wifi_commit quittiert); ein Schnellpfad über die zuletzt bekannte Controller-Adresse macht Controller in anderen Subnetzen ohne mDNS erreichbar. Alle drei Pfade am 2026-07-11 auf Hardware validiert: Zurückrollen (Unsinns-SSID, 65 s Umlauf), Wiederherstellung beim Start, Gutfall (30 s)
-✅ LED-Ring-Szenen (vom Controller gerendert) — Paletten Standard/Airy/Malevolent/Pride/Custom für Zuhör-Ring und Denkspinner (em_scenes.py); der Mute-Ring bleibt in jeder Szene rot und der Lautstärkebogen cyan; die Frames tragen ein ausdrückliches `listening`-Flag, damit die Richtungsüberlagerung des Geräts bei jeder Farbe funktioniert (mit Rückfall auf die Alles-Grün-Heuristik für alte Controller), und die Überlagerung hellt die Szenenfarbe auf, statt Grün zu malen
-✅ Live-Zustand im Dashboard — mute/listen/speak/offline über WebSocket-Ereignisse plus 5-s-Abfrage
-✅ Shell-Terminal im Dashboard — Root-Shell im Browser, Strg+C unterstützt
-✅ Satelliten-Integration über die native ESPHome-API (das einzige Sprach-Backend seit 2026-07-12)
-✅ Beide Geräte in HA als Sprachsatelliten registriert (Port 16001, 16002)
-✅ Der ESPHome-Einrichtungsassistent läuft auf beiden Geräten durch
-✅ TTS-Durchsagen über die Assist-Pipeline von HA (MP3→PCM per ffmpeg, eigenständige Wiedergabe)
-✅ Übergänge MediaPlayerState ANNOUNCING/IDLE für den Audiotest des Assistenten
-✅ Lebenszyklus der ESPHome-Ports — Ports gehen mit dem physischen Verbinden/Trennen des Geräts hoch und runter
-✅ mDNS _esphomelib._tcp je Gerät (Suffix device_id[-12:], um Präfixkollisionen zu vermeiden)
-✅ DB-Migration v2 — Spalten esphome_api_port, esphome_noise_psk, next_esphome_port
-✅ ~~Umgebungsvariable VOICE_MODE~~ — das claracore-Backend wurde am 2026-07-12 entfernt; esphome gilt bedingungslos
-✅ Von OWW und Taste ausgelöste Sprachgespräche im esphome-Modus — vollständiger Umlauf Wakeword → STT → Absicht → TTS → Lautsprecher gegen echtes HA Core 2026.6.4 bestätigt
-✅ Durchsage von HA-Seite (Test im Einrichtungsassistenten, TTS-Push) spielt korrekt auf dem Gerät — Callback wird live nachgeschlagen, nicht beim Verbinden eingefroren
-✅ Lokales Zeitlimit ohne Sprache (5 s) — entspricht Alexas Verhalten bei „Wakeword, dann Stille"; korrekt auf begrenzte Sprachgespräche beschränkt, nie auf den dauerhaften OWW-Zuhörstrom
-✅ Das VAD-Ende von HA ist maßgeblich für das Gesprächsende — _stream_mic_audio endet bei HAs STT_VAD_END/ERROR, die RMS-Gatter-Endmarke des Geräts ist beratend, harte Grenze bei 20 s; behebt den hängenden Spinner in lauten Räumen (v2.6.5, C1)
-✅ Gesprächsfortsetzung funktioniert tatsächlich — das Mikrofon wird vor jedem Fortsetzungsgespräch neu gestartet; in v2.6.4 kaputt ausgeliefert (v2.6.5, C2)
-✅ Vorlauf verwerfen nur bei Wake-Gesprächen — Tasten- und Fortsetzungsgespräche übergeben 0, auf diesen Pfaden wird das erste Wort nicht abgeschnitten (v2.6.5, C3)
-✅ Mute ist auf dem Gerät maßgeblich — Mute stoppt den laufenden Mikrofonstrom, Unmute stellt ihn wieder her; solange der Ring rot ist, verlässt kein Ton das Gerät (v2.6.5, C5 teilweise — vollständiges ADC-Mute des Chips steht aus)
-✅ Schalter für OWW-Speex-Rauschunterdrückung (owwSpeexNs) — openwakewords 16-kHz-nativer speexdsp-Unterdrücker nur auf dem Wake-Pfad, in Dashboard/API/DB verdrahtet, standardmäßig aus (v2.6.5, Q1)
-✅ Vorlaufring auf dem Gerät — ~512 ms Audio vor dem Gatter werden beim Öffnen des VAD-Gatters ausgespült; behebt die Ansatz-Naht, die OWW-Werte drückte und erste Laute abschnitt (v2.6.5)
-✅ AGC-Reset bei jedem Start des Mikrofonstroms und Mikrofon vor der TTS-Wiedergabe gestoppt — eine vom TTS-Echo zerdrückte Verstärkung kann das nächste Gespräch nicht mehr vergiften; ermöglichte das Wiedereinschalten des AGC (v2.6.5)
-✅ Unterscheidung zwischen Lautsprecher-EOS und Aussetzer — 0x03 EOS setzt EndStream(), natürliches Leerlaufen wird nicht mehr als Aussetzer protokolliert (v2.6.5)
-✅ Bei Überlauf der Mikrofon-Warteschlange fällt das älteste Frame, nicht das neueste — der Audioausklang bleibt lückenlos an der Echtzeit (v2.6.5)
-✅ voice_queue vor dem Umschalten der oww_paused-Weiterleitung geleert — alte Umgebungsframes bluten nicht mehr als STT-Vorspann ins nächste Gespräch (Regressionsfix in v2.6.5)
-✅ ADC-Mute-Regler für alle vier Chips identifiziert — der tinymix-Auszug in device/tools/ bestätigt B–D bei 123/124, 141/142, 159/160
-```
+- **emOS:** Die Boot-Partition trägt emOS (unser init und unser Userspace um
+  den eigenen Kernel des Echos herum), Revoice startet beim Booten, und
+  Android läuft nie. Das ursprüngliche Boot-Image sichert der Assistent, und
+  es lässt sich aus TWRP in etwa zehn Sekunden zurückschreiben.
+- **FireOS mit Root:** FireOS 5 bootet mit permissivem SELinux und
+  Magisk-Root, der Alexa-Stack ist abgeschaltet, und Revoice läuft als
+  init-Dienst.
 
-**HA-MVP erreicht** — das ist der Meilenstein, den ESPHOME_SPEC.md §1 „die
-letzte funktionale Hürde vor einer öffentlichen v1-Ankündigung" nannte.
-Revoice-Geräte arbeiten ohne ClaraCore als echte
-Home-Assistant-Sprachsatelliten.
+In beiden Fällen bleiben das Entsperren und TWRP an Ort und Stelle, und das
+Echo wählt sich von sich aus zum Controller.
+
+Die Liste Punkt für Punkt, die diese Seite früher beschloss, beschrieb die
+Firmware im Stand von v2.7 und war veraltet. Was die einzelnen Teile heute
+tun, steht in [configuration.md](configuration.md) und
+[voice-pipeline.md](voice-pipeline.md), und wie es dahin kam, im
+[Journal](../JOURNAL.md).

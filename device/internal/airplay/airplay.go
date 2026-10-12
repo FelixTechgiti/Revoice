@@ -64,6 +64,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wilbowes/EchoMuse/internal/atomicfile"
 	"github.com/wilbowes/EchoMuse/internal/endpoint"
 	"github.com/wilbowes/EchoMuse/internal/musicplane"
 	"github.com/wilbowes/EchoMuse/internal/netfilter"
@@ -838,16 +839,10 @@ func (c *Client) writeConfig() string {
 			"latency offset", filepath.Dir(path), err)
 		return ""
 	}
-	tmp := path + ".part"
-	if err := os.WriteFile(tmp, []byte(renderConfig(c.opts.BackendDelaySec, c.metadataPipe())), 0o644); err != nil {
+	cfg := renderConfig(c.opts.BackendDelaySec, c.metadataPipe())
+	if err := atomicfile.Write(path, []byte(cfg), 0o644); err != nil {
 		log.Printf("[airplay] cannot write %s: %v — starting without the "+
-			"latency offset", tmp, err)
-		return ""
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		log.Printf("[airplay] cannot install %s: %v — starting without the "+
 			"latency offset", path, err)
-		_ = os.Remove(tmp)
 		return ""
 	}
 	return path

@@ -61,6 +61,22 @@ indem sie Amazon zuerst auf Fire OS 6574.1 aktualisieren ließen
    Stand zu bringen.
 4. `brick.sh` (oder `fastbrick.sh`) erneut versuchen.
 
+### Der Assistent bleibt bei „Boot-Image sichern" stehen und nennt `boot_a_x`.
+**Der Echo trägt die Partitionstabelle von amonet v1 unter einem v2-Entsperren.**
+v2 zu installieren soll die ursprüngliche Tabelle wiederherstellen, und auf
+diesem Echo hat es das nicht. Der Assistent hat nichts gelesen und nichts
+geschrieben. FireOS neu aufzuspielen ändert die Tabelle nicht und hilft
+deshalb nicht.
+
+Ein Besitzer kam daran vorbei, indem er amonet v2 noch einmal installierte,
+als Zip aus TWRP ([#712](https://github.com/wilbowes/EchoMuse/issues/712)). **Wir haben das selbst nicht
+durchgeführt und können dir nicht sagen, dass es sicher ist:** Es schreibt
+Partitionstabelle und Bootloader neu, und ein Echo, auf dem das auf halbem Weg
+scheitert, startet womöglich nicht mehr. Frag zuerst im XDA-Thread und zitiere
+die Fehlerzeile des Assistenten.
+
+### Das Sideload von FireOS 5.5.5.4 scheitert mit einem roten Aufblitzen des Rings.
+Spiel es noch einmal per Sideload auf. Beim zweiten Versuch klappt es meistens.
 
 1. Verbinde den Dot mit einem Amazon-Konto (irgendeinem — leg dir ein
    Wegwerfkonto an), damit er ins WLAN kommt.
@@ -164,12 +180,33 @@ thread if not ([#619](https://github.com/wilbowes/EchoMuse/issues/619),
 image puts the boot partition back from TWRP if you need to start over.
 
 ### Connect Console fails on Linux.
-Two Linux users with Chromium have hit this and it isn't root-caused yet
-([#605](https://github.com/wilbowes/EchoMuse/issues/605)). Our guess is
-another program holding the Echo's serial port. ModemManager probes new USB
-serial devices on many distributions, so try `sudo systemctl stop
-ModemManager` and `adb kill-server` before clicking Connect Console. If it
-still fails, open the console yourself (below) and finish the WiFi step there.
+"Failed to open serial port" in the wizard means the browser was refused the
+Echo's serial port by your computer; the Echo has booted emOS and is waiting
+for WiFi. Three Linux users with Chromium have hit it
+([#605](https://github.com/wilbowes/EchoMuse/issues/605),
+[#767](https://github.com/wilbowes/EchoMuse/issues/767),
+[#810](https://github.com/wilbowes/EchoMuse/issues/810)), and one on Fedora
+got past it by joining the group that owns the port:
+
+```
+sudo usermod -aG dialout $USER     # then log out and back in
+```
+
+ModemManager also probes new USB serial devices on many distributions, so
+run `sudo systemctl stop ModemManager` and `adb kill-server` before clicking
+Connect Console. If it still fails, open the console yourself (below) and
+finish the WiFi step there.
+
+### After the reboot into emOS the ring sits blue, or part of it turns red.
+**The Echo has booted emOS and is waiting for WiFi.** A blue ring with a
+brighter segment throbbing means it has no network saved yet, which is where
+every new install stops until the wizard's WiFi step. Red means a saved
+network did not connect within two minutes. Neither is a failed flash.
+
+If the wizard can't open the console to finish, open it yourself (below) and
+run `em-wifi`: it scans, you pick a network by number and type the password
+([#810](https://github.com/wilbowes/EchoMuse/issues/810),
+[#825](https://github.com/wilbowes/EchoMuse/issues/825)).
 
 ---
 
@@ -212,11 +249,21 @@ Nachsehen die Konsole öffnen und `tail -n 40 /tmp/server.log` laufen lassen:
 wiederholte Zeilen `mDNS: no server found` heißen, dass die Suche das Problem
 ist.
 
+Auch mit einer festen Adresse muss die Firewall den Echo noch TCP 8767 und
+8770 auf dem Controller öffnen lassen (die Standardports). Ein mDNS-Relay
+zwischen den VLANs reichte bei einem Besitzer nicht ([#827](https://github.com/wilbowes/EchoMuse/issues/827)).
+
 ### Kein Ton unter emOS mit FireOS 6.
 Controller auf **2.24.1** und Gerät auf **v2.16.0** aktualisieren. Ältere
 Firmware ließ einen Teil des Lautsprecherwegs auf FireOS 6' Kernel
 abgeschaltet ([#587](https://github.com/wilbowes/EchoMuse/issues/587)).
 
+### Wie aktualisiere ich emOS?
+Öffne den Echo im Dashboard und geh auf **Updates**. Ein Echo auf emOS hat
+dort eine **emOS**-Fläche mit der laufenden Version und der neuesten
+Veröffentlichung; drück **Aktualisieren**. Das braucht Controller 2.26.0 oder
+neuer und installiert emOS 0.10 oder neuer. Auf einem älteren Controller
+führst du stattdessen die Bau- und Flash-Schritte des Assistenten erneut aus.
 
 ### Wie aktualisiere ich emOS?
 Öffne den Echo im Dashboard und geh auf **Updates**. Ein Echo auf emOS hat
@@ -380,6 +427,12 @@ Der Reihe nach:
    openWakeWord-Modelle passen sehr unterschiedlich gut zu einer bestimmten
    Stimme.
 
+Springt er gar nicht erst an, während die Aktionstaste funktioniert, kann das
+mittlere Mikrofon ausgefallen sein: Das Wakeword horcht allein auf diesem.
+**Config → Microphones → Advanced → Wake word microphone** verlegt es auf
+eines der sechs am Rand ([#705](https://github.com/wilbowes/EchoMuse/issues/705)). Das ist Firmware v2.18.0
+(Early Access ab v2.18.0-ea.2).
+
 Wenn er in einem ruhigen Raum auf normale Sprechentfernung immer noch nicht
 anspringt, ist das eine Meldung wert — mit Modellnamen und Entfernung.
 
@@ -387,6 +440,14 @@ anspringt, ist das eine Meldung wert — mit Modellnamen und Entfernung.
 Sensitivity Richtung „Precise" schieben. Wenn er speziell bei laufendem
 Fernseher auslöst, ist [#294](https://github.com/wilbowes/EchoMuse/issues/294)
 die offene Arbeit dazu — schreib dazu, was lief.
+
+### Kann er einen Ton spielen, wenn er das Wakeword hört?
+Ja, ab Controller 2.25.0 und Firmware v2.17.0. In der Fläche **Config → Wake
+word** des Echos steht er in der rechten Spalte, unter dem Regler für das
+Arbitrierungsfenster, mit den Stufen Leise, Mittel und Laut. Standardmäßig
+aus. Ist die Fläche ausgegraut, folgt der Echo der Flotteneinstellung — stell
+ihn auf Gerät um oder ändere es in den Flotteneinstellungen. Der Ton ist
+eingebaut und lässt sich nicht durch einen eigenen ersetzen.
 
 ### Kann ich mein eigenes Wakeword nutzen?
 Ja — [oww_forge](../oww_forge/README.md) trainiert eines, und du installierst
@@ -405,6 +466,19 @@ Transkription falsch ist.
 Sieh unter **Config → Playback** nach: Limiter und Bass-Schutz sollten an
 sein. Wenn es weiter verzerrt, melde den Lautstärkeprozentsatz — die Zahl ist
 die Diagnose.
+
+### Die 3,5-mm-Klinke ist sehr leise, oder es spielt nur ein Kanal.
+Behoben in Firmware v2.18.0 (Early Access ab v2.18.0-ea.2). Ein
+Codec-Schalter, den das Original mit eingestecktem Stecker einschaltet, wurde
+nie gesetzt ([#566](https://github.com/wilbowes/EchoMuse/issues/566), [#669](https://github.com/wilbowes/EchoMuse/issues/669)). Auf älterer
+Firmware holt `tinymix -D 0 "Audio_DacMux_Setting" On` aus einer Shell das bis
+zum nächsten Neustart zurück.
+
+### Der interne Lautsprecher ist leiser als beim Original.
+Bei manchen Dots gemeldet und bei anderen desselben Modells nicht
+([#630](https://github.com/wilbowes/EchoMuse/issues/630)); eine Einstellung dafür gibt es noch nicht.
+`HP Driver Gain` mit `tinymix` zu ändern hält ein paar Sekunden, weil die
+Firmware ihre eigene Lautsprecher-Wegwahl immer wieder zurückschreibt.
 
 ### Es klingt schlechter als das originale Alexa.
 Teils richtig, teils behoben. Ein Übersteuern des DAC oberhalb von Unity Gain
@@ -437,6 +511,16 @@ schalte es wieder aus.
 Behoben; aktualisiere den Controller. Bricht eine lange Antwort weiterhin
 früh ab, ist ein Support-Bundle mit dem Zeitpunkt die richtige Meldung.
 
+### Ein langsamer Gesprächsagent kommt nie zum Antworten.
+Der Controller wartet 30 Sekunden auf den Beginn der Antwort von Home
+Assistant und beendet dann das Gespräch — ein Agent, der Werkzeuge aufruft,
+kann das überschreiten. Ab Controller 2.26.0 (Early Access ab 2.26.0-ea.2)
+erhöhst du **Reply wait (seconds)** in den Optionen des Add-ons, oder
+`EM_TTS_WAIT_TIMEOUT` im Container, auf bis zu 120 ([#805](https://github.com/wilbowes/EchoMuse/issues/805)).
+
+### Lange Antworten brechen mittendrin ab.
+Behoben; aktualisiere den Controller. Bricht eine lange Antwort weiterhin
+früh ab, ist ein Support-Bundle mit der Uhrzeit die richtige Meldung.
 [#324](https://github.com/wilbowes/EchoMuse/issues/324).
 
 ### Kann ich ihn unterbrechen, während er spricht?
@@ -527,6 +611,11 @@ Sollten sie nicht — die Arbitrierung wählt eines aus. **Config → Wake word 
 Arbitration window** verbreitert das Fenster, in dem Geräte verglichen werden.
 Wenn danach immer noch beide antworten, melde es.
 
+Antwortet der falsche — etwa ein Echo quer durchs Haus statt der neben dir —:
+Ab Controller 2.26.0 (Early Access ab 2.26.0-ea.2) antwortet der Echo, der
+dich am lautesten gehört hat. Davor war es der, der dich zuerst gehört hatte
+([#747](https://github.com/wilbowes/EchoMuse/issues/747)).
+
 ### Kann ich einen defekten Echo gegen einen neuen tauschen und seine Historie behalten?
 Noch nicht — [#133](https://github.com/wilbowes/EchoMuse/issues/133).
 
@@ -600,8 +689,8 @@ Unterstützt wird heute nur der Echo Dot Gen 2 („biscuit"). An Portierungen au
 der Community wird gearbeitet: Echo Show 8
 ([#358](https://github.com/wilbowes/EchoMuse/pull/358)), Echo Show 5
 ([#36](https://github.com/wilbowes/EchoMuse/issues/36)) und Echo 2
-([#554](https://github.com/wilbowes/EchoMuse/pull/554)); der ursprüngliche
-Echo Dot Gen 3 wird gerade vermessen
+([#687](https://github.com/wilbowes/EchoMuse/pull/687)), und @shortgame11 hat Revoice in einem Fork auf einem
+Echo Dot Gen 3 am Laufen
 ([#527](https://github.com/wilbowes/EchoMuse/issues/527)).
 Andere Boards sind willkommen — die Android-spezifische Fläche umfasst rund
 zwanzig Aufrufstellen, ein neues Board ist also überwiegend ein Binding für

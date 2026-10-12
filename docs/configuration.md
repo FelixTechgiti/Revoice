@@ -129,8 +129,9 @@ silence and carries on when the next part arrives, so the reply is not lost, but
 it pauses. Try it with a few long replies. If they come out in fits and starts,
 turn it off.
 
-With it on, the 30 seconds the controller waits for a reply to begin only has to
-be met by the first words.
+With it on, the wait for a reply to begin — 30 seconds by default, and the
+add-on's **Reply wait** option if a tool-using agent needs longer (#805) — only
+has to be met by the first words.
 
 ### Speaker protection
 Hält Bass, den der Treiber nicht liefern kann, davon ab, alles darüber zu
@@ -289,10 +290,9 @@ inklusive —, ob der Controller erreichbar ist oder nicht.
 ## 02 — Wake word
 
 Wie das Gerät entscheidet, dass du das Zauberwort gesagt hast. Standardmäßig
-passiert diese Arbeit auf dem Controller, nicht auf dem Dot — der Dot streamt
-nur Ton dorthin. Der Dot kann diese Arbeit auch selbst erledigen, entweder
-neben dem Controller zum Vergleich oder statt seiner; siehe **Wake word
-detection** unten.
+erledigt der Dot diese Arbeit selbst und schickt nichts, bis er das Wort hört.
+Der Controller kann sie stattdessen übernehmen, wobei der Dot ihm dann
+durchgehend Ton streamt; siehe **Wake word detection** unten.
 
 ### Wake word model
 Welches Wort weckt: Hey Jarvis, Alexa, Hey Mycroft oder Hey Rhasspy. Das sind
@@ -350,21 +350,19 @@ du das Wakeword änderst.
 
 ### Arbitration window
 Bei mehr als einem Echo startete das Wakeword in Hörweite von zweien früher
-zwei konkurrierende Gespräche. Jetzt **antwortet das erste Gerät, das dich
-hört, sofort**, und jedes andere Gerät, das dasselbe Wort innerhalb dieses
-Fensters erkennt (Standard 700 ms), tritt still zurück.
+zwei konkurrierende Gespräche. Jetzt **antwortet einer**: der Echo, der dich
+am lautesten gehört hat, normalerweise also der im Raum, in dem du stehst.
+Jeder andere Echo, der dasselbe Wort innerhalb dieses Fensters gehört hat
+(Standard 700 ms), tritt still zurück.
 
-Es gibt **keine Verzögerungskosten**: Der Gewinner beansprucht das Gespräch
-sofort, statt das Fenster abzuwarten, ein einzelnes Aufwachen ist also genau
-so schnell wie vorher. Das Fenster entscheidet nur, wie lange danach ein
-zweites Gerät noch als „dieselbe Äußerung" zählt. `0` schaltet es ab, und es
-gilt nie, wenn nur ein Gerät online ist.
+Das Wählen kostet einen Moment. Sind zwei oder mehr Echos online, wartet ein
+Wecken bis zu eine Viertelsekunde, damit jeder Echo gezählt wird, der es
+gehört hat. Mit einem Echo wird nicht gewartet. Das Fenster selbst entscheidet
+nur, wie lange danach ein zweiter Echo noch als „dieselbe Äußerung" zählt.
+`0` schaltet die Arbitrierung ab.
 
-Eine frühere Fassung wartete das Fenster stattdessen ab und gab das Gespräch
-dem Gerät, das dich am *besten* gehört hatte. Das wurde verworfen: Es belastete
-jedes Aufwachen mit rund 364 ms, selbst ohne Konkurrenz, und Felddaten zeigten,
-dass der Gewinner nach Signal-Rausch-Abstand ein *schlechteres* Transkript
-lieferte als das Gerät, das dich schlicht zuerst gehört hatte.
+Vor Controller 2.26.0 antwortete der Echo, der das Wort zuerst gehört hatte.
+Die Gründe für die Änderung stehen in [listening.md](listening.md).
 
 ### Wake sound
 Plays a short rising tone when the Echo hears the wake word. Off by
@@ -963,12 +961,14 @@ Neustart des Controllers:
 
 | Einstellung | Was es ist |
 |---|---|
-| `SERVER_IP` | Die LAN-IP des Controller-Rechners — die Adresse, zu der Geräte verbinden sollen. Leer lassen, um sie von diesem Host zu erkennen; der Controller weigert sich zu starten, statt eine geratene Adresse anzukündigen, und warnt, wenn die erkannte nach einer Container-Bridge aussieht. |
+| `SERVER_IP` | Die LAN-IP des Controller-Rechners — die Adresse, zu der Geräte verbinden sollen. Leer lassen, um sie von diesem Host zu erkennen; der Controller weigert sich zu starten, statt eine geratene Adresse anzukündigen, und warnt, wenn die erkannte nach einer Container-Bridge aussieht. mDNS wird nur auf der Schnittstelle dieser Adresse angekündigt, Home Assistant muss also im selben Netz sein, um die Echos zu finden; gehört die Adresse nicht zu diesem Host, sagt der Controller das in seinem Log und kündigt auf allen Schnittstellen an. |
+| `DB_PATH` | Wo die Datenbank liegt. Die Gerätezertifikate und die Aufnahmen liegen daneben. Das veröffentlichte Image setzt standardmäßig `/app/data/revoice.db`, also den Ordner, den die Compose-Dateien einhängen — damit übersteht sie ein Update mit und ohne `.env`. Installationen auf dem Blech sollten den Wert setzen. |
 | `OWW_MODEL` / `OWW_THRESHOLD` | Startvoreinstellungen für Wakeword und Empfindlichkeit — die Werte im Dashboard überschreiben sie. |
 | `DEVICE_APPROVAL` | `strict` (du gibst jedes neue Gerät frei — empfohlen) oder `auto`. |
-| `SERVER_TLS_PORT` | Port für die verschlüsselte Geräteverbindung (wss) — Standard 8770, `0` schaltet ab. Geräte wechseln automatisch dorthin, sobald sie Zugangsdaten halten: aus dem Einrichtungsassistenten, aus der Freigabe eines neuen Geräts, oder aus dem Koppeln (Aktionstaste des Echos 5 s halten, dann **Kopplung freigeben**). |
+| `SERVER_TLS_PORT` | Port für die verschlüsselte Geräteverbindung (wss) — Standard 8770, `0` schaltet ab. Setze ihn nicht auf `0`, sobald Echos gekoppelt sind: Ein Echo, das Zugangsdaten hält, fällt nicht auf die unverschlüsselte Verbindung zurück. Geräte wechseln automatisch dorthin, sobald sie Zugangsdaten halten: aus dem Einrichtungsassistenten, aus der Freigabe eines neuen Geräts, oder aus dem Koppeln (Aktionstaste des Echos 5 s halten, dann **Kopplung freigeben**). |
 | `REQUIRE_DEVICE_TLS` | Setze es auf `1` **erst, wenn jedes Gerät in seinem Status-Reiter „wss (TLS)" zeigt** — ab dann weist der Controller unverschlüsselte oder tokenlose Geräteverbindungen ab. |
 | `EM_EXTRA_CA_CERT` | Pfad zu einem PEM-CA-Zertifikat, dem vertraut werden soll — nötig, wenn Home Assistant oder ein Medienserver, von dem du streamst, per HTTPS mit deiner eigenen internen Zertifizierungsstelle ausgeliefert wird. Siehe unten. |
+| `EM_TTS_WAIT_TIMEOUT` | Sekunden, die auf den Beginn der Antwort von Home Assistant gewartet wird, bevor das Gespräch aufgegeben wird — Standard 30, höchstens 120. Erhöhe den Wert, wenn dein Gesprächsagent Werkzeuge benutzt und länger braucht. Das Add-on hat dieselbe Einstellung als **Reply wait (seconds)**. |
 
 Die vollständige Liste mit Kommentaren steht in `.env.example`.
 

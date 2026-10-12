@@ -24,6 +24,24 @@ def test_dockerfile_copies_every_controller_module():
     )
 
 
+def test_ci_runs_every_dashboard_test():
+    """
+    The dashboard job lists its tests by hand, so a new one that nobody adds to
+    the list passes locally and never runs in CI — green forever, testing
+    nothing. `device_tools.test.mjs` sat that way: written, passing, and run by
+    no job but a developer's own shell.
+
+    Same shape as the Dockerfile guard above, for the same reason: an
+    enumerated list is only honest while something checks it.
+    """
+    ci = (CONTROLLER.parent / ".github" / "workflows" / "ci.yml").read_text()
+    listed = set(re.findall(r"node\s+controller/tests/(\S+\.test\.mjs)", ci))
+    on_disk = {p.name for p in (CONTROLLER / "tests").glob("*.test.mjs")}
+    assert on_disk <= listed, (
+        f"dashboard tests on disk but never run by CI: {sorted(on_disk - listed)}"
+    )
+
+
 def test_dashboard_bundle_is_cache_busted():
     """
     /dashboard must not hand the browser a bare /static/dashboard.js URL.
@@ -138,6 +156,41 @@ def test_addon_default_threshold_matches_the_controller():
         f"em_db.DEFAULT_DEVICE_CONFIG says "
         f"{DEFAULT_DEVICE_CONFIG['owwThreshold']} — a fresh add-on install "
         f"would get the stale value"
+    )
+
+
+def test_addon_default_reply_wait_matches_the_controller():
+    """
+    Same shape as the wake threshold above, and the same failure: config.yaml
+    ships the value a fresh add-on install meets, so a default that drifts
+    from em_turnclock's silently hands out a reply wait nobody chose.
+
+    The RANGE is pinned too, because the two halves of #805's ceiling live in
+    different files: the schema enforces it in the add-on UI, em_turnclock
+    clamps it for the standalone container, and both have to mean the same
+    number. The number itself is bounded by the thinking ring — see
+    `TTS_WAIT_MAX`.
+    """
+    import sys
+    sys.path.insert(0, str(CONTROLLER))
+    import em_turnclock
+
+    config = (CONTROLLER / "config.yaml").read_text()
+
+    default = re.search(r"^\s*tts_wait_timeout:\s*([0-9.]+)", config, re.M)
+    assert default, "config.yaml has no tts_wait_timeout option"
+    assert float(default.group(1)) == em_turnclock.TTS_WAIT_DEFAULT, (
+        f"config.yaml ships tts_wait_timeout {default.group(1)} but "
+        f"em_turnclock.TTS_WAIT_DEFAULT is {em_turnclock.TTS_WAIT_DEFAULT}"
+    )
+
+    rng = re.search(r'^\s*tts_wait_timeout:\s*"int\((\d+),(\d+)\)"',
+                    config, re.M)
+    assert rng, "schema has no tts_wait_timeout range"
+    assert float(rng.group(2)) == em_turnclock.TTS_WAIT_MAX, (
+        f"schema caps tts_wait_timeout at {rng.group(2)} but "
+        f"em_turnclock.TTS_WAIT_MAX is {em_turnclock.TTS_WAIT_MAX} — the "
+        f"add-on would accept a wait the controller then clamps"
     )
 
 

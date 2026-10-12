@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/wilbowes/EchoMuse/internal/atomicfile"
 	"github.com/wilbowes/EchoMuse/internal/devicepaths"
 )
 
@@ -68,11 +69,13 @@ var ConsolePasswordPath = filepath.Join(devicepaths.CurrentDir, consolePasswordN
 //   - **A path is only touched when its content actually differs.** The
 //     config push repeats every setting on every reconnect, and this device
 //     runs for years on eMMC that cannot be replaced.
-//   - **Written to a temp file and renamed**, so init can never read a
-//     half-written record. A truncated password record parses as unusable,
-//     which is read as NO password and would leave the console open exactly
-//     while it looked configured; a truncated timeout reads as a SHORTER one,
-//     which presents as the device dropping the link.
+//   - **Written through atomicfile.Write**, so init can never read a
+//     half-written record — synced before the rename, since ext4 can commit
+//     the rename ahead of the data and a power cut then leaves an EMPTY file
+//     (#849). A truncated password record parses as unusable, which is read
+//     as NO password and would leave the console open exactly while it looked
+//     configured; a truncated timeout reads as a SHORTER one, which presents
+//     as the device dropping the link.
 func writeRecord(name string, want []byte) (changed bool, err error) {
 	want = bytes.TrimSpace(want)
 	clearing := len(want) == 0
@@ -105,17 +108,9 @@ func writeRecord(name string, want []byte) (changed bool, err error) {
 			}
 			continue
 		}
-		tmp := path + ".tmp"
-		if wrErr := os.WriteFile(tmp, append(append([]byte{}, want...), '\n'), 0o600); wrErr != nil {
+		if wrErr := atomicfile.Write(path, append(append([]byte{}, want...), '\n'), 0o600); wrErr != nil {
 			if err == nil {
 				err = wrErr
-			}
-			continue
-		}
-		if mvErr := os.Rename(tmp, path); mvErr != nil {
-			os.Remove(tmp)
-			if err == nil {
-				err = mvErr
 			}
 			continue
 		}

@@ -215,10 +215,10 @@ ab und wieder an. Siehe
 
 ## Schritt 6 — Mit ihm sprechen
 
-Sag das Wakeword — standardmäßig **„Hey Rhasspy"**, im Dashboard änderbar,
+Sag das Wakeword — standardmäßig **„Hey Jarvis"**, im Dashboard änderbar,
 siehe [configuration.md](configuration.md) — und sprich dann normal weiter:
 
-> „Hey Rhasspy … mach das Küchenlicht aus."
+> „Hey Jarvis … mach das Küchenlicht aus."
 
 Der LED-Ring sagt dir, was gerade passiert:
 
