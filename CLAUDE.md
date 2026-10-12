@@ -915,9 +915,11 @@ same compiler image. **`mdnsprobe` and `igmpprobe` are the exceptions and link
 no libc at all** — raw ARM syscalls, a couple of KB each — because they have to
 reach a device as base64 through the shell plane rather than over a cable, and
 because linking nothing removes the bionic question instead of answering it.
-`igmpprobe` is also the one that CHANGES something: it re-asserts a multicast
-membership, which is what Spotify Connect and AirPlay visibility rests on
-(`device/CLAUDE.md` → "The membership nobody renews").
+`igmpprobe` is also the one that CHANGES something — it sends a multicast
+membership report by hand — and it earned its place by DISPROVING the theory
+it was built for: the reports do not repair a device whose own address filter
+has dropped the group (`device/CLAUDE.md` → "The interface stops accepting
+the group").
 
 ## Architecture
 

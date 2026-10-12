@@ -2430,12 +2430,11 @@ gets credited for outages it cannot touch.
 | | what is true | what fixes it |
 |---|---|---|
 | **the membership is gone** | `/proc/net/igmp` has lost 224.0.0.251 while both responders still hold UDP 5353 | restarting the endpoints re-joins the group — `Watcher` |
-| **the membership is present and nothing arrives** | 224.0.0.251 joined, both endpoints healthy, and no mDNS reaches the interface | re-asserting the membership — `Reporter`, and `Prober`'s restart behind it |
+| **the membership is present and nothing arrives** | 224.0.0.251 joined, both endpoints healthy, and no mDNS reaches the interface | the interface's own filter has dropped the group — `MultiKeeper` holds it in ALLMULTI |
 
 **The second row read "unknown" until 2026-10-12**, and it is the one that was
-costing the feature. See "The membership nobody renews" below; the entry here
-is kept short because the row is what somebody reads first and the old one
-sent them to measure rather than to repair.
+costing the feature. See "The interface stops accepting the group" below,
+including the fix that shipped for it first and was wrong.
 
 `Watcher` reads the membership on the network-repair ticker. The rules that
 matter: **it opens no socket of its own** (joining from here would put the
@@ -2446,75 +2445,93 @@ is not absence**; and both the miss threshold and the doubling backoff exist
 because a re-association is exactly when the membership is legitimately gone
 for a moment AND when a restart is least likely to help.
 
-### The membership nobody renews (#367, 2026-10-12)
+### The interface stops accepting the group, and only ALLMULTI fixes it (#367, 2026-10-12)
 
-**Linux emits an unsolicited IGMP membership report only when a group's
-refcount on an interface goes 0 to 1**, and `librespot` and `shairport-sync`
-hold 224.0.0.251 for the life of the process. So the membership is asserted
-once at boot and never again. An access point that ages its snooping entry out
-then stops forwarding the group — and the General Query that would prompt a
-fresh report is itself multicast, so the device can never hear the one message
-that would end it. **The lock is permanent, and every on-device reading stays
-healthy throughout.**
+**Inbound multicast stops for good while every local indicator says it should
+be arriving.** `/proc/net/igmp` holds 224.0.0.251 with two sockets,
+`/proc/net/dev_mcast` carries `01005e0000fb`, `ip maddr` agrees, and
+`Udp: InDatagrams` stays frozen across a browse six other Spotify hosts answer.
 
-Measured on Studio, emOS 0.10.0-fx.1, firmware v2.62.0-fx.1, both endpoints
-alive for 9.8 days:
+Measured on Studio, emOS 0.10.0-fx.1, both endpoints alive for 9.8 days:
 
 | | |
 |---|---|
-| `Udp: InDatagrams` across a 20s browse six other Spotify hosts answered | **0** |
-| the same, with no browse running | **0** |
-| `ip maddr` / `/proc/net/igmp` | 224.0.0.251, `users 2`, throughout |
+| `InDatagrams` across a 20s browse six other hosts answered | **0** |
 | `ping 224.0.0.251` from the device | **4 hosts answered** |
-| `ping 192.168.178.174` | 0% loss, 1.4 ms |
+| `ping` to the controller | 0% loss, 1.4 ms |
+| the firewall's own counter on the `-d 224.0.0.251 dpt:5353` rule | **1 packet in 13 minutes** |
 
 So outbound multicast works, unicast works, the membership is present, and
-nothing arrives. That combination is what identifies this rather than the two
-rows above.
+nothing arrives.
 
-**One report pair repairs it, and nothing has to be restarted.** Sent by hand
-with `device/tools/igmpprobe`, inbound multicast resumed nine seconds later
-(+6 datagrams, then +3) and the controller's scan read AirPlay as visible with
-its RTSP port reachable. `internal/mcast/report.go` now sends it every two
-minutes, inside the 260s a snooping switch ages a membership out at (RFC
-3376's robustness × query interval + max response time). The fade was measured
-at about four and a half minutes, which is that number.
+**It is the Echo's own address filter, and `ip link set wlan0 allmulticast on`
+proves it in two seconds:**
 
-Four things not to undo:
+```
+857856..857859  frozen at 1449228, firewall rule at 1 packet
+                ip link set wlan0 allmulticast on
+857862          1449231, rule 2
+857868          1449237, rule 4
+857873          1449240, rule 5
+```
 
-- **It SENDS a report; it does not join.** A membership held on a socket of
-  ours would make `/proc/net/igmp` read healthy whatever the responders hold,
-  which is exactly what `Watcher`'s own comment forbids — it would remove the
-  instrument and leave the device as invisible.
-- **Both gates, and the second is the subtle one.** `Active` is the gate
-  `Watcher` and `Prober` already use. `Joined` is new: with the kernel's
-  membership genuinely gone, a report would assert something that does not
-  exist, ask the link to forward a group nothing on this device reads, and
-  paper over the fault `Watcher` repairs. The call site reads an unreadable
-  `/proc/net/igmp` as joined, which is the OPPOSITE of `Watcher`'s rule and is
-  right for the opposite reason: there, acting means restarting two
-  subprocesses; here it means two packets of 32 and 40 bytes.
-- **Restarting ONE endpoint is not a re-join.** Measured the same session:
-  killing librespot alone took the refcount 1 to 2, emitted no report, and the
-  device was still invisible twenty seconds later. The existing repair works
-  because `Restart` kills and lets the supervisor re-exec, so both are down
-  together — a property of how it is implemented rather than anything either
-  caller states. Worth knowing before anybody makes that repair gentler.
-- **The socket is `SOCK_CLOEXEC`.** This firmware has about twenty exec sites
-  and two long-lived children, and `internal/sndcloexec` exists because a
-  descriptor opened in C crossed every one of them.
+and the controller's scan immediately read both endpoints visible with their
+ports reachable. The access point had been forwarding the group all along. The
+MediaTek driver's offloaded filter goes stale while the host-side list it was
+built from does not, so **nothing on the device reports the difference** —
+which is why every instrument here read healthy for weeks.
 
-**What this does not answer** is why the link stops forwarding in the first
-place — whether it is the AP's snooping with no querier on the segment, or
-something below it. The repair holds either way, and the honest statement is
-that the trigger is still unmeasured.
+That also explains the repair that did work: restarting both endpoints takes
+the membership refcount to 0 and back to 1, and the kernel then calls the
+driver's `set_rx_mode`, re-programming the chip. Re-programming is a SIDE
+EFFECT of that restart rather than its purpose, and `MultiKeeper` reaches it
+without stopping anybody's music.
+
+**Four things about the keeper:**
+
+- **It re-checks rather than setting once.** The flag is host-side state that
+  a re-association or a supplicant reconfigure can drop, so it rides the same
+  30s repair ticker as the Watcher, for the Watcher's reason.
+- **An unreadable flags word writes nothing.** `SIOCSIFFLAGS` takes the WHOLE
+  word, so composing one from a value nobody read is how `IFF_UP` gets cleared
+  on the interface the device is managed over. `HasAllMulti` returns an error
+  rather than false for exactly this.
+- **Gated on an endpoint being enabled**, the Watcher's and Prober's gate:
+  passing every multicast frame to the host for a feature nobody switched on
+  is a cost with no benefit.
+- **The cost is real and is accepted.** ALLMULTI means the host sees every
+  multicast frame on the segment. On a home LAN that is single figures per
+  second and does not register beside the mic pipeline; on a busy segment it
+  would. The alternative measured here is the two features not working at all.
+
+**A shipped fix was wrong, and this is the record of it.** v2.63.1-fx.1 sent
+unsolicited IGMP membership reports on a cadence, on the theory that the AP had
+aged its snooping entry out. It does not fix this: a report pair sent by hand
+moved `InDatagrams` by **zero over sixteen seconds**. The theory rested on one
+earlier observation — traffic resumed nine seconds after a report — that did
+not replicate when it was re-run, and the whole release was built on it. Two
+lessons, and the second is the one that cost the afternoon:
+
+- **A single observation of a thing starting again is not a measurement of
+  what started it**, on a signal that is intermittent by nature. Re-run it
+  before shipping, and especially before writing release notes that tell
+  somebody their problem is solved.
+- **"Visible" from the controller's scan can be its zeroconf CACHE.** A PTR
+  carries a 4500s TTL, so a scan minutes after a real sighting reports visible
+  against a device that has since gone deaf — and `port_open` is a live TCP
+  probe that succeeds either way. The reading that corroborated the wrong fix
+  was two cached records. Read `InDatagrams` or the firewall counter, which
+  cannot be cached, and treat the scan as the confirmation rather than the
+  measurement.
+
+`device/tools/igmpprobe` stays: disproving that theory is what it did, and it
+is still the way to send a membership report by hand on a device.
 
 **And two counters claim to reach the controller and do not.**
 `Watcher.Repairs` is documented as riding the stats report and nothing reads
 it; `Prober.Repairs` says the support bundle and nothing reads that either.
-Checked 2026-10-12. Both comments now say so rather than asserting it, and
-wiring them — with `Reporter.Sent` and `Failed` beside them — is the part of
-#367 that is not built.
+Checked 2026-10-12. Both comments now say so, and wiring them — with
+`MultiKeeper.Sets` beside them — is the part of #367 that is not built.
 
 ### The probe that measured the firewall, and shipped three times
 

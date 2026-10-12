@@ -2537,42 +2537,23 @@ func startNetworkRepair(sp *spotify.Client, ap *airplay.Client, busy func() bool
 	}()
 
 	// Prevention, and the first thing here that is not a repair. Both repairs
-	// below restart the endpoints, which is the only re-join reachable from
-	// outside the responders' own sockets — and it costs whatever is playing.
-	// Re-asserting the membership on a cadence costs two small packets and
-	// means the group is never aged out, so neither repair has to fire.
-	// Measured on Studio 2026-10-12: inbound multicast frozen across a browse
-	// six other hosts answered, one report pair sent by hand, traffic back
-	// nine seconds later with nothing restarted. See internal/mcast/report.go.
-	if send, _, err := mcast.RawReportSender(mcast.Iface); err != nil {
-		// Said once, here rather than per cadence: the repairs below are the
-		// backstop, so this is a device that is slower to recover rather than
-		// one that cannot.
-		log.Printf("[mcast] could not open the IGMP socket, so the membership "+
-			"will not be renewed: %v", err)
-	} else {
-		// The socket lives for the life of the process, so its close is
-		// deliberately dropped: Run never returns, and a close reachable from
-		// nowhere is a handle somebody would later wire to a teardown that
-		// would silence this for good.
-		reporter := &mcast.Reporter{
-			Send:   send,
-			Active: func() bool { return sp.Running() || ap.Running() },
-			Joined: func() bool {
-				b, err := os.ReadFile(mcast.ProcPath)
-				if err != nil {
-					// The opposite of the watcher's rule, and deliberately:
-					// there, acting on an unreadable procfs means restarting
-					// two subprocesses, so absence of evidence must not act.
-					// Here it means two packets asserting a membership an
-					// endpoint that is running already holds.
-					return true
-				}
-				return mcast.Joined(string(b), mcast.Iface, mcast.Group)
-			},
-		}
-		go reporter.Run(nil, mcast.DefaultReportEvery)
+	// below restart the endpoints, which costs whatever is playing — and the
+	// reason they work at all is a side effect: the membership refcount
+	// reaching 0 and then 1 makes the kernel call the driver's set_rx_mode,
+	// which re-programs the chip's address filter. ALLMULTI reaches the same
+	// place without stopping anybody's music, and on Studio 2026-10-12 it
+	// restored inbound multicast within two seconds with nothing else
+	// touched. See internal/mcast/allmulti.go for the measurement, and for
+	// what the IGMP reports that used to be here got wrong.
+	keeper := &mcast.MultiKeeper{
+		Read: func() (string, error) {
+			b, err := os.ReadFile(mcast.FlagsPath(mcast.Iface))
+			return string(b), err
+		},
+		Set:    func() error { return mcast.SetAllMulti(mcast.Iface) },
+		Active: func() bool { return sp.Running() || ap.Running() },
 	}
+	go keeper.Run(nil, mcast.DefaultInterval)
 
 	// The second way to become invisible, and the one the watcher above cannot
 	// see: the membership present, both endpoints healthy, and nothing from the

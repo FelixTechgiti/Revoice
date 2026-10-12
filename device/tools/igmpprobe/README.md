@@ -10,38 +10,44 @@ v2 report -> group: 32 bytes
 v3 report -> 224.0.0.22: 40 bytes
 ```
 
-## Why it exists
+## Why it exists, and what it disproved
 
-Linux emits an unsolicited membership report only when a group's refcount on
-an interface goes 0 to 1. Revoice holds 224.0.0.251 continuously with two
-long-lived responder sockets — librespot's `libmdns` and shairport-sync's
-`tinysvcmdns` — so after boot the membership is asserted once and never
-renewed. Where the access point ages its entry out, inbound multicast stops;
-and because the IGMP General Query that would prompt a fresh report is itself
-multicast, the device can never hear the one message that would end it. The
-Echo then answers no query, and Spotify Connect and AirPlay are invisible
-until something re-joins the group.
+It was built to test one theory: that the access point had aged its IGMP
+snooping entry out, so the group was no longer being forwarded, and that an
+unsolicited membership report would restore it. Linux emits such a report only
+when a group's refcount on an interface goes 0 to 1, and librespot and
+shairport-sync hold 224.0.0.251 for the life of the process — so nothing ever
+renews it.
 
-The firmware now prevents that on a cadence (`internal/mcast/report.go`).
-This is the instrument that proved the mechanism, and the lever for a device
-running firmware that predates it.
+**The theory is wrong on this hardware, and this tool is what settled it.** A
+report pair sent by hand moved `Udp: InDatagrams` by **zero over sixteen
+seconds**, on a device that had been deaf for eight minutes. The fault is the
+Echo's own multicast address filter: `ip link set wlan0 allmulticast on`
+restores reception in two seconds with nothing else touched, which is what the
+firmware now does (`internal/mcast/allmulti.go`).
 
-## What it measured, 2026-10-12, on Studio
+It is kept because that is a result worth being able to reproduce, and because
+sending a membership report by hand is otherwise not possible on a device with
+no `ip maddr` write and no mDNS tooling.
 
-Both endpoints alive for 9.8 days, the membership present in `/proc/net/igmp`
-throughout, and `Udp: InDatagrams` from `/proc/net/snmp` frozen across a
-20-second browse that six other Spotify hosts answered:
+**One earlier run appeared to support the theory** — traffic resumed nine
+seconds after a report — and it did not replicate. On an intermittent signal,
+one observation of something starting again says nothing about what started
+it. A whole firmware release was cut on that observation before it was re-run.
+
+## What a deaf device looks like, for comparison
 
 ```
-852294..852299  frozen at 1414559      six seconds, nothing arriving
-SEND            v2 -> group, v3 -> 224.0.0.22
-852309          1414565                +6, nine seconds later
-852313          1414568                +3
+857856..857859  frozen at 1449228, firewall rule for 224.0.0.251 at 1 packet
+                ip link set wlan0 allmulticast on
+857862          1449231, rule 2
+857868          1449237, rule 4
+857873          1449240, rule 5
 ```
 
-The controller's scan then read AirPlay as visible with its RTSP port
-reachable. **Restarting one endpoint does not do this**: that takes the
-refcount 1 to 2, emits no report, and leaves the device exactly as invisible.
+Measured on Studio, 2026-10-12. `/proc/net/igmp` held the group and
+`/proc/net/dev_mcast` carried `01005e0000fb` throughout, which is why nothing
+on the device reported the difference.
 
 ## Usage
 
