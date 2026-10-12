@@ -12,6 +12,23 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.66.0-fx.1
+
+### Nur eine Diagnose-Möglichkeit, nichts was du merkst
+
+Diese Fassung ändert am Verhalten des Echos nichts. Sie macht es möglich,
+den AirPlay-Empfänger auf dem Gerät ausführlicher protokollieren zu lassen —
+abgeschaltet, solange niemand es ausdrücklich einschaltet.
+
+**Warum das gebraucht wird:** Eine AirPlay-2-Wiedergabe bricht auf einem
+Testgerät nach wenigen Sekunden ab, während das Telefon weiter glaubt, es
+spiele. Am Gerät gemessen: die Verbindung stand 63 Sekunden, Ton kam 1,4
+Sekunden lang. Warum der Empfänger abbricht, sagt nur er selbst, und dafür
+muss er mehr erzählen als sonst.
+
+**Zu tun ist nichts**, und es ist auch nichts eingeschaltet. Wer nichts von
+AirPlay-2-Abbrüchen merkt, kann dieses Update überspringen.
+
 ## 2.65.0-fx.1
 
 ### Der Echo meldet sich jetzt von selbst, statt auf eine Frage zu warten
