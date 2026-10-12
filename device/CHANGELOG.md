@@ -12,6 +12,44 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.63.0-fx.1
+
+### Der Echo bleibt in den Spotify- und AirPlay-Listen stehen
+
+**Bisher verschwand er nach wenigen Minuten aus beiden Listen und kam von
+selbst nie zurück.** Nur ein Neustart beider Dienste holte ihn wieder, und
+auch der hielt nur ein paar Minuten. Das ist der Grund, aus dem Spotify
+Connect und AirPlay 2 auf diesem Gerät praktisch unbenutzbar waren, obwohl
+beide liefen und alle Anzeigen im Dashboard gesund aussahen.
+
+Der Echo muss dem Netz regelmäßig sagen, dass er noch zu der Gruppe gehört,
+über die Telefone und Rechner ihn finden. Das tat er bisher genau einmal beim
+Einschalten. Vergisst der Router oder Access Point diesen Eintrag — was nach
+gut vier Minuten passiert —, hört er auf, dem Echo diese Nachrichten
+zuzustellen. Und die eine Nachfrage, die den Eintrag erneuern würde, gehört
+selbst zu genau der Sorte, die dann nicht mehr ankommt. Der Zustand kann sich
+also nicht mehr von allein lösen.
+
+Diese Firmware meldet sich jetzt alle zwei Minuten von selbst. Das kostet zwei
+sehr kleine Pakete und nichts weiter.
+
+**Zu tun ist nichts.** Nach dem Update sollte der Echo dauerhaft in der
+Spotify-App und in der AirPlay-Liste stehen. Falls er doch wieder verschwindet,
+ist das ein neuer Befund und gehört in ein Issue — mit der Angabe, wie lange er
+nach dem Neustart sichtbar war.
+
+### Was dabei sonst noch gemessen wurde
+
+Am echten Gerät geprüft: ohne diese Meldung kam beim Echo überhaupt keine
+Gruppennachricht mehr an — null Pakete, während sechs andere Geräte im selben
+Netz auf dieselbe Anfrage antworteten. Nach einer einzigen von Hand
+geschickten Meldung war der Empfang neun Sekunden später zurück, und beide
+Dienste waren wieder sichtbar und erreichbar.
+
+Die beiden bisherigen Selbstheilungen bleiben als Rückfallebene erhalten. Sie
+starten die Dienste neu und unterbrechen damit, was gerade läuft; sie sollten
+jetzt kaum noch auslösen.
+
 ## 2.62.0-fx.1
 
 ### Der Lautsprecher kommt von selbst zurück, wenn er aus den Listen verschwindet
