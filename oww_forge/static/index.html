@@ -32,35 +32,304 @@
      these equal to them. The layout is the provisioning wizard's: a step
      rail, a main panel with a footer of actions, the log as a flyout. */
   :root, :root[data-theme="light"] {
-    --raised:#e8e4de; --card:#e0dcd4; --surface:#d8d4cc; --sunken:#d0ccc4; --bg:#ccc8c0;
-    --border:#b8b4ac; --border-soft:#c0bdb6; --border-hard:#b0aca4; --field-line:#777268;
-    --text:#1e1c18; --text2:#4a4844; --muted:#575450; --faint:#767269;
-    --ok:#285e3f; --warn:#854212; --error:#973020; --error-deep:#782020; --on-error:#f0d8d8;
-    --accent:#3e5675; --accent-hi:#4d698c; --accent-deep:#304860; --accent-lit:#8ab0d0;
-    --accent-tint:#dde8f4; --accent-line:#ccd8ec;
-    --lcd-bg:#1e2219; --lcd-green:#9aba80; --lcd-amber:#c8a141; --lcd-dim:#95ae86;
-    --lcd-line:#1a1c18; --lcd-face:#2a2e28; --lcd-faint:#3a4a30;
-    --shadow-card:0 4px 16px rgba(0,0,0,0.12), 0 1px 0 rgba(255,255,255,0.7) inset;
-    --shadow-inset:inset 0 2px 4px rgba(0,0,0,0.5);
-    --sheen:rgba(255,255,255,0.4); --hairline:rgba(0,0,0,0.06); --track:rgba(0,0,0,0.10);
+    /* Ground and surfaces */
+    --bg:          #f7f4ee;
+    --surface:     #fffdf8;
+    --surface-alt: #f9f6f0;
+    --raised:      #ebe6db;
+
+    /* Borders. Two weights: the hairline everything is divided by, and
+       the one an active or emphasised element is drawn with. */
+    --line:        #ded7c9;
+    --line-strong: #c9c1b0;
+    --field-line:  #777268;
+
+    /* Text, loudest to quietest. --faint is strokes only. */
+    --text:   #1b1a17;
+    --text2:  #53504a;
+    --muted:  #645f58;
+    --faint:  #ded7c9;
+    --empty:  #8c8478;
+
+    /* Voice — listening, thinking, speaking; and the primary action. */
+    --voice:      #0d6e4f;
+    --voice-hi:   #0a5a41;
+    --voice-bg:   #e4f0ea;
+    --voice-line: #b9d8ca;
+
+    /* Media — the music plane. */
+    --media:      #245fbf;
+    --media-bg:   #e7eefb;
+    --media-line: #b6cbeb;
+    --media-card: #c9d8ef;
+    --media-face: #f6f8fc;
+
+    /* A device state's NAME on an LCD readout: the LED colour lifted to
+       4.5:1. The LED itself keeps its exact colour (deviceState.dot). */
+    --lcd-offline: #df956b;
+    --lcd-muted: #dc9393;
+    --lcd-speaking: #7eaadf;
+    --lcd-thinking: #c9a128;
+    --lcd-listening: #5db88d;
+    /* Waiting for you, update available. */
+    --warn:      #8d520b;
+    --warn-bg:   #fdf6ea;
+    --warn-line: #e6d3b0;
+
+    /* Muted, offline, refused. */
+    --error:      #a8372a;
+    --error-bg:   #fbeae6;
+    --error-line: #eec3b8;
+
+    /* Text on a --voice ground. */
+    --on-accent: #f7f4ee;
+
+    /* Bar tracks and meter grounds. */
+    --track: #e4ddcf;
+
+    /* Behind a modal. A literal was typed at both call sites and it
+       was a LIGHT grey, so on the dark theme the page went pale behind
+       the window instead of receding — the one kind of colour that
+       cannot be got right without knowing which theme it is on. */
+    --scrim: rgba(120,114,104,0.42);
+
+    /* The console / log surface. Dark in both themes — see the note
+       above; these are the only role colours that do not invert. */
+    --console-bg:     #0c0d0c;
+    --console-line:   #1e201d;
+    --console-line-2: #2c2f2b;
+    --console-text:   #b8b2a8;
+    --console-dim:    #8a847e;
+    --console-voice:  #4ad9a4;
+    --console-media:  #7fb3ff;
+    --console-warn:   #e8a13c;
+    --console-error:  #e8705c;
+
+    /* ── Compatibility aliases ──────────────────────────────────────
+       The old token names, re-pointed at the new palette so the panes
+       that still use them come across with it instead of stranding on
+       the previous one. They are retired pane by pane; nothing new
+       should name them. */
+    --card:        var(--surface);
+    --sunken:      var(--bg);
+    --border:      var(--line);
+    --border-soft: var(--line);
+    --border-hard: var(--line-strong);
+    --ok:          var(--voice);
+    /* These two were pointed at the wrong end of the error ramp: --on-error
+       is the LABEL on an error fill and resolved to the fill itself (1.0:1,
+       an invisible danger pill), and --error-deep is the DARK end of that
+       fill and resolved to the pale line. Literals, because the new palette
+       has no token meaning either of those. */
+    --error-deep:  #7f2a1f;
+    --on-error:    var(--error-bg);
+    --notice-bg:   var(--warn-bg);
+    --notice-line: var(--warn-line);
+    --accent:      var(--media);
+    --accent-hi:   var(--media);
+    --accent-deep: var(--media-line);
+    /* Literal, not var(--media): --accent-lit is read as TEXT on the
+       LCD panels, where the light theme's media blue is 3.2:1. */
+    --accent-lit:  #6fa4ef;
+    --accent-tint: var(--media-bg);
+    --accent-line: var(--media-line);
+    --lcd-bg:    var(--console-bg);
+    --lcd-face:  var(--console-bg);
+    --lcd-deep:  var(--console-bg);
+    --lcd-line:  var(--console-line);
+    --lcd-faint: var(--console-line-2);
+    --lcd-green: var(--console-voice);
+    --lcd-amber: var(--console-warn);
+    --lcd-dim:   var(--console-dim);
+    --shadow-card:  none;
+    --shadow-hover: none;
+    --shadow-inset: none;
+    --sheen:        transparent;
+    --hairline:     var(--surface-alt);
   }
   :root[data-theme="dark"] {
-    --raised:#2b3024; --card:#22261c; --surface:#1b1e16; --sunken:#171a12; --bg:#14160f;
-    --border:#343a2b; --border-soft:#2c3124; --border-hard:#414736; --field-line:#7f8b69;
-    --text:#ddd9d1; --text2:#b2ada4; --muted:#aaa8a4; --faint:#8a867f;
-    --ok:#82b489; --warn:#d79b56; --error:#da978a; --error-deep:#c16a5a; --on-error:#2a1512;
-    --accent:#8caac9; --accent-hi:#8fb0d0; --accent-deep:#4a6a8c; --accent-lit:#a8c8e4;
-    --accent-tint:#1f2c3a; --accent-line:#2f4054;
-    --lcd-bg:#12150e; --lcd-green:#9aba80; --lcd-amber:#c8a141; --lcd-dim:#95ae86;
-    --lcd-line:#0c0e08; --lcd-face:#1e2219; --lcd-faint:#3a4a30;
-    --shadow-card:0 4px 16px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.05) inset;
-    --shadow-inset:inset 0 2px 4px rgba(0,0,0,0.6);
-    --sheen:rgba(255,255,255,0.05); --hairline:rgba(255,255,255,0.07); --track:rgba(0,0,0,0.35);
-  }
-  /* Dark in both themes, so text on it takes the dark theme's values. */
-  .em-console { --text:#ddd9d1; --text2:#b2ada4; --muted:#aaa8a4; --faint:#8a867f;
-    --ok:#82b489; --warn:#d79b56; --error:#da978a; --accent:#8caac9; }
+    --bg:          #12110f;
+    --surface:     #1a1917;
+    --surface-alt: #1e1c1a;
+    --raised:      #221f1c;
 
+    --line:        #2c2926;
+    --line-strong: #3a3632;
+    --field-line:  #7f8b69;
+
+    --text:   #f2efe9;
+    --text2:  #b8b2a8;
+    --muted:  #a39c91;
+    --faint:  #575249;
+    --empty:  #575249;
+
+    --voice:      #4ad9a4;
+    --voice-hi:   #7ce9c0;
+    --voice-bg:   #163026;
+    --voice-line: #24503f;
+
+    --media:      #7fb3ff;
+    --media-bg:   #182333;
+    --media-line: #2f4a70;
+    --media-card: #2f3a4d;
+    --media-face: #161b24;
+
+    --lcd-offline: #df956b;
+    --lcd-muted: #dc9393;
+    --lcd-speaking: #7eaadf;
+    --lcd-thinking: #c9a128;
+    --lcd-listening: #5db88d;
+    --warn:      #e8a13c;
+    --warn-bg:   #2a1d1a;
+    --warn-line: #4a2f28;
+
+    --error:      #e8705c;
+    --error-bg:   #2e1b18;
+    --error-line: #5a332b;
+
+    --on-accent: #0b1a14;
+
+    --track: #2c2926;
+    --scrim: rgba(6,5,4,0.62);
+
+    --console-bg:     #0c0d0c;
+    --console-line:   #1e201d;
+    --console-line-2: #2c2f2b;
+    --console-text:   #b8b2a8;
+    --console-dim:    #8a847e;
+    --console-voice:  #4ad9a4;
+    --console-media:  #7fb3ff;
+    --console-warn:   #e8a13c;
+    --console-error:  #e8705c;
+
+    --card:        var(--surface);
+    --sunken:      var(--bg);
+    --border:      var(--line);
+    --border-soft: var(--line);
+    --border-hard: var(--line-strong);
+    --ok:          var(--voice);
+    /* These two were pointed at the wrong end of the error ramp: --on-error
+       is the LABEL on an error fill and resolved to the fill itself (1.0:1,
+       an invisible danger pill), and --error-deep is the DARK end of that
+       fill and resolved to the pale line. Literals, because the new palette
+       has no token meaning either of those. */
+    --error-deep:  #d4695c;
+    --on-error:    var(--error-bg);
+    --notice-bg:   var(--warn-bg);
+    --notice-line: var(--warn-line);
+    --accent:      var(--media);
+    --accent-hi:   var(--media);
+    --accent-deep: var(--media-line);
+    --accent-lit:  var(--media);
+    --accent-tint: var(--media-bg);
+    --accent-line: var(--media-line);
+    --lcd-bg:    var(--console-bg);
+    --lcd-face:  var(--console-bg);
+    --lcd-deep:  var(--console-bg);
+    --lcd-line:  var(--console-line);
+    --lcd-faint: var(--console-line-2);
+    --lcd-green: var(--console-voice);
+    --lcd-amber: var(--console-warn);
+    --lcd-dim:   var(--console-dim);
+    --shadow-card:  none;
+    --shadow-hover: none;
+    --shadow-inset: none;
+    --sheen:        transparent;
+    --hairline:     var(--surface-alt);
+  }
+  /* Dark in both themes, so everything inside takes the dark theme's
+     values whatever the page theme is — the dashboard's own rule for
+     .em-lcd / .em-inset / .em-console. */
+  .em-console {
+    --bg:          #12110f;
+    --surface:     #1a1917;
+    --surface-alt: #1e1c1a;
+    --raised:      #221f1c;
+
+    --line:        #2c2926;
+    --line-strong: #3a3632;
+    --field-line:  #7f8b69;
+
+    --text:   #f2efe9;
+    --text2:  #b8b2a8;
+    --muted:  #a39c91;
+    --faint:  #575249;
+    --empty:  #575249;
+
+    --voice:      #4ad9a4;
+    --voice-hi:   #7ce9c0;
+    --voice-bg:   #163026;
+    --voice-line: #24503f;
+
+    --media:      #7fb3ff;
+    --media-bg:   #182333;
+    --media-line: #2f4a70;
+    --media-card: #2f3a4d;
+    --media-face: #161b24;
+
+    --lcd-offline: #df956b;
+    --lcd-muted: #dc9393;
+    --lcd-speaking: #7eaadf;
+    --lcd-thinking: #c9a128;
+    --lcd-listening: #5db88d;
+    --warn:      #e8a13c;
+    --warn-bg:   #2a1d1a;
+    --warn-line: #4a2f28;
+
+    --error:      #e8705c;
+    --error-bg:   #2e1b18;
+    --error-line: #5a332b;
+
+    --on-accent: #0b1a14;
+
+    --track: #2c2926;
+    --scrim: rgba(6,5,4,0.62);
+
+    --console-bg:     #0c0d0c;
+    --console-line:   #1e201d;
+    --console-line-2: #2c2f2b;
+    --console-text:   #b8b2a8;
+    --console-dim:    #8a847e;
+    --console-voice:  #4ad9a4;
+    --console-media:  #7fb3ff;
+    --console-warn:   #e8a13c;
+    --console-error:  #e8705c;
+
+    --card:        var(--surface);
+    --sunken:      var(--bg);
+    --border:      var(--line);
+    --border-soft: var(--line);
+    --border-hard: var(--line-strong);
+    --ok:          var(--voice);
+    /* These two were pointed at the wrong end of the error ramp: --on-error
+       is the LABEL on an error fill and resolved to the fill itself (1.0:1,
+       an invisible danger pill), and --error-deep is the DARK end of that
+       fill and resolved to the pale line. Literals, because the new palette
+       has no token meaning either of those. */
+    --error-deep:  #d4695c;
+    --on-error:    var(--error-bg);
+    --notice-bg:   var(--warn-bg);
+    --notice-line: var(--warn-line);
+    --accent:      var(--media);
+    --accent-hi:   var(--media);
+    --accent-deep: var(--media-line);
+    --accent-lit:  var(--media);
+    --accent-tint: var(--media-bg);
+    --accent-line: var(--media-line);
+    --lcd-bg:    var(--console-bg);
+    --lcd-face:  var(--console-bg);
+    --lcd-deep:  var(--console-bg);
+    --lcd-line:  var(--console-line);
+    --lcd-faint: var(--console-line-2);
+    --lcd-green: var(--console-voice);
+    --lcd-amber: var(--console-warn);
+    --lcd-dim:   var(--console-dim);
+    --shadow-card:  none;
+    --shadow-hover: none;
+    --shadow-inset: none;
+    --sheen:        transparent;
+    --hairline:     var(--surface-alt);
+  }
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; }
   body { background: var(--bg); color: var(--text); font: 400 14px/1.5 'DM Sans', system-ui, sans-serif;

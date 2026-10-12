@@ -52,7 +52,15 @@ function unbound(source) {
     Babel.transform(source, {
       presets: ["react"],
       plugins: [() => ({ visitor: { Program: { exit(p) {
-        names = Object.keys(p.scope.globals);
+        // Only names the SOURCE carries. A node Babel synthesised has no
+        // `loc`, and the react preset synthesises some: a JSX spread
+        // attribute compiles to an `_extends` helper whose body references
+        // `arguments`, which is then a free name in the program Babel built
+        // and in no file anybody wrote. Reporting it sends the next reader
+        // hunting a definition for a name that is not theirs — and listing
+        // it as known would also stop a REAL bare `arguments` being caught.
+        const g = p.scope.globals;
+        names = Object.keys(g).filter((n) => g[n].loc);
       } } } })],
     });
   } finally {
