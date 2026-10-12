@@ -77,8 +77,8 @@ type Prober struct {
 // needs a full deaf window to prove whether it worked.
 const DefaultRepairEvery = 10 * time.Minute
 
-// Repairs is how many times this prober has re-joined, for a test and for the
-// support bundle.
+// Repairs is how many times this prober has re-joined. For a test; the
+// support bundle was intended and does not reach it — see Watcher.Repairs.
 func (p *Prober) Repairs() int { return p.repairs }
 
 // repair performs the re-join if one is allowed now, and says whether it did.
