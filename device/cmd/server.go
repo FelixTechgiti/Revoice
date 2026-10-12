@@ -564,6 +564,11 @@ func main() {
 		Name:            deviceID,
 		BackendDelaySec: envFloat("EM_AIRPLAY_LATENCY_OFFSET", speaker.LocalPrimeSeconds()),
 		OnVolume:        airplayVolume(s),
+		// Off unless somebody asked, and an env var rather than a config key
+		// for EM_AIRPLAY_LATENCY_OFFSET's reason: it is a diagnostic for one
+		// device rather than a user preference, and it exists so a session
+		// the receiver ends by itself can be read without a rebuild.
+		LogVerbosity: envInt("EM_AIRPLAY_LOG_VERBOSITY", 0),
 	}, pcmSpeaker, dataClient.MusicPlane().For(musicplane.AirPlay))
 	dataClient.MusicPlane().Register(musicplane.AirPlay, func(why musicplane.Reason) {
 		airplayClient.Leave(string(why))
@@ -2028,6 +2033,24 @@ func envFloat(key string, def float64) float64 {
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		log.Printf("[cmd] %s=%q is not a number — using %.4f", key, raw, def)
+		return def
+	}
+	return v
+}
+
+// envInt reads an int from the environment, falling back to def.
+//
+// Same shape as envFloat above and for the same reason: an unparseable value
+// takes the default and SAYS SO, because a silently ignored setting is the
+// failure this tree names most often.
+func envInt(key string, def int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Printf("[cmd] %s=%q is not a whole number — using %d", key, raw, def)
 		return def
 	}
 	return v

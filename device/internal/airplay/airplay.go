@@ -174,6 +174,20 @@ type Options struct {
 	// MetadataPipe is where shairport-sync writes metadata. Overridable for
 	// tests; MetadataPipePath otherwise.
 	MetadataPipe string
+
+	// LogVerbosity turns shairport-sync's own diagnostics on, 1 to 3.
+	//
+	// OFF by default, and it has to be, because the receiver's own account of
+	// a session is the only thing that can answer why it ended one — and at
+	// verbosity 2 that is tens of lines a second into a log the relay forwards
+	// from. It exists because the question keeps coming up and the config file
+	// is rewritten at every start, so editing it on a device lasts until the
+	// next restart and no longer.
+	//
+	// Out of range is treated as unset rather than clamped: a 7 is a typo,
+	// and starting a receiver at a verbosity nobody chose is the same mistake
+	// as refusing to start over one.
+	LogVerbosity int
 }
 
 // MetadataPipePath is the FIFO shairport-sync writes metadata to.
@@ -750,7 +764,7 @@ func (c *Client) args(cfg string) []string {
 // Zero delay writes NO offset rather than `0.0`. The two are the same number
 // and not the same statement: absent means nobody measured, and a caller that
 // does not know its own delay should not assert there is none.
-func renderConfig(delaySec float64, metadataPipe string) string {
+func renderConfig(delaySec float64, metadataPipe string, verbosity int) string {
 	general := "general = {\n"
 	// PINNED, all three, because FireOS drops every inbound port that is not
 	// on an allowlist and a firewall rule cannot name a default that a future
@@ -780,6 +794,13 @@ func renderConfig(delaySec float64, metadataPipe string) string {
 	if delaySec != 0 {
 		general += fmt.Sprintf(
 			"  audio_backend_latency_offset_in_seconds = %.4f;\n", -delaySec)
+	}
+	// The receiver's own diagnostics, off unless somebody asked. Written here
+	// rather than passed as -v so that it survives the restarts the firmware
+	// makes on its own, which is the whole difficulty with reading a session
+	// this thing ends by itself.
+	if verbosity >= 1 && verbosity <= 3 {
+		general += fmt.Sprintf("  log_verbosity = %d;\n", verbosity)
 	}
 	general += "};\n"
 	if metadataPipe == "" {
@@ -839,7 +860,7 @@ func (c *Client) writeConfig() string {
 			"latency offset", filepath.Dir(path), err)
 		return ""
 	}
-	cfg := renderConfig(c.opts.BackendDelaySec, c.metadataPipe())
+	cfg := renderConfig(c.opts.BackendDelaySec, c.metadataPipe(), c.opts.LogVerbosity)
 	if err := atomicfile.Write(path, []byte(cfg), 0o644); err != nil {
 		log.Printf("[airplay] cannot write %s: %v — starting without the "+
 			"latency offset", path, err)
