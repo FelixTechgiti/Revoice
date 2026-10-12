@@ -487,7 +487,7 @@ func itoa(n int) string {
 func TestOurOwnBufferIsCompensatedForWithTheOppositeSign(t *testing.T) {
 	// shairport-sync's own sample: "if the output device delays by 100 ms,
 	// set this to -0.1". The music plane's prime is our delay.
-	got := renderConfig(0.1, "")
+	got := renderConfig(0.1, "", 0)
 	if !strings.Contains(got, "audio_backend_latency_offset_in_seconds = -0.1000") {
 		t.Fatalf("a 100ms backend delay must compensate as -0.1; got:\n%s", got)
 	}
@@ -496,7 +496,7 @@ func TestOurOwnBufferIsCompensatedForWithTheOppositeSign(t *testing.T) {
 func TestNoKnownDelayWritesNoOffsetRatherThanZero(t *testing.T) {
 	// Absent means nobody measured; 0.0 asserts there is no delay. A caller
 	// that does not know its own pipeline must not make the second claim.
-	got := renderConfig(0, "")
+	got := renderConfig(0, "", 0)
 	if strings.Contains(got, "audio_backend_latency_offset_in_seconds") {
 		t.Fatalf("an unknown delay must not assert an offset; got:\n%s", got)
 	}
@@ -567,7 +567,7 @@ func TestAllThreePortsArePinnedToTheOnesTheFirewallOpens(t *testing.T) {
 // look healthy and a speaker nobody can see (#298). The failure is silent at
 // both ends, which is why it is pinned here rather than left to a reviewer.
 func TestRenderConfigNamesTheInterface(t *testing.T) {
-	got := renderConfig(0, "")
+	got := renderConfig(0, "", 0)
 	want := fmt.Sprintf("  interface = %q;\n", netfilter.Iface)
 	if !strings.Contains(got, want) {
 		t.Fatalf("config does not name the interface; want %q in:\n%s", want, got)
@@ -642,5 +642,73 @@ func TestRunningBinaryIsEmptyUntilSomethingRuns(t *testing.T) {
 	c := New(Options{}, nil, nil)
 	if got := c.RunningBinary(); got != "" {
 		t.Fatalf("RunningBinary() = %q before anything started", got)
+	}
+}
+
+// The receiver's own diagnostics are the only thing that can say why it ended
+// a session, and they are off unless somebody asked — at verbosity 2 this is
+// tens of lines a second into a log the relay forwards from.
+func TestLogVerbosityIsWrittenOnlyWhenItWasAskedFor(t *testing.T) {
+	for _, tc := range []struct {
+		verbosity int
+		want      string
+	}{
+		{0, ""}, // the default: nothing at all
+		{1, "  log_verbosity = 1;"},
+		{2, "  log_verbosity = 2;"},
+		{3, "  log_verbosity = 3;"},
+		{4, ""},  // out of range is unset, not clamped
+		{-1, ""}, // and so is nonsense
+	} {
+		got := renderConfig(0, "", tc.verbosity)
+		if tc.want == "" {
+			if strings.Contains(got, "log_verbosity") {
+				t.Errorf("verbosity %d wrote a log_verbosity line:\n%s",
+					tc.verbosity, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("verbosity %d: want %q in\n%s", tc.verbosity, tc.want, got)
+		}
+	}
+}
+
+// It rides the CONFIG FILE rather than a command-line flag, because the
+// firmware restarts the receiver on its own — a config push, a rename, the
+// multicast repair — and a flag set by hand on a device is gone at the next
+// one. That is the whole reason this exists rather than being done with -v.
+func TestTheVerbosityIsInTheFileTheReceiverReadsAtEveryStart(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/shairport-sync.conf"
+	c := New(Options{ConfigPath: path, LogVerbosity: 2}, nil, nil)
+	if got := c.writeConfig(); got != path {
+		t.Fatalf("writeConfig = %q, want %q", got, path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "log_verbosity = 2;") {
+		t.Errorf("the written config does not carry the verbosity:\n%s", b)
+	}
+}
+
+// And the firmware has to pass it through. cmd/server.go is read as text
+// because `cmd` is behind the `server` build tag, so a host `go test ./...`
+// compiles none of it — the same reason netfilter and mcast check their own
+// wiring this way. An option nothing sets is a switch that cannot be turned
+// on, which is the failure this whole file is full of.
+func TestTheFirmwarePassesTheVerbosityThrough(t *testing.T) {
+	b, err := os.ReadFile("../../cmd/server.go")
+	if err != nil {
+		t.Fatalf("cannot read cmd/server.go, so the wiring cannot be checked: %v", err)
+	}
+	src := string(b)
+	for _, want := range []string{"LogVerbosity:", "EM_AIRPLAY_LOG_VERBOSITY"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("cmd/server.go does not mention %q: the receiver can "+
+				"never be asked for its own account of a session", want)
+		}
 	}
 }
