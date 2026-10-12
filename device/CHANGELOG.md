@@ -12,6 +12,49 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.65.0-fx.1
+
+### Der Echo meldet sich jetzt von selbst, statt auf eine Frage zu warten
+
+**Die beiden Reparaturen aus 2.63.1-fx.1 und 2.64.0-fx.1 haben es nicht
+behoben**, und die Release-Notizen beider Fassungen haben behauptet, sie täten
+es. Das war falsch. Wer den Echo danach weiterhin nur zeitweise in der
+AirPlay-Liste gesehen hat, hat nichts verkehrt gemacht.
+
+Was tatsächlich passiert: Der Echo hört phasenweise auf, Gruppennachrichten
+anzunehmen — zwanzig Sekunden nichts, dann wieder ein paar Sekunden lang alles.
+Woran das liegt, ist weiterhin offen. Alles, was das Gerät selbst darüber
+anzeigt, sieht die ganze Zeit gesund aus, und beide bisherigen Erklärungen
+haben sich bei der zweiten Messung nicht bestätigt.
+
+**Senden funktioniert durchgehend**, auch während nichts ankommt. Genau das
+nutzt diese Fassung. Bisher hat der Echo gewartet, bis ihn jemand fragt, und
+dann geantwortet — wer nicht hört, antwortet nie. Ab jetzt sagt er alle 45
+Sekunden von sich aus, wer er ist und was er kann. Telefone und Rechner merken
+sich das zwei Minuten lang, also steht der Eintrag durchgehend da, auch während
+der Echo gerade taub ist.
+
+Er erfindet dabei nichts: Er hört mit, was seine eigenen beiden Dienste beim
+Start über sich selbst ansagen — das läuft geräteintern und hängt nicht am Funk
+— und schickt genau diese Ansage später noch einmal.
+
+**Zu tun ist nichts.** Nach dem Update sollte der Echo dauerhaft in der
+Spotify-App und in der AirPlay-Liste stehen, auch während er nichts hört.
+
+### Was diese Fassung nicht behebt
+
+Die Ursache. Ein Echo, der nichts hört, bekommt auch sonst nichts vom Netz mit,
+und ein Gerät, das ihn zum allerersten Mal sucht und noch nichts von ihm
+gespeichert hat, muss abwarten, bis die nächste Ansage kommt — höchstens 45
+Sekunden. Was der Empfang macht, wird weiter gemessen.
+
+### In Apple Home taucht der Echo weiterhin nicht auf
+
+Das ist kein Fehler dieser Fassung und auch keiner der vorigen. Der
+AirPlay-Empfänger auf dem Echo spricht AirPlay, aber kein HomeKit, und Apple
+Home listet nur HomeKit-Geräte. Der Echo gehört in die AirPlay-Auswahl
+(Kontrollzentrum, Lautsprechersymbol), nicht in die Home-App.
+
 ## 2.64.0-fx.1
 
 ### Jetzt bleibt der Echo wirklich in den Spotify- und AirPlay-Listen stehen

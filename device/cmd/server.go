@@ -40,6 +40,7 @@ import (
 	"github.com/wilbowes/EchoMuse/internal/logrelay"
 	"github.com/wilbowes/EchoMuse/internal/loopback"
 	"github.com/wilbowes/EchoMuse/internal/mcast"
+	"github.com/wilbowes/EchoMuse/internal/mdnsannounce"
 	"github.com/wilbowes/EchoMuse/internal/musicplane"
 	"github.com/wilbowes/EchoMuse/internal/netfilter"
 	"github.com/wilbowes/EchoMuse/internal/platform"
@@ -520,6 +521,26 @@ func main() {
 	dataClient.MusicPlane().Register(musicplane.Spotify, func(why musicplane.Reason) {
 		spotifyClient.Leave(string(why))
 	})
+
+	// Listen on the mDNS group BEFORE either endpoint is started, because
+	// what it is here to catch is the announcement each of them makes on its
+	// way up — RFC 6762 section 8.3, and the only thing either responder ever
+	// sends unprompted. The copies arrive through the kernel's multicast
+	// loopback, so they do not depend on the radio; that is the whole reason
+	// this works on a device that cannot hear anything. See
+	// internal/mdnsannounce, and internal/mcast/allmulti.go for the fault.
+	//
+	// A failure to open is logged and nothing else: the device then behaves
+	// exactly as it did before this existed, which is findable whenever it
+	// can hear a query.
+	mdnsCache := mdnsannounce.NewCache(0)
+	mdnsListener, err := mdnsannounce.Listen(mcast.Iface, mdnsCache)
+	if err != nil {
+		log.Printf("[cmd] cannot repeat this device's own mDNS "+
+			"announcements: %v — it stays findable only while it can hear a "+
+			"query, which on this board is not all the time", err)
+	}
+
 	applySpotifyConfig(spotifyClient)
 
 	// AirPlay — shairport-sync as a subprocess. A fourth producer of the
@@ -569,7 +590,7 @@ func main() {
 	// is about the network and has no business knowing what owns the speaker.
 	startNetworkRepair(spotifyClient, airplayClient, func() bool {
 		return dataClient.MusicPlane().Owner() != musicplane.None
-	})
+	}, mdnsListener, mdnsCache)
 
 	// Re-execute one endpoint after its binary has been replaced. The
 	// controller decides whether to ask — it is the side that knows whether
@@ -2502,7 +2523,8 @@ func coresTotal() int {
 // is about the KERNEL; emOS answers both the same way, and a device that one
 // day loses a membership under emOS is repaired without anybody remembering
 // this comment.
-func startNetworkRepair(sp *spotify.Client, ap *airplay.Client, busy func() bool) {
+func startNetworkRepair(sp *spotify.Client, ap *airplay.Client, busy func() bool,
+	mdns *mdnsannounce.Listener, mdnsCache *mdnsannounce.Cache) {
 	// The re-join, shared by both repairs below. One closure rather than two,
 	// because they repair the same thing from two different instruments and
 	// two copies would eventually differ in which endpoints they restart.
@@ -2602,4 +2624,36 @@ func startNetworkRepair(sp *spotify.Client, ap *airplay.Client, busy func() bool
 		Busy: busy,
 	}
 	go prober.Run(nil)
+
+	// And the one thing here that does not try to make the device HEAR.
+	//
+	// Everything above repairs reception, and on this board nothing has held:
+	// the membership is present, the address filter is set, and inbound
+	// multicast still stops for minutes at a time. Transmission is unaffected
+	// throughout — a device whose InDatagrams had been frozen for eight
+	// minutes still reached four other hosts with a multicast ping. So this
+	// stops waiting to be asked and says who it is on a cadence, which mDNS
+	// has always allowed (RFC 6762 section 8.3) and which every browser on
+	// the LAN treats as a cache update.
+	//
+	// It is not a replacement for the repairs above: a device that cannot
+	// hear still cannot be resolved by a one-shot query, and still misses
+	// everything else on the link. It removes the symptom somebody actually
+	// reports, which is the Echo dropping out of the AirPlay and Spotify
+	// pickers while it is sitting there working.
+	if mdns != nil {
+		ann := mdns.Announcer(mdnsCache, func() (string, error) {
+			// What the held packets assert. The names come from the config
+			// the endpoints were started with, the binary because the two
+			// AirPlay receivers publish different TXT records, and the
+			// running flags because an endpoint that has stopped must not go
+			// on being advertised. A change in any of them empties the cache
+			// and it refills from whatever gets announced next.
+			snap := config.Get().Snapshot()
+			return fmt.Sprintf("%s|%s|%s|%t|%t", snap.SpotifyName,
+				snap.AirplayName, ap.RunningBinary(), sp.Running(),
+				ap.Running()), nil
+		}, func() bool { return sp.Running() || ap.Running() })
+		go ann.Run(nil, mdnsannounce.DefaultInterval)
+	}
 }
