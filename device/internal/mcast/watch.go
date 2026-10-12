@@ -142,8 +142,14 @@ func (w *Watcher) Tick(now time.Time) bool {
 	return true
 }
 
-// Repairs is how many times this watcher has acted. Rides the stats report so
-// a device that is flapping can be told from one that has been steady.
+// Repairs is how many times this watcher has acted.
+//
+// It was documented as riding the stats report, so that a device that is
+// flapping could be told from one that has been steady. Nothing reads it:
+// checked 2026-10-12, no caller outside the tests. Said plainly here rather
+// than left as a claim, because a counter believed to be reaching the
+// controller is one nobody thinks to go and look for on the device. Wiring it
+// is #367's second half, with Reporter.Sent beside it.
 func (w *Watcher) Repairs() int { return w.repairs }
 
 // Run ticks until ctx is done. Split from Tick so the whole decision is
