@@ -784,6 +784,23 @@ choosing a number**; this repository's own tag list is as stale as the last
 sync. `version.parse` ignores the suffix, so `2.23.0-fx.1` compares equal to
 `2.23.0` and the dashboard's own comparisons are unaffected.
 
+**And no tag guard may ENUMERATE the suffix, which is how a sync broke every
+release here.** `release.yml` and `controller-release.yml` check the tag's
+shape before it reaches a shell, because git allows `$ ( ) ;` in a tag name —
+right, and upstream writes that check against its own `-ea.N` and spells it
+out. The 2026-10-12 sync brought that version in, and the first tag cut
+afterwards, `v2.63.0-fx.1`, was refused eight seconds into the run **with the
+tag already created and nothing published for it**. Nothing caught it in
+between because nothing had been released since the sync, which is the shape
+worth remembering: a guard tightened upstream fails only at the moment it is
+finally used, and that moment is a release. Both now take
+`(-[0-9A-Za-z.]+)?`, which is the character class the guard is actually for,
+and `controller/tests/test_release_tag_guard.py` holds them to the tags this
+fork cuts AND to refusing anything that could reach a shell as something else.
+The recovery is `gh run rerun <id>` on the refused run once the guard is
+fixed — the tag, the commit and the annotation are all fine and must not be
+re-cut.
+
 **A session's credential may only CREATE and FAST-FORWARD branches.** Every
 other write to a ref is refused by GitHub with `403` on `git-receive-pack`,
 and the rule is about the KIND of write rather than about tags — which is how

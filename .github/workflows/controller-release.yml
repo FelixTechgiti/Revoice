@@ -76,9 +76,13 @@ jobs:
         id: channel
         run: |
           # The outputs below are derived from the tag and interpolated into
-          # later shell steps, and git allows $ ( ) ; in a tag name. Every
-          # controller tag ever cut matches this; anything else stops here.
-          echo "$GITHUB_REF_NAME" | grep -Eq '^controller-(ea-)?v[0-9]+\.[0-9]+\.[0-9]+(-ea\.[0-9]+)?$' || {
+          # later shell steps, and git allows $ ( ) ; in a tag name. So what
+          # this has to pin is the CHARACTER CLASS, not the set of suffixes
+          # anybody has used so far: upstream's version enumerated `-ea.N` and
+          # therefore refuses `controller-vX.Y.Z-fx.N`, which is every tag this
+          # fork cuts. See release.yml, where the same line refused a firmware
+          # tag that had already been created.
+          echo "$GITHUB_REF_NAME" | grep -Eq '^controller-(ea-)?v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || {
             echo "::error::$GITHUB_REF_NAME is not a controller version tag"; exit 1; }
           case "$GITHUB_REF_NAME" in
             controller-ea-v*)

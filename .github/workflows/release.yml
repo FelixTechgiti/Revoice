@@ -35,8 +35,17 @@ jobs:
       # before it can be interpolated anywhere.
       - name: Refuse a malformed tag
         run: |
-          echo "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-ea\.[0-9]+)?$' || {
-            echo "::error::$GITHUB_REF_NAME is not vX.Y.Z or vX.Y.Z-ea.N"; exit 1; }
+          # The point is that git allows $ ( ) ; in a tag name and this one
+          # reaches a shell below, so the character class is what matters and
+          # the SUFFIX must not be enumerated. Upstream's version spelled out
+          # `-ea.N`, which refuses every tag this fork cuts (`-fx.N`) — and it
+          # refused one: v2.63.0-fx.1, 2026-10-12, eight seconds in, with the
+          # tag already created and nothing published for it. Nothing caught
+          # it in between because no firmware release was cut between that
+          # sync and this one, which is the shape to watch for: a guard
+          # tightened upstream fails only at the moment it is finally used.
+          echo "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || {
+            echo "::error::$GITHUB_REF_NAME is not vX.Y.Z with an optional alphanumeric suffix"; exit 1; }
 
       # An EA tag is published as a prerelease, which GA controllers skip.
       - name: Channel
