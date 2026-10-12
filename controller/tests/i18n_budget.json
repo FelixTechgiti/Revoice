@@ -1,6 +1,10 @@
 {
-  "Detail": 46,
-  "ProvisionWizard": 68,
+  "BleProxyKey": 4,
+  "Detail": 55,
+  "DeviceConfigForm": 13,
+  "ProvisionWizard": 71,
+  "SendspinPairing": 4,
   "SettingsPanel": 17,
+  "WakeSampleReview": 9,
   "WifiPanel": 9
 }

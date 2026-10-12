@@ -224,3 +224,21 @@ func clampToInt16(v float64) int16 {
 	}
 	return int16(v)
 }
+
+// applyOutputChainFloat is applyOutputChain for the response boost's wide
+// path: interleaved stereo in float, with one full-scale multiplier per frame.
+//
+// No drain counter and no silence check, unlike the byte path. This runs only
+// while a voice response is in flight and boosted, so the stream cannot be
+// idle — and the byte path takes over the moment it ends, draining the
+// limiter's tail as it always did.
+func (p *PcmSpeaker) applyOutputChainFloat(wide []float64, gains []float64) {
+	p.oc.mu.Lock()
+	chain := p.oc.chain
+	active := chain.Active()
+	p.oc.mu.Unlock()
+	if !active {
+		return
+	}
+	chain.ProcessFloat(wide, gains)
+}

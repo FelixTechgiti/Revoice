@@ -75,6 +75,31 @@ lokale Zuhören.
   Befehl geht an den Controller und weiter an Home Assistants
   Spracherkennung, wo auch immer der Nutzer sie eingerichtet hat.
 
+## Wakeword aus Home Assistant heraus abschalten
+
+Die Auswahl **Wake word** auf der Geräteseite in Home Assistant schaltet das
+Wakeword eines Echos ab („No wake word") und wieder an. Ist es aus, startet
+ein Wakeword nie einen Dialog; das Mikrofon bleibt aktiv, also funktionieren
+der Knopf und eine Rückfrage von Home Assistant (`ask_question`,
+`start_conversation`) weiterhin.
+
+Bei einem Echo, das privat lauscht, erreicht das Aus das Echo selbst
+(`wakeWordEnabled`, Fähigkeit `wake_word_off`), und es bricht schon beim
+Überschreiten der Schwelle ab, sendet also nichts. Firmware ohne diese
+Fähigkeit würde trotzdem eine Sitzung öffnen und Audio senden, bevor der
+Controller sie schließen könnte — für sie wird das Aus deshalb **abgelehnt**,
+und die Auswahl springt zurück. Ein Echo, das zum Controller streamt, wird vom
+Controller gestoppt.
+
+Das Aus verhält sich überall gleich, unabhängig davon, wo das Wakeword erkannt
+wird (#778). Das Wakeword startet weder einen Dialog noch unterbricht es eine
+Antwort; ein Dialog, den Home Assistant oder der Knopf startet, lauscht
+weiterhin, und eine Rückfrage ebenso. Und solange es aus ist, wird nichts
+gestreamt: Kommt Audio von einem Echo, dessen Wakeword aus ist, beendet der
+Controller diesen Stream. Dieser Fall wurde an echter Hardware gefunden — ein
+Echo, das von „privat lauschen" auf „Auf dem Controller" umgestellt wurde,
+hielt unter „No wake word" 31 Sekunden lang einen Stream offen.
+
 ## Zustände, in denen ein Echo sein kann
 
 Der Controller löst pro Echo einen davon auf (`em_listen.resolve`), und das

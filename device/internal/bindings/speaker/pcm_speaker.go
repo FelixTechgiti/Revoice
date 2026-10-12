@@ -16,13 +16,15 @@ import (
 	"github.com/wilbowes/EchoMuse/internal/bindings/codec"
 	"github.com/wilbowes/EchoMuse/internal/bindings/mixer"
 	"github.com/wilbowes/EchoMuse/internal/outchain"
+	"github.com/wilbowes/EchoMuse/pkg/board"
 
 	"github.com/Binozo/GoTinyAlsa/pkg/pcm"
 	"github.com/Binozo/GoTinyAlsa/pkg/tinyalsa"
 	"github.com/wilbowes/EchoMuse/internal/sndcloexec"
 )
 
-// cardNr/deviceNr live in pcmstatus.go so the host test can pin them against
+// The card and device numbers come from pkg/board (#541), resolved by the
+// PCM stream's NAME; they are no longer compiled in.
 // the status path, and sampleRate/periodSize in format.go so musicprime.go can
 // do arithmetic with them — this file is ARM-only (build tag `server`).
 
@@ -71,8 +73,12 @@ const MusicBufferSeconds = float64(audioChanDepth) * float64(periodSize) / 48000
 var silencePeriod = make([]byte, periodBytes)
 
 type PcmSpeaker struct {
-	session *tinyalsa.AudioSession
-	stopCh  chan struct{}
+	// pcm is the playback device, found by name (pkg/board) in Init, and
+	// statusFile its substream's status in procfs.
+	pcm        board.PCMAddr
+	statusFile string
+	session    *tinyalsa.AudioSession
+	stopCh     chan struct{}
 	// jackInserted is the plug position last applied by SetJackRouting, and
 	// jackKnown says whether one has been applied at all. The reconcile loop
 	// needs a DESIRED state to compare against, and before jack.Watch has run
@@ -160,6 +166,94 @@ type PcmSpeaker struct {
 	// level whatever the volume.
 	vol softVolume
 	cue cueState
+	// response is a relative gain on the voice plane before it is mixed with
+	// music. The device volume still runs on the completed mix below, so the
+	// buttons remain authoritative; response caps itself against vol so their
+	// combined gain never exceeds unity (#636).
+	response      responseGain
+	responseMix   []float64
+	responseGains []float64
+
+	// src is a second producer for the music plane (Sendspin, #89): a pull
+	// source, consulted only while the 0x04 plane has nothing, so Home
+	// Assistant's music always wins the plane (decided 2026-08-22). It is
+	// pulled rather than pushed because it must place audio in TIME, and
+	// only this loop knows when the period it is building reaches the DAC.
+	src       atomic.Pointer[sourceBox]
+	srcBuf    []byte
+	srcLastNs atomic.Int64 // last period the source played
+	dacStep   dacStepLog   // pullSource's alone
+}
+
+// MusicSource is a pull producer for the music plane. Fill writes one stereo
+// S16LE period whose first frame reaches the DAC at playAt (as measured;
+// the source smooths it), reporting false when it has nothing due. uncertain
+// is how far playAt may be off from the measurement itself — half the time
+// the status read took — so a source can decline to learn from a reading
+// the scheduler interrupted. Active says whether it has anything queued at
+// all, so an idle source costs no status read.
+type MusicSource interface {
+	Active() bool
+	Fill(out []byte, playAt time.Time, uncertain time.Duration) bool
+}
+
+type sourceBox struct{ s MusicSource }
+
+// SetMusicSource installs (or, with nil, removes) the music plane's pull
+// producer.
+func (p *PcmSpeaker) SetMusicSource(s MusicSource) {
+	if s == nil {
+		p.src.Store(nil)
+		return
+	}
+	p.src.Store(&sourceBox{s})
+}
+
+// pullSource asks the source for this period. The DAC time is measured
+// here: the frames ALSA holds ahead of the DAC, read the instant before the
+// period is built, since every one of them plays before its first frame.
+//
+// The clock is read on BOTH sides of the status read and the midpoint used,
+// as NTP brackets an exchange. Reading it only after, as this did, made any
+// pause between the two (scheduler, GC) a late measurement: +4–10ms
+// readings every minute on C95, 2026-10-01 (#707). The bracket's width says
+// how much to trust the reading, and the source is told.
+func (p *PcmSpeaker) pullSource() []byte {
+	box := p.src.Load()
+	if box == nil || !box.s.Active() {
+		return nil
+	}
+	before := time.Now()
+	b, err := os.ReadFile(p.statusFile)
+	read := time.Since(before)
+	if err != nil {
+		return nil
+	}
+	now := before.Add(read / 2)
+	d, ok := pcmDelay(string(b))
+	if !ok {
+		return nil
+	}
+	playAt := now.Add(time.Duration(d) * time.Second / 48000)
+	p.dacStep.note(playAt, read, string(b), time.Duration(len(p.srcBuf)/4)*time.Second/48000)
+	if !box.s.Fill(p.srcBuf, playAt, read/2) {
+		return nil
+	}
+	p.srcLastNs.Store(now.UnixNano())
+	return p.srcBuf
+}
+
+// SourceAudible is MusicAudible for the pull source alone.
+func (p *PcmSpeaker) SourceAudible(hold time.Duration) bool {
+	last := p.srcLastNs.Load()
+	return last > 0 && time.Now().UnixNano()-last < int64(hold)
+}
+
+// MusicPlaneBusy reports whether the 0x04 plane has music in it at all —
+// arriving, queued or playing. While it does, the pull source must stand
+// aside: Home Assistant wins.
+func (p *PcmSpeaker) MusicPlaneBusy() bool {
+	return p.music.isActive() || len(p.music.ch) > 0 || p.MusicArriving()
 }
 
 // OnStreamStats registers a per-stream stats callback, reported once when a
@@ -196,6 +290,10 @@ func NewPcmSpeaker(echoTap func([]byte), levelTap func(rms float64)) *PcmSpeaker
 		deadCh:   make(chan struct{}),
 		echoTap:  echoTap,
 		levelTap: levelTap,
+		// The response boost's wide path (#716): the mix in float, and one
+		// full-scale multiplier per frame.
+		responseMix:   make([]float64, periodSize*2),
+		responseGains: make([]float64, periodSize),
 	}
 	s.oc.chain = outchain.New(sampleRate)
 	s.voice = newAudioStream(audioChanDepth, s.deadCh)
@@ -216,6 +314,12 @@ func NewPcmSpeaker(echoTap func([]byte), levelTap func(rms float64)) *PcmSpeaker
 }
 
 func (p *PcmSpeaker) Init() error {
+	pb := board.CurrentLayout().Playback
+	if pb == nil {
+		return errors.New("speaker: playback PCM not found on this board")
+	}
+	p.pcm = *pb
+	p.statusFile = statusPath(pb.Card, pb.Device)
 	// Startup order matters for the audible click (2026-07-10): the amp
 	// must come up onto a DAC that is already clocking silence, and the
 	// unmute must come last. The old order (amp on → unmute → open PCM)
@@ -241,7 +345,7 @@ func (p *PcmSpeaker) Init() error {
 	// cost comment written for a one-shot go stale once before.
 	stopMedia := func() { androidsvc.StopQuietly("media") }
 	stopMedia()
-	if !waitForFreePcm(cardNr, deviceNr, pcmFreeTimeout, stopMedia) {
+	if !waitForFreePcm(pb.Card, pb.Device, pcmFreeTimeout, stopMedia) {
 		// Return rather than open. tinyalsa's open has no timeout, so
 		// entering it against a device we have just watched stay held for
 		// ten seconds is how a goroutine parks for ever. Retrying is only
@@ -257,7 +361,7 @@ func (p *PcmSpeaker) Init() error {
 	codec.EnsureRoutes()
 	mixer.Set(mixer.PlaybackVolume, "0") // mute before touching amp or stream
 
-	device := tinyalsa.NewDevice(cardNr, deviceNr, pcm.Config{
+	device := tinyalsa.NewDevice(p.pcm.Card, p.pcm.Device, pcm.Config{
 		Channels:         2,
 		SampleRate:       sampleRate,
 		PeriodSize:       alsaPeriodSize,
@@ -411,7 +515,7 @@ func (p *PcmSpeaker) ReconcileJackRouting() int {
 	}
 
 	current := map[string]string{}
-	for _, ctl := range []string{ctlSpeakerAmp, ctlHPDriverGain} {
+	for _, ctl := range []string{ctlSpeakerAmp, ctlHPDriverGain, ctlDacMux} {
 		if v, err := mixer.Get(ctl); err == nil {
 			current[ctl] = v
 		} // a failed read is not evidence of drift
@@ -482,6 +586,27 @@ func (p *PcmSpeaker) silenceLoop() {
 		} else if p.music.playing {
 			p.report(p.music.drained(), "music")
 		}
+		if music == nil && !p.music.playing && !p.music.isActive() {
+			music = p.pullSource()
+		}
+
+		var response responsePeriod
+		var responseGains []float64
+		wideResponse := false
+		if voice != nil {
+			// One atomic read for the whole response period. Response gain is
+			// capped against this target and the same target is applied below,
+			// so a volume command arriving between those stages cannot briefly
+			// drive their product above unity.
+			volumeTarget := p.vol.targetGain()
+			response = p.response.begin(&p.vol, len(voice)/4, volumeTarget)
+			responseGains = p.responseGains[:len(voice)/4]
+			response.fillGains(responseGains)
+			wideResponse = response.boosted(responseGains)
+			response.finish(responseGains)
+		} else {
+			p.response.settle(&p.vol)
+		}
 
 		// The ring's level must be measured BEFORE mixing: Mix sums into the
 		// voice buffer in place, so afterwards there is no voice-only signal
@@ -491,10 +616,27 @@ func (p *PcmSpeaker) silenceLoop() {
 			level = periodRMS(voice)
 		}
 
-		out := p.mixer.Mix(voice, music, p.duckTarget.Load())
-		audio := out != nil
-		if !audio {
-			out = silencePeriod
+		// The boosted response takes a WIDE path: the mix is kept in float
+		// so the voice can sit above unity, the chain is run against the
+		// per-frame headroom, and the master volume brings it back at the
+		// PCM boundary. Only when the level actually asks for a boost —
+		// Low is the historical path, bit for bit.
+		var out []byte
+		audio := false
+		if wideResponse {
+			wide := p.mixer.MixResponse(p.responseMix, voice, music,
+				p.duckTarget.Load(), responseGains)
+			p.applyOutputChainFloat(wide, responseGains)
+			// Back into the voice buffer: it is the right size, it is this
+			// period's own, and the mix already consumed it.
+			out, audio = voice, true
+			p.vol.applyFloat(wide, out, response.volumeTarget)
+		} else {
+			out = p.mixer.Mix(voice, music, p.duckTarget.Load())
+			audio = out != nil
+			if !audio {
+				out = silencePeriod
+			}
 		}
 
 		// ─── Output chain: EQ, bass guard, limiter ───────────────────────
@@ -509,17 +651,22 @@ func (p *PcmSpeaker) silenceLoop() {
 		// It runs BEFORE the taps for the same reason the taps were moved
 		// after the mix: the AEC far-end reference has to be what the
 		// speaker emits, and after this stage that is no longer the mix.
-		out, shaped := p.applyOutputChain(out)
+		shaped := false
+		if !wideResponse {
+			out, shaped = p.applyOutputChain(out)
+		}
 
 		// After the chain: it shapes the mix at unity, exactly as the
 		// controller-side chain does, and the volume scales what came out.
 		// `shaped` is what says the chain wrote a buffer of its own —
 		// without audio and without it, `out` is the SHARED silencePeriod
 		// and a volume ramp written into it would reach every other reader.
-		if audio || shaped {
-			p.vol.apply(out)
-		} else {
-			p.vol.settle()
+		if !wideResponse {
+			if audio || shaped {
+				p.vol.apply(out)
+			} else {
+				p.vol.settle()
+			}
 		}
 		// After the volume, so the cue is the same loudness at any volume.
 		if cued := p.mixCue(out); cued != nil {
@@ -710,9 +857,9 @@ func (p *PcmSpeaker) MusicLead() time.Duration {
 	return time.Duration(len(p.music.ch)) * periodSize * time.Second / 48000
 }
 
-// MusicAudible is VoiceAudible for the music plane.
+// MusicAudible is VoiceAudible for the music plane, from either producer.
 func (p *PcmSpeaker) MusicAudible(hold time.Duration) bool {
-	return p.music.playedWithin(time.Now(), hold)
+	return p.music.playedWithin(time.Now(), hold) || p.SourceAudible(max(hold, 100*time.Millisecond))
 }
 
 // EndStream marks the in-flight voice stream complete (0x03). Always arrives
@@ -781,6 +928,11 @@ const dacUnity = "127"
 // step, unity at 127). Takes effect from the next period, ramped across it.
 func (p *PcmSpeaker) SetVolume(level int) { p.vol.set(VolumeGain(level)) }
 
+// SetResponseGainDB sets the gain applied only to the voice plane, before it is
+// mixed with music. It is relative to the device volume and dynamically capped
+// so the combined gain cannot exceed unity.
+func (p *PcmSpeaker) SetResponseGainDB(db float64) { p.response.setDB(db) }
+
 // Close shuts the speaker down in the reverse of Init's bring-up: mute,
 // amp off, then tear the stream down. Muting first makes the PCM-close
 // transient inaudible, and leaving the amp off means an idle DAC can't
@@ -822,40 +974,4 @@ func periodRMS(period []byte) float64 {
 		return 0
 	}
 	return math.Sqrt(float64(sum)/float64(n)) / 32768.0
-}
-
-// PlaybackDelay reports how many frames stand between a sample pushed into the
-// MUSIC plane right now and the moment it is heard, and whether the hardware
-// is actually running.
-//
-// It is the hardware's own delay PLUS what is still waiting in the music
-// plane's software ring — see PlaybackFrames for why leaving the ring out is
-// not a rounding error but a bias that a scheduled protocol converges on.
-// Music rather than voice because its only caller is Sendspin, asking about
-// audio it is about to push; a voice-plane answer would be a different
-// question with the same name.
-//
-// Read from procfs on every call rather than cached, and the reason is the
-// question being asked: a scheduled protocol needs to know where playback IS,
-// and buffer occupancy changes continuously. A cached value stale by 100ms is
-// stale by more than two ALSA periods, which is larger than the whole error
-// the corrector is trying to hold. The read costs tens of microseconds and
-// happens once per audio chunk (~23/s), which is the same cost class as the
-// per-stream instrumentation this file already carries.
-//
-// Returns running=false when there is nothing to measure — a closed or
-// prepared substream, or a procfs shape we do not recognise. Callers must
-// treat that as "no measurement", never as a delay of zero: on a running
-// stream a zero read as real says the buffer is empty, and the corrector
-// would try to make up time that was never lost.
-func (p *PcmSpeaker) PlaybackDelay() (int64, bool) {
-	data, err := os.ReadFile(statusPath(cardNr, deviceNr))
-	if err != nil {
-		return 0, false
-	}
-	pos := parsePlaybackPos(string(data))
-	if !pos.Running() {
-		return 0, false
-	}
-	return PlaybackFrames(pos.Delay, p.music.queuedPeriods()), true
 }

@@ -434,6 +434,26 @@ README's "Umstieg von EchoMuse" section, and it is the only place a user is
 told to rename `echomuse.db` — losing that paragraph means somebody starts
 with an empty fleet and does not know why.
 
+## Who this file is for
+
+It is checked in so that how the project is run can be seen (Wil, 2026-10-05),
+and it is written for the maintainers' own sessions. If you are preparing a
+contribution, or are an assistant working for someone who is:
+
+- **The engineering rules apply to you**: capability negotiation, hardware by
+  name, conforming to a spec and proving it, the listening rules.
+- **The voice rules do not.** "Writing to people" and the
+  `— Team EchoMuse (powered by Claude)` sign-off are for replies made on the
+  project's behalf. Post as yourself. Never sign as Team EchoMuse, and never
+  tell a user what the project will do.
+- **Leave this file and the two directory-scoped ones out of your pull
+  request.** We update them after a merge.
+
+Written down because an assistant took the whole file as its own
+instructions: five pull requests on 2026-10-04 were signed as the project,
+a support reply on #712 read as an official answer, and #763 then rewrote the
+sign-off rule itself.
+
 ## Where the detail lives
 
 This file holds what is true across both halves. The depth sits in two
@@ -447,7 +467,8 @@ the relevant one before changing anything there.
 - **`controller/CLAUDE.md`** — running the controller, the Home Assistant
   add-on and release channels, the ESPHome voice backend and HA entities,
   the output chain and ducking, schema migrations, config scoping, activity
-  stats, support bundles, OTA, the provisioning wizard, the dashboard.
+  stats, support bundles, OTA, the emOS update, the provisioning wizard, the
+  dashboard.
 
 ## Direction: portable, and not dependent on Amazon
 
@@ -470,9 +491,10 @@ Three consequences for reviewing a change:
   is unavoidable, isolate it rather than spread it.
 - **Resolve hardware by NAME, not by number.** `event2` is the volume button
   on biscuit and the *touchscreen* on checkers; opening the wrong one succeeds
-  silently and leaves the buttons dead. The same rule already applies to i2c
-  (`als.resolve()` matches `tsl2540` by name, since `0-0039` is an
-  enumeration accident).
+  silently and leaves the buttons dead. Since 2026-10-04 this is how the
+  firmware works (#541): each board states its parts in `pkg/board`, the
+  bindings open what was found, and a test fails on a number anywhere else.
+  `device/CLAUDE.md` → "Boards", and `docs/boards.md` for porters.
 - **A change that makes a vendor blob load-bearing is going the wrong way**,
   and needs to justify itself as a terminal opt-in for one platform rather
   than as the path forward. PR #168 (native AFE) is the **worked example,
@@ -651,7 +673,7 @@ own wake word fires, then only until end of speech; "On the controller"
 ## Device/controller compatibility
 
 The two halves version independently, so any pairing can occur in the field. Two rules, both guarded by `tests/test_capabilities.py`:
-- **Negotiate by capability, not version.** The device announces what it implements in its register message (`internal/client/control.go`, `capabilities()`: `mic`, `speaker`, `leds`, `led_anim`, `buttons`, `oww_shadow`, `oww_trigger`, `button_hold`, `audio_mix`, `aec_hw_ref`, `oww_local_only`, `output_chain`, `wake_cue`, and `ambient_light` **only when the sensor is actually readable**); the controller reads `Device.capabilities` via properties like `led_anim_capable` / `oww_shadow_capable`. Never compare version strings — that puts release history in the controller and misjudges dev builds. A UI control whose feature the device lacks is shown **disabled with the reason**, never as a control that silently does nothing.
+- **Negotiate by capability, not version.** The device announces what it implements in its register message (`internal/client/control.go`, `capabilities()`: `mic`, `speaker`, `leds`, `led_anim`, `buttons`, `oww_shadow`, `oww_trigger`, `button_hold`, `audio_mix`, `aec_hw_ref`, `oww_local_only`, `output_chain`, `wake_cue`, `volume_cue`, `remote_volume_arc`, `response_level`, `wake_mic`, `pairing`, `sendspin`, `ble_connect`, `wake_word_off`, and `ambient_light` **only when the sensor is actually readable**); the controller reads `Device.capabilities` via properties like `led_anim_capable` / `oww_shadow_capable`. Never compare version strings — that puts release history in the controller and misjudges dev builds. A UI control whose feature the device lacks is shown **disabled with the reason**, never as a control that silently does nothing.
   **`oww_shadow` and `oww_trigger` are two capabilities and must stay two.** Shadow shipped first, so there is firmware in the field that scores and reports but has no code to act — reading "can score" as "can trigger" stands the controller's own detection down and waits for a trigger that never comes, which presents as a device that scores perfectly and never answers. Same reason `audio_mix` is announced rather than assumed: without it the controller must keep the pause/resume path, because a device that cannot mix simply never plays the `0x04` stream.
   **`audio_state` is a fourth capability where three already existed, and that is deliberate.** It says the firmware reports which source owns its music plane. `sendspin`, `spotify` and `airplay` all shipped before it, so there is firmware in the field that runs all three and cannot say so — and reading "can play locally" as "will tell me it is playing" gives Home Assistant a sound sensor that reads OFF through a whole album. That is worse than no entity rather than merely useless: the automation somebody builds on it switches their amplifier AWAY from the music. The general rule is that a capability to DO something is never evidence of a capability to REPORT it, and the reporting side is the one that has to be announced, because its absence is silent at both ends.
 
@@ -684,10 +706,15 @@ The two halves version independently, so any pairing can occur in the field. Two
 Device firmware, controller and emOS are versioned independently from the same repo:
 
 - **Device**: plain `v*` tags (e.g. `v2.7.6`) → `release.yml` → GitHub Release with the `server` binary asset. The tag is embedded in the binary and compared against `firmware_ver` by OTA — don't change this scheme. **Early Access firmware is `vX.Y.Z-ea.N`, published as a GitHub prerelease** (2026-09-26). Every GA controller since 2.22.0 skips prereleases, so EA firmware cannot reach the GA fleet; a GA controller build (plain `X.Y.Z`) also skips anything named `-ea.N` in case the flag is ever missing, and EA and dev controllers offer both (`version.offers_ea_firmware`, `choose_firmware_release`). "Update available" is `version.firmware_update`, by version rather than string: `2.17.0-ea.1 < 2.17.0-ea.2 < 2.17.0 < 2.17.0-3-g…`, so a device ahead of the offered release is never offered it (the string rule offered EA firmware a GA "downgrade"). A device version that is not a version at all (a timestamped dev build) keeps the old any-difference rule.
-- **emOS**: `emos-v*` tags → `emos-release.yml` → GitHub Release with **two inits** — `init` (aarch64, for FireOS 5's 64-bit kernel), published as its own asset, and `init32` (armv7a, for FireOS 6's 32-bit one), which ships inside `emos-payload.zip` alongside `em-wifi` and the rest of the userspace (checked on emos-v0.8), both static and built with the pinned compiler image. The init must match the device's KERNEL, not its userspace; the firmware beside it is armv7a either way. The release asserts each one's architecture, that both are static, and that they are not the same file (two compiles differing only in a triple is where a copy-paste publishes one binary twice), then runs all seven off-target checks against the source it is publishing. **`init` keeps that name** — `_fetch_latest_emos_release` selects on it by exact name, so renaming it strands every controller in the field. **An init is all that is published, and it cannot be otherwise** — a bootable image carries the device's own kernel and DTBs, so shipping one would redistribute Amazon's code; the image is assembled from the boot partition each user reads off their own device. The namespace is load-bearing twice: `emos/build.sh` stamps `/etc/os-release` from `git describe --match 'emos-v*'` and without it stamps whatever tag is nearest (a controller release number, which is worse than "unknown" because it looks plausible), and it keeps emOS out of the firmware OTA's way, since `_fetch_latest_release` selects a tag starting `v` with a `server` asset and `emos-v0.1` matches neither test. `_fetch_latest_emos_release` is the mirror image and is deliberately a separate function rather than a parameter — the two select on opposite things and share no cache, so folding them together would mean one cache holding whichever kind was asked for last. `git tag -a --cleanup=verbatim`, for the reason below.
+- **emOS**: `emos-v*` tags → `emos-release.yml` → GitHub Release with **two inits** — `init` (aarch64, for FireOS 5's 64-bit kernel), published as its own asset, and `init32` (armv7a, for FireOS 6's 32-bit one), which ships inside `emos-payload.zip` alongside `em-wifi` and the rest of the userspace (checked on emos-v0.8), both static and built with the pinned compiler image. The init must match the device's KERNEL, not its userspace; the firmware beside it is armv7a either way. The release asserts each one's architecture, that both are static, and that they are not the same file (two compiles differing only in a triple is where a copy-paste publishes one binary twice), then runs all eight off-target checks against the source it is publishing. **`init` keeps that name** — `_fetch_latest_emos_release` selects on it by exact name, so renaming it strands every controller in the field. **An init is all that is published, and it cannot be otherwise** — a bootable image carries the device's own kernel and DTBs, so shipping one would redistribute Amazon's code; the image is assembled from the boot partition each user reads off their own device. The namespace is load-bearing twice: `emos/build.sh` stamps `/etc/os-release` from `git describe --match 'emos-v*'` and without it stamps whatever tag is nearest (a controller release number, which is worse than "unknown" because it looks plausible), and it keeps emOS out of the firmware OTA's way, since `_fetch_latest_release` selects a tag starting `v` with a `server` asset and `emos-v0.1` matches neither test. **From 0.10 an emOS release is also what the controller installs over the network** (#573, `controller/CLAUDE.md` → "emOS update"): it rebuilds each device's own image around the release's init, and refuses a release whose init does not carry the trial mark's path, so a tag older than 0.10 is never a target. `_fetch_latest_emos_release` is the mirror image and is deliberately a separate function rather than a parameter — the two select on opposite things and share no cache, so folding them together would mean one cache holding whichever kind was asked for last. `git tag -a --cleanup=verbatim`, for the reason below.
 - **Controller**: `controller-v*` tags (e.g. `controller-v2.8.0`) → `controller-release.yml` → Docker image pushed to `ghcr.io/wilbowes/echomuse-controller` (`X.Y.Z` + `latest`, CPU-only, **multi-arch: linux/amd64 + linux/arm64** — it said amd64 here until 2026-08-13, long after arm64 shipped). **No GitHub Release is created** — the OTA system's release polling (`em_api._fetch_latest_release`) filters for `v*` tags with a `server` asset, but controller releases stay out of the releases list entirely by design. **Tag controller releases with `git tag -a --cleanup=verbatim` too**: with no Release behind them, the annotation is the *only* copy of the notes, and it is what the dashboard's controller-update notice displays (`em_api._fetch_controller_release` reads it via `git/matching-refs` + the tag object). A lightweight controller tag ships an image nobody can read a changelog for. Pick the newest tag by **parsed version, never list order** — the refs API sorts lexically and returns `controller-v2.9.0` *after* `controller-v2.10.0`.
 
   The notice is **advisory only and must stay that way** (`tests/test_deploy.py` enforces GET-only + no mutating call in the banner): the controller is the user's container, updated with their own `docker compose pull`. An in-app update would restart the process serving the page, mid-request, with no way to report the outcome. Note a locally-built image defaults `EM_CONTROLLER_VERSION` to `dev`, which resolves to `unknown` and correctly shows nothing — pass `--build-arg EM_CONTROLLER_VERSION=$(git describe --tags --match 'controller-v*')` for a local build that knows what it is. Version comparison lives in `version.py` (`parse`/`compare`) so it is unit-testable without aiohttp; a build between tags parses **equal** to its tag and is ahead, not behind.
+
+**UAT gates GA, not Early Access** (Wil, 2026-10-04). The dashboard-control
+run and its report (`tools/uat`, `docs/uat-results/`) are done on a GA
+candidate; an EA is cut from a green main without it, since finding faults is
+what the EA is for. 2.26.0-ea.1 / v2.18.0-ea.1 was the first cut that way.
 
 **Pipeline hygiene (2026-09-23).** Every action is pinned by commit SHA with
 its version in a trailing comment (`@<sha> # v7.0.1`), which Dependabot's
@@ -699,7 +726,14 @@ before it reaches a shell (git allows `$ ( ) ;` in a tag name). The firmware
 `server`, the emOS assets and the controller image carry build-provenance
 attestations (`gh attestation verify`); **nothing checks them before OTA yet**,
 so they make a forged release detectable, not impossible. Base images are
-pinned by index digest. One GitHub account makes every change, so branch and
+pinned by index digest. **The controller image's `apt-get upgrade` layer is
+keyed on the ISO week** (`APT_SNAPSHOT`, #802): both workflows build with the
+GHA layer cache, the layer's key was the base digest plus the text of the RUN
+line, and so it was served from cache and apt never ran. Main's image of
+2026-10-05 carried openssl and pcre2 versions Debian had already replaced,
+with the upgrade line in place, and the weekly scan failed on them. The scan
+reads `:latest`, which only a GA release moves, so it stays red from a fix
+landing until the next GA. One GitHub account makes every change, so branch and
 tag rules guard against mistakes only, and the token on the dev box can lift
 them.
 
@@ -878,7 +912,7 @@ All three WS planes exist twice: plain on `SERVER_PORT` (8767) and TLS on `SERVE
 
 Device behaviour (`tlscreds.go`): credentials live at `/data/local/etc/revoice/{ca.pem,token}` (canonical path constant: `em_api.DEVICE_TLS_DIR`) and are **re-read on every dial**, so a push takes effect on the next reconnect, no restart. CA present → dial **wss only** (port from the `tls_port` mDNS TXT or the endpoint file; none → no dial), and never send the token over plain; no CA → plain. The old CA-but-no-TXT plain fallback was a downgrade anyone on the LAN could trigger by making TLS fail — and it is what `choosePlane`/`linkplane.go` did on this fork until the 2026-09-28 sync; both are gone. The one exception is a pairing window (`internal/client/pairing.go`): wss, then plain without the token. The token rides as `X-EM-Token` on all three dials.
 
-Controller enforcement (`em_linkauth.decide`, called by `_link_auth_ok`): presented-but-wrong token always rejects; stored-token-but-none-presented is allowed **only until the device has presented that token once** (the credential push itself rides the plain shell plane, and rejecting there would deadlock the rollout), then refused — `devices.token_confirmed_at`, schema v27, cleared whenever the token changes (Wil, 2026-09-26). Before that, anyone on the LAN could be any Echo: the device id is public (mDNS carries 12 of the serial's 16 characters, the rest is a model prefix). A refused device shows why on its Link row (`linkRefused` in `/api/devices`), and recovery is Remove then approve again. A FIRST token is issued only by a human (the wizard over USB, or an approval — see pairing below). `/data` and `/shell` must also come from the address and scheme of the device's live control connection (`em_linkauth.follows_control`), which is what protects a device that has never presented a token; a token presented for a device with NOTHING on record is **ignored, not rejected**. Rejecting it made deleting a device a one-way door, since delete takes the token with the row while the device keeps re-reading its credential file, and the refusal covered the shell plane the controller would have fixed it over. It also bought nothing: a device with nothing on record is admitted as pending with or without a token, and approval is a human decision. `REQUIRE_DEVICE_TLS=1` flips the posture to TLS+token mandatory and is unaffected by that: a deleted device is still refused there and needs credentials pushed over USB. Flip it only when every device shows `wss (TLS)` in the dashboard (Status tab "Link" row; `linkTls` in `/api/devices`).
+Controller enforcement (`em_linkauth.decide`, called by `_link_auth_ok`): presented-but-wrong token always rejects; stored-token-but-none-presented is allowed **only until the device has presented that token once** (the credential push itself rides the plain shell plane, and rejecting there would deadlock the rollout), then refused — `devices.token_confirmed_at`, schema v27, cleared whenever the token changes (Wil, 2026-09-26). Before that, anyone on the LAN could be any Echo: the device id is public (mDNS carries 12 of the serial's 16 characters, the rest is a model prefix). A refused device shows why on its Link row (`linkRefused` in `/api/devices`), and recovery is Remove then approve again. A FIRST token is issued only by a human (the wizard over USB, or an approval — see pairing below). `/data` and `/shell` must also come from the address and scheme of the device's live control connection (`em_linkauth.follows_control`), which is what protects a device that has never presented a token; a token presented for a device with NOTHING on record is **ignored, not rejected**. Rejecting it made deleting a device a one-way door, since delete takes the token with the row while the device keeps re-reading its credential file, and the refusal covered the shell plane the controller would have fixed it over. It also bought nothing: a device with nothing on record is admitted as pending with or without a token, and approval is a human decision. `REQUIRE_DEVICE_TLS=1` flips the posture to TLS+token mandatory and is unaffected by that: a deleted device is still refused there and needs credentials pushed over USB. Flip it only when every device shows `wss (TLS)` in GREEN in the dashboard (Status tab "Link" row). The row reads `linkTls` AND `linkTokenIssued` since #725: a device on wss with no token on record shows `wss (TLS) · no token` in amber, because the flip wants secure AND presented AND expected and would lock that device out while a transport-only row called it fine. An absent `linkTokenIssued` (an older controller behind a newer dashboard) keeps the plain reading rather than claiming "no token" of every device.
 
 **Deleting a device must also close its control plane, and `_delete_device` does.** Link auth is decided ONCE, at register time, so removing the row does nothing to the socket a connected device is already on: it vanishes from the dashboard and carries on serving turns, holding its ESPHome port and wake-listening, and only comes back as pending when something else drops the link. The tell is `sqlite3.IntegrityError: FOREIGN KEY constraint failed` in `db.log_device` every time the orphan relays a log line — `device_logs` references `devices(device_id)` and the parent is gone — which is how this was found on the live EA controller, 2026-08-27, a device deleted five minutes earlier and still perfectly connected. The bounce goes **after** the row is deleted: the device redials in 5s, and closing first races the redial against the delete.
 
@@ -914,6 +948,20 @@ the field runs AirPlay, ignores this key and has exactly one path to exec.
 
 It defaults **OFF**, and the default is the considered part rather than caution for its own sake: `device/CLAUDE.md` records `Ext_Speaker_Amp_Switch` observed `Off` while the internal speaker was audibly playing, and that observation has not been retested since the jack gain was fixed. If the control does not gate the internal driver, an automatic bypass would send unguarded bass to a 1.5" driver on every device in the fleet on the strength of an untested assumption. A setting costs the one user with a hi-fi one toggle and costs everybody else nothing — and turning it on IS most of the retest, which is why the dashboard's own note says to try it with the external speakers switched off.
 
+**Vier Schlüssel kamen mit dem Sync vom 2026-10-05 dazu** und werden
+weiter unten in `controller/CLAUDE.md` ausgeführt: `volumeButtonSound`
+(#699, Standard an) spielt einen Ton auf der neuen Lautstärke, wenn eine
+physische Taste sie ändert und nichts hörbar ist; `remoteVolumeArc` (#713,
+Standard aus) zeigt den Pegelbogen für eine Änderung, die nicht von den
+Tasten kam; `responseLevel` (#716, `low`/`medium`/`high` = 0/+6/+12 dB)
+hebt die Sprachebene gegenüber der Gerätelautstärke an; `wakeMic` (#730,
+Standard 0) wählt das Mikrofon, auf dem das Wakeword lauscht. Dazu
+`wakeWordEnabled` — HAs Wakeword-Auswahl, je Gerät außerhalb der
+Gerätekonfiguration gespeichert und allein an Firmware mit `wake_word_off`
+geschickt, als Zeiger, weil false der Wert ist, auf den es ankommt —
+sowie `bleProxyConnections`, `sendspinUnpaired`, `sendspinName`,
+`wakeClipCapture` und `wakeClipMinScore`.
+
 ## Build and test quickref
 
 ```bash
@@ -930,6 +978,7 @@ cd emos/init && cc -O2 -o /tmp/nodecheck nodecheck.c && /tmp/nodecheck
 cd emos/init && cc -O2 -o /tmp/dnscheck dnscheck.c && /tmp/dnscheck
 cd emos/init && cc -O2 -o /tmp/cmdlinecheck cmdlinecheck.c && /tmp/cmdlinecheck
 cd emos/init && cc -O2 -o /tmp/serialcheck serialcheck.c && /tmp/serialcheck
+cd emos/init && cc -O2 -o /tmp/trialcheck trialcheck.c && /tmp/trialcheck
 sh emos/device/em-wifi-check.sh
 ```
 
@@ -958,7 +1007,10 @@ the criterion for adding another: a parser over a file written by the other
 half of the project, where being wrong looks like something else entirely (a
 wrong password, a dropped console, a device that never associates, a system
 partition that is not the one this image was built beside, two devices sharing
-a serial). `emos/device/em-wifi-check.sh` is the one in SHELL rather than C,
+a serial), and `trialcheck` for the trial mark the controller writes
+before an emOS update (#573) — read as absent, a broken image is promoted;
+a leftover read as live rolls a healthy one back.
+`emos/device/em-wifi-check.sh` is the one in SHELL rather than C,
 and it is here for the same reason: it sources `em-wifi` and drives `security_of()` with every flag form
 hostap 2.10's `wpa_supplicant_ie_txt()` prints, because testing SAE before PSK
 refused every WPA2/WPA3 transition-mode network as WPA3 (2026-09-23). CI runs

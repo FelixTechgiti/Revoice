@@ -109,20 +109,15 @@ func (vc *volumeController) SetApply(fn func(int)) {
 	}
 }
 
-// Set applies a new volume level (0–volumeMax). showRing
-// paints the cyan volume arc for the 2s display window — physical button
-// presses pass true; remote sets (controller command / HA) and the boot-time
-// SeedVolume pass false so the ring doesn't light when nobody is at the
-// device.
-func (vc *volumeController) Set(level int, showRing bool) {
-	if level < volumeMin {
-		level = volumeMin
-	}
-	if level > volumeMax {
-		level = volumeMax
-	}
+// Set applies a new volume level (0–volumeMax). showRing paints the cyan
+// volume arc for the 2s display window — physical button presses pass true;
+// live remote sets pass the remoteVolumeArc setting; the boot-time SeedVolume
+// always passes false.
+func (vc *volumeController) Set(level int, showRing bool) bool {
+	level = clampVolumeLevel(level)
 
 	vc.mu.Lock()
+	changed := vc.level != level
 	vc.level = level
 	// Copy under the lock — SetOnVolumeChange writes this field under mu
 	// from the main goroutine, and button events can fire before that
@@ -143,6 +138,17 @@ func (vc *volumeController) Set(level int, showRing bool) {
 	if cb != nil {
 		cb(level)
 	}
+	return changed
+}
+
+func clampVolumeLevel(level int) int {
+	if level < volumeMin {
+		return volumeMin
+	}
+	if level > volumeMax {
+		return volumeMax
+	}
+	return level
 }
 
 // CancelDisplay ends the volume arc's hold early, releasing the ring back to
@@ -175,19 +181,19 @@ func (vc *volumeController) Get() int {
 }
 
 // StepUp increases volume by one step, within the button band.
-func (vc *volumeController) StepUp() {
+func (vc *volumeController) StepUp() bool {
 	vc.mu.Lock()
 	level := vc.level + volumeStep
 	vc.mu.Unlock()
-	vc.Set(clampToButtonBand(level), true)
+	return vc.Set(clampToButtonBand(level), true)
 }
 
 // StepDown decreases volume by one step, within the button band.
-func (vc *volumeController) StepDown() {
+func (vc *volumeController) StepDown() bool {
 	vc.mu.Lock()
 	level := vc.level - volumeStep
 	vc.mu.Unlock()
-	vc.Set(clampToButtonBand(level), true)
+	return vc.Set(clampToButtonBand(level), true)
 }
 
 // clampToButtonBand holds a stepped level inside [volumeButtonFloor,

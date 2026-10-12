@@ -72,28 +72,11 @@
       --surface-alt: #f9f6f0;
       --raised:      #ebe6db;
 
-      /* Borders */
-      --border:      #b8b4ac;
-      --border-soft: #c0bdb6;
-      --border-hard: #b0aca4;
-      --field-line: #777268;
-
-      /* Text */
-      --text:   #1e1c18;
-      --text2:  #4a4844;
-      --muted:  #575450;
-      --faint:  #767269;
-
-      /* Semantic state — one value each */
-      --ok:     #285e3f;
-      --warn:   #854212;
-      --error:  #973020;
-      --error-deep: #782020;
-      --on-error:   #f0d8d8;
       /* Borders. Two weights: the hairline everything is divided by, and
          the one an active or emphasised element is drawn with. */
       --line:        #ded7c9;
       --line-strong: #c9c1b0;
+      --field-line:  #777268;
 
       /* Text, loudest to quietest. --faint is strokes only. */
       --text:   #1b1a17;
@@ -115,25 +98,6 @@
       --media-card: #c9d8ef;
       --media-face: #f6f8fc;
 
-      /* Accent */
-      --accent:      #3e5675;
-      --accent-hi:   #4d698c;
-      --accent-deep: #304860;
-      --accent-lit:  #8ab0d0;
-      --accent-tint: #dde8f4;
-      --accent-line: #ccd8ec;
-
-      /* Inset dark regions: the LCD readouts, the console, the wizard
-         transcript. These stay dark in BOTH themes — they are meant to
-         read as a lit panel set into the surface. */
-      --lcd-bg:    #1e2219;
-      --lcd-green: #9aba80;
-      --lcd-amber: #c8a141;
-      --lcd-dim:   #95ae86;
-      --lcd-line:  #1a1c18;
-      --lcd-face:  #2a2e28;
-      --lcd-deep:  #1c1f18;
-      --lcd-faint: #3a4a30;
       /* A device state's NAME on an LCD readout: the LED colour lifted to
          4.5:1. The LED itself keeps its exact colour (deviceState.dot). */
       --lcd-offline: #df956b;
@@ -198,7 +162,6 @@
       --accent:      var(--media);
       --accent-hi:   var(--media);
       --accent-deep: var(--media-line);
-      --accent-lit:  var(--media);
       /* Literal, not var(--media): --accent-lit is read as TEXT on the
          LCD panels, where the light theme's media blue is 3.2:1. */
       --accent-lit:  #6fa4ef;
@@ -229,23 +192,9 @@
       --surface-alt: #1e1c1a;
       --raised:      #221f1c;
 
-      --border:      #343a2b;
-      --border-soft: #2c3124;
-      --border-hard: #414736;
-      --field-line: #7f8b69;
-
-      --text:   #ddd9d1;
-      --text2:  #b2ada4;
-      --muted:  #aaa8a4;
-      --faint:  #8a867f;
-
-      --ok:     #82b489;
-      --warn:   #d79b56;
-      --error:  #da978a;
-      --error-deep: #c16a5a;
-      --on-error:   #2a1512;
       --line:        #2c2926;
       --line-strong: #3a3632;
+      --field-line:  #7f8b69;
 
       --text:   #f2efe9;
       --text2:  #b8b2a8;
@@ -264,24 +213,6 @@
       --media-card: #2f3a4d;
       --media-face: #161b24;
 
-      --accent:      #8caac9;
-      --accent-hi:   #8fb0d0;
-      --accent-deep: #4a6a8c;
-      --accent-lit:  #a8c8e4;
-      --accent-tint: #1f2c3a;
-      --accent-line: #2f4054;
-
-      /* The panel has to stay distinguishable from a ground that is now
-         nearly as dark, so it goes slightly darker still and leans on its
-         own border. */
-      --lcd-bg:    #12150e;
-      --lcd-green: #9aba80;
-      --lcd-amber: #c8a141;
-      --lcd-dim:   #95ae86;
-      --lcd-line:  #0c0e08;
-      --lcd-face:  #1e2219;
-      --lcd-deep:  #14170f;
-      --lcd-faint: #3a4a30;
       --lcd-offline: #df956b;
       --lcd-muted: #dc9393;
       --lcd-speaking: #7eaadf;

@@ -62,11 +62,21 @@ Schaden steht mitten im Text. Die Fälle, die es schon gekostet hat, stehen in
 
 ```bash
 git fetch origin                            # vor JEDEM Push
-cd controller && python -m pytest tests/    # braucht pytest numpy scipy pyyaml
+cd controller && python -m pytest tests/    # braucht pytest pytest-cov numpy scipy pyyaml aiohttp websockets bcrypt zeroconf protobuf
 cd device && go test ./... && go vet ./...
 ```
 
-Beides läuft bei jedem Push in CI (`.github/workflows/ci.yml`).
+Beides läuft bei jedem Push in CI (`.github/workflows/ci.yml`), und beides
+meldet die Testabdeckung; die Grundlinie des Controllers steht in
+`controller/.coveragerc`.
+
+**Bitte für alles einen Test schreiben, was sich erreichen lässt.** Hier stand
+bis zum 2026-10-03 „wenn deine Änderung reine Logik ist", denn bis dahin konnte
+die Suite `em_controller` nicht importieren (#739). Jetzt kann sie es, und
+erreichbar ist nicht dasselbe wie testbar: den Quelltext zu lesen und auf
+Teilzeichenketten zu prüfen, beweist etwas über den **Text**, und der ist nicht
+das, was läuft. Eine Entscheidung in ein eigenes Modul zu ziehen
+(`em_linkauth`, `em_button`, `em_turnclock`), bleibt am leichtesten zu prüfen.
 
 **Bitte einen Test dazu, wenn deine Änderung reine Logik ist.** Die
 Controller-Suite kann `em_controller` und `em_esphome` absichtlich nicht

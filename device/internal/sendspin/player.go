@@ -1,250 +1,285 @@
 package sendspin
 
-import "math"
-
-// The player role, v1.
-//
-// These are the wire shapes, and the one decision in this file that is not a
-// transcription is which formats to advertise. That decision has a trap in it
-// worth stating before the code:
-//
-// ⚠ A server's format request must EXACTLY match something the client
-// advertised in client/hello, and when it does not the failure is SILENT.
-// The server filters the request against the advertised list, logs a warning
-// ON THE SERVER, and falls back to the base format. The client is told
-// nothing and simply keeps receiving what it had. So a client that advertises
-// mono and later asks for stereo — on a jack insert, say — appears to work,
-// changes nothing, and leaves no trace on the device.
-//
-// client/hello is a ONE-SHOT at connection setup, so the list cannot be
-// extended later without reconnecting. Everything this device might ever ask
-// for therefore goes in the first hello, whether or not it can render it
-// today: an advertised format costs a few bytes, and an unadvertised one
-// costs a silent failure on somebody's hardware.
-
-// Codec names, as they appear on the wire.
-const (
-	CodecPCM  = "pcm"
-	CodecFLAC = "flac"
-	CodecOpus = "opus"
+import (
+	"math"
+	"sync"
+	"time"
 )
 
-// PlayerRole is the role identifier this client activates.
-const PlayerRole = "player@v1"
+// epoch anchors the client clock. time.Time carries a monotonic reading, so
+// Sub between two of them is immune to the wall clock being stepped — which
+// the controller does to every Echo on connect (time_ms on the ack).
+var epoch = time.Now()
 
-// Format is one entry of supported_formats, and the tuple the server matches
-// a request against. All four fields participate in the match.
-type Format struct {
-	Codec      string `json:"codec"`
-	Channels   int    `json:"channels"`
-	SampleRate int    `json:"sample_rate"`
-	BitDepth   int    `json:"bit_depth"`
-}
+func nowUs() int64 { return time.Since(epoch).Microseconds() }
 
-// PlayerSupport is the player@v1 object in client/hello.
-type PlayerSupport struct {
-	// SupportedFormats is in PRIORITY ORDER — the server picks from it, so
-	// the first entry is the one to prefer.
-	SupportedFormats []Format `json:"supported_formats"`
-	// BufferCapacity is the most COMPRESSED audio, in bytes, this client
-	// will hold un-played. The server's pacing is built against it.
-	BufferCapacity int `json:"buffer_capacity"`
-}
+func toUs(t time.Time) int64 { return t.Sub(epoch).Microseconds() }
 
-// The device's audio parameters. 48kHz because that is what the codec runs at
-// and what every other plane already carries; 16-bit because that is what the
-// ALSA write takes and a 24-bit stream would only be truncated.
+// Sync correction, after the spec's suggested strategy: whole-frame drops and
+// repeats, bit-exact everywhere else.
 const (
-	SampleRate = 48000
-	BitDepth   = 16
+	// deadbandFrames: errors under ~100µs are left alone.
+	deadbandFrames = 5
+	// maxStepFrames per period: 8 of 2048 is 0.39% speed, inside the spec's
+	// 0.5% cap. The DAC's own crystal runs -0.056% (1.15 frames a period,
+	// measured 2026-08-10), so this keeps up with room to spare.
+	maxStepFrames = 8
+	// snapUs: past this the error is a disturbance rather than drift, and
+	// one-shot resync beats a second of audible speed change.
+	snapUs = 5000
 )
 
-// Decodable reports whether this firmware can actually turn a codec into
-// samples.
-//
-// THE ADVERTISED LIST IS IN PRIORITY ORDER AND THE SERVER PICKS THE FIRST
-// ONE IT CAN ENCODE — and it can encode all three, because the spec requires
-// that of every server. So the first entry is the one that will be chosen,
-// and advertising a codec with no decoder behind it does not "leave the
-// option open": it guarantees a stream this device turns into noise.
-//
-// Split out from the list so the two cannot disagree. FLAC joins this set in
-// the same change that adds its decoder, and a test pins that the preferred
-// format is decodable — because the failure has no error in it. The frames
-// arrive, something interprets them, and the speaker plays the result.
-func Decodable(codec string) bool {
-	switch codec {
-	case CodecPCM:
-		// Raw little-endian signed samples. Nothing to decode.
-		return true
-	case CodecFLAC:
-		// Pure Go (github.com/mewkiz/flac), no cgo — which is why FLAC and
-		// not Opus: the codec choice here is constrained by what
-		// cross-compiles for armv7a/API 22 without a toolchain problem.
-		return true
-	}
-	return false
+type chunk struct {
+	ts  int64 // server µs of the first sample
+	pcm []int16
 }
 
-// SupportedFormats returns what this device advertises, in priority order.
+// player holds decoded audio and hands it to the speaker at the right time.
 //
-// DECODABLE FORMATS COME FIRST, and that ordering is the whole safety
-// property of this list: the server picks the client's highest priority it
-// can encode, and it can encode everything.
-//
-// FLAC LEADS, and that is a measurement rather than a preference. Per second
-// of audio on this hardware: FLAC decode 3.28% of one core, ChaCha20-Poly1305
-// at the FLAC rate 0.40%, total 3.68% — against 0.97% for PCM, which costs
-// 929 kbps more on the wire. This fleet's links measure 4.6-7.1% packet loss
-// (#139/#140), and trading a link known to be marginal against a core with
-// 3.68% of room on it is not a close call.
-//
-// PCM stays advertised, below it. client/hello is a ONE-SHOT — a format
-// absent from it can never be requested for the life of the connection, and a
-// later request for an unadvertised format fails SILENTLY, with the server
-// logging the mismatch on its own side and falling back — so the list names
-// everything this device might ever ask for even when nothing asks today.
-//
-// STEREO IS ADVERTISED THOUGH NOTHING REQUESTS IT YET, for the same one-shot
-// reason. The music plane is mono end to end — PumpMusic takes mono periods
-// and the ALSA write duplicates L=R, which is an I2S constraint rather than a
-// wire one — so this client asks for mono. Stereo becomes worth asking for
-// when a plug appears in the jack, mid-stream renegotiation is implemented
-// server-side, and the request will be honoured silently and wrongly if the
-// format is not already in this list.
-//
-// Opus is deliberately absent from the list altogether. Servers MUST support
-// all three, so a subset is legal, and the only Opus decoders worth having
-// are cgo on a platform (armv7a, API 22) where every cgo dependency is a
-// cross-compilation problem. It is a bandwidth optimisation to take later,
-// not an entry cost — and unlike FLAC there is no pure-Go path to it, so
-// advertising it would be advertising something that cannot arrive.
-func SupportedFormats() []Format {
-	return []Format{
-		{Codec: CodecFLAC, Channels: 1, SampleRate: SampleRate, BitDepth: BitDepth},
-		{Codec: CodecFLAC, Channels: 2, SampleRate: SampleRate, BitDepth: BitDepth},
-		{Codec: CodecPCM, Channels: 1, SampleRate: SampleRate, BitDepth: BitDepth},
-		{Codec: CodecPCM, Channels: 2, SampleRate: SampleRate, BitDepth: BitDepth},
-	}
+// The speaker PULLS (Fill): it knows when the period it is building will
+// reach the DAC, and only a pull at that moment can place a sample to the
+// millisecond. The existing music plane is push-and-play-in-order, which is
+// why Sendspin cannot simply feed it.
+type player struct {
+	mu      sync.Mutex
+	q       []chunk
+	off     int // samples consumed from q[0]
+	playing bool
+
+	filter  *timeFilter
+	delayUs int64 // static_delay_ms, µs
+
+	gainTarget, gain int32 // Q15
+
+	st playerStats
 }
 
-// PreferredFormat is the one this client asks for while the speaker is the
-// only output: the first advertised format it can actually decode. It must be
-// present in SupportedFormats and must be Decodable, and tests pin both
-// rather than trusting three things to be edited together.
-func PreferredFormat() Format {
-	for _, f := range SupportedFormats() {
-		if Decodable(f.Codec) && f.Channels == 1 {
-			return f
-		}
-	}
-	// Unreachable while PCM is in the list. Returning the first advertised
-	// format rather than a zero value keeps a bad edit to SupportedFormats
-	// producing a stream nobody asked for instead of a handshake that
-	// advertises nothing.
-	return SupportedFormats()[0]
+// playerStats are counts since the stream started, for the status report.
+type playerStats struct {
+	Snaps       int `json:"snaps"`
+	Corrections int `json:"corrections"`
+	Underruns   int `json:"underruns"`
+	LateDrops   int `json:"lateDrops"`
+	LastErrorUs int `json:"lastErrorUs"`
 }
 
-// Supports reports whether a format is one this client advertised — the same
-// four-field match the server performs. Used to check a stream/start before
-// acting on it: the server falling back silently is its behaviour on a
-// mismatch, and a client that decodes whatever arrives as whatever it last
-// asked for turns that into noise instead of a log line.
-func Supports(f Format) bool {
-	for _, s := range SupportedFormats() {
-		if s == f {
-			return true
-		}
-	}
-	return false
+func newPlayer(f *timeFilter) *player {
+	return &player{filter: f, gainTarget: unity, gain: unity}
 }
 
-// BufferCapacity states, in bytes, how much un-played compressed audio this
-// client will hold. The server's pacing is built against it: too small and it
-// starves us, too large and it overruns the buffer.
-//
-// Derived from the device's own buffer rather than picked. The music plane
-// holds audioChanDepth periods — ~5.46s — and the honest conversion to
-// "compressed bytes" is at the WORST-CASE compression ratio, which for a
-// lossless codec is 1:1. FLAC on quiet or simple material runs at 40% of PCM
-// and on dense loud material approaches PCM exactly, so sizing against the
-// measured average would leave the server free to overrun us on precisely the
-// content people turn up.
-//
-// bufferSeconds is passed in rather than read from the speaker package: this
-// package is untagged and host-testable, and importing a cgo binding to learn
-// one constant would end that.
-func BufferCapacity(bufferSeconds float64, channels int) int {
-	if bufferSeconds <= 0 || channels <= 0 {
-		return 0
-	}
-	bytesPerSecond := float64(SampleRate) * float64(channels) * float64(BitDepth/8)
-	return int(bufferSeconds * bytesPerSecond)
-}
+const unity int32 = 1 << 15
 
-// PlayerState is the player object in client/state.
-type PlayerState struct {
-	Volume *int  `json:"volume,omitempty"`
-	Muted  *bool `json:"muted,omitempty"`
-	// OutputDelayMs (0–5000) is the client's own write-to-ear latency, which
-	// the server subtracts when scheduling. It is not a fudge factor for
-	// clock error — that is the time filter's job — and using it as one
-	// makes this device play early or late relative to a group that is
-	// otherwise correct.
-	OutputDelayMs int `json:"output_delay_ms"`
-	// RequiredLeadTimeMs is how far ahead of playback a chunk must arrive.
-	RequiredLeadTimeMs int `json:"required_lead_time_ms"`
-	// MinBufferMs is how much audio must be queued before playback starts —
-	// the same prime gate the 0x04 plane already has, expressed to the
-	// server so it can fill it.
-	MinBufferMs int `json:"min_buffer_ms"`
-	// SupportedCommands: 'volume', 'mute', 'set_output_delay'. A command
-	// listed here MUST have its state field populated, and the two are
-	// built together by PlayerStateFor for that reason.
-	SupportedCommands []string `json:"supported_commands"`
-	Format            *Format  `json:"format,omitempty"`
-}
-
-// Command names for supported_commands.
-const (
-	CommandVolume         = "volume"
-	CommandMute           = "mute"
-	CommandSetOutputDelay = "set_output_delay"
-)
-
-// StreamStart is the player object in a stream/start message.
-type StreamStart struct {
-	Codec      string `json:"codec"`
-	SampleRate int    `json:"sample_rate"`
-	Channels   int    `json:"channels"`
-	BitDepth   int    `json:"bit_depth"`
-	// CodecHeader is base64 and FLAC-only: the STREAMINFO the decoder needs
-	// before the first chunk, because the chunks themselves carry frames
-	// rather than a stream header.
-	CodecHeader string `json:"codec_header,omitempty"`
-}
-
-// Format returns the tuple to match against what was advertised.
-func (s StreamStart) Format() Format {
-	return Format{Codec: s.Codec, Channels: s.Channels,
-		SampleRate: s.SampleRate, BitDepth: s.BitDepth}
-}
-
-// VolumeAmplitude converts a Sendspin volume (0–100) to a linear amplitude.
-//
-// The scaling is perceptual and specified: amplitude = (volume/100)^1.5. It
-// is in the spec rather than left to the client so that one volume value
-// sounds the same on every speaker in a group — a client applying its own
-// curve is a room that is audibly louder than the others at the same setting.
-func VolumeAmplitude(volume int) float64 {
-	if volume <= 0 {
+// volumeGain is the spec's perceptual curve: amplitude = (v/100)^1.5.
+func volumeGain(volume int, muted bool) int32 {
+	if muted || volume <= 0 {
 		return 0
 	}
 	if volume >= 100 {
-		return 1
+		return unity
 	}
-	// Written as math.Pow with the exponent from the spec, rather than as
-	// v*sqrt(v), so the line can be checked against the specification
-	// without doing algebra.
-	return math.Pow(float64(volume)/100, 1.5)
+	return int32(math.Pow(float64(volume)/100, 1.5)*float64(unity) + 0.5)
+}
+
+func (p *player) setGain(volume int, muted bool) {
+	p.mu.Lock()
+	p.gainTarget = volumeGain(volume, muted)
+	p.mu.Unlock()
+}
+
+func (p *player) setFilter(f *timeFilter) {
+	p.mu.Lock()
+	p.filter = f
+	p.mu.Unlock()
+}
+
+func (p *player) setDelay(ms int) {
+	p.mu.Lock()
+	p.delayUs = int64(ms) * 1000
+	p.mu.Unlock()
+}
+
+// push queues one decoded chunk. A chunk that starts before the one already
+// at the tail is a server that went backwards; it is taken as a restart.
+func (p *player) push(ts int64, pcm []int16) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if n := len(p.q); n > 0 && ts < p.q[n-1].ts {
+		p.clearLocked()
+	}
+	p.q = append(p.q, chunk{ts: ts, pcm: pcm})
+}
+
+// clear drops everything buffered: stream/clear, stream/end, or HA taking
+// the music plane.
+func (p *player) clear() {
+	p.mu.Lock()
+	p.clearLocked()
+	p.mu.Unlock()
+}
+
+func (p *player) clearLocked() {
+	p.q, p.off, p.playing = nil, 0, false
+}
+
+func (p *player) resetStats() {
+	p.mu.Lock()
+	p.st = playerStats{}
+	p.mu.Unlock()
+}
+
+func (p *player) stats() playerStats {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.st
+}
+
+// buffered is how much audio is queued, as time.
+func (p *player) buffered() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := -p.off
+	for _, c := range p.q {
+		n += len(c.pcm)
+	}
+	return time.Duration(n) * time.Second / outRate
+}
+
+func (p *player) active() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.q) > 0
+}
+
+// Fill writes one period of stereo S16LE to out, whose first frame will
+// reach the DAC at playAt. It returns false when there is nothing to play at
+// that moment, so the speaker treats the music plane as empty.
+func (p *player) Fill(out []byte, playAt time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	frames := len(out) / 4
+	if len(p.q) == 0 || !p.filter.synchronized() {
+		if p.playing {
+			p.st.Underruns++
+			p.playing = false
+		}
+		return false
+	}
+
+	errUs := toUs(playAt) - p.localTimeLocked()
+	errFrames := int(math.Round(float64(errUs) * outRate / 1e6))
+	p.st.LastErrorUs = int(errUs)
+
+	lead := 0 // frames of silence before the first sample
+	repeat := 0
+	switch {
+	case !p.playing || errUs > snapUs || errUs < -snapUs:
+		if errFrames > 0 {
+			// Late: the first samples should already have played.
+			if !p.dropLocked(errFrames) {
+				p.playing = false
+				return false
+			}
+		} else if errFrames < 0 {
+			if -errFrames >= frames {
+				p.playing = false
+				return false // not due yet
+			}
+			lead = -errFrames
+		}
+		p.playing = true
+		p.st.Snaps++
+	case errFrames > deadbandFrames:
+		if !p.dropLocked(min(errFrames, maxStepFrames)) {
+			p.playing = false
+			return false
+		}
+		p.st.Corrections++
+	case errFrames < -deadbandFrames:
+		repeat = min(-errFrames, maxStepFrames)
+		p.st.Corrections++
+	}
+
+	start, end := p.gain, p.gainTarget
+	p.gain = end
+	gainAt := func(i int) int32 {
+		if start == end {
+			return end
+		}
+		return start + (end-start)*int32(i)/int32(frames)
+	}
+
+	i := 0
+	for ; i < lead; i++ {
+		put(out, i, 0)
+	}
+	if repeat > 0 {
+		s := p.q[0].pcm[p.off]
+		for r := 0; r < repeat && i < frames; r++ {
+			put(out, i, scale(s, gainAt(i)))
+			i++
+		}
+	}
+	for i < frames {
+		if len(p.q) == 0 {
+			// Ran dry mid-period: the rest is silence, and the next Fill
+			// resyncs from scratch.
+			for ; i < frames; i++ {
+				put(out, i, 0)
+			}
+			p.playing = false
+			p.st.Underruns++
+			break
+		}
+		c := p.q[0].pcm
+		n := min(len(c)-p.off, frames-i)
+		for k := 0; k < n; k++ {
+			put(out, i+k, scale(c[p.off+k], gainAt(i+k)))
+		}
+		i += n
+		p.advanceLocked(n)
+	}
+	return true
+}
+
+// localTimeLocked is when the next sample should reach the DAC on our clock.
+func (p *player) localTimeLocked() int64 {
+	c := p.q[0]
+	ts := c.ts + int64(p.off)*1e6/outRate
+	return p.filter.clientTime(ts) - p.delayUs
+}
+
+// dropLocked discards n samples, reporting false if the queue ran out first.
+func (p *player) dropLocked(n int) bool {
+	for n > 0 && len(p.q) > 0 {
+		k := min(len(p.q[0].pcm)-p.off, n)
+		if k == len(p.q[0].pcm)-p.off && p.off == 0 {
+			p.st.LateDrops++
+		}
+		p.advanceLocked(k)
+		n -= k
+	}
+	return len(p.q) > 0
+}
+
+func (p *player) advanceLocked(n int) {
+	p.off += n
+	for len(p.q) > 0 && p.off >= len(p.q[0].pcm) {
+		p.off -= len(p.q[0].pcm)
+		p.q[0].pcm = nil
+		p.q = p.q[1:]
+	}
+}
+
+func scale(s int16, g int32) int16 {
+	if g == unity {
+		return s
+	}
+	return int16((int32(s) * g) >> 15)
+}
+
+// put writes one mono sample to both channels of stereo frame i.
+func put(out []byte, i int, s int16) {
+	u := uint16(s)
+	out[i*4], out[i*4+1] = byte(u), byte(u>>8)
+	out[i*4+2], out[i*4+3] = byte(u), byte(u>>8)
 }

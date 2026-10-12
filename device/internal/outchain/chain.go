@@ -206,6 +206,8 @@ type Chain struct {
 	active bool
 
 	scratch []float64
+	// wide is ProcessFloat's de-interleaved working buffer.
+	wide []float64
 }
 
 // SetParams requests a parameter change. It never blocks and never touches the
@@ -453,4 +455,50 @@ func (c *Chain) TakeStats() Stats {
 	c.cur.lim.MaxReductionDB = 0
 	c.cur.guard.ResetMaxReduction()
 	return s
+}
+
+// ProcessFloat runs one period of wide-precision interleaved stereo, where
+// each frame carries its own full-scale multiplier.
+//
+// It exists for the voice plane's response boost (#716): that path mixes at a
+// gain above unity and keeps the headroom in float until the master volume
+// brings it back, so the samples arriving here are NOT in the chain's ordinary
+// S16 domain. Normalising per frame and rescaling afterwards is what lets the
+// chain's state stay in one domain across the switch between a boosted period
+// and an ordinary one — a chain that saw two scales would hear a step at every
+// transition and its limiter would act on it.
+//
+// `fullScales` is indexed by FRAME, so it is half the length of `buf`. A frame
+// past its end, or one whose scale is not positive, is treated as unity: a
+// caller that supplies fewer gains than frames is asking for no boost on the
+// remainder, which is the safe reading.
+//
+// Mono, like Process: the wire is mono and the two channels carry the same
+// samples, so summing and writing both back is exact rather than a downmix.
+func (c *Chain) ProcessFloat(buf []float64, fullScales []float64) {
+	frames := len(buf) / 2
+	if frames == 0 {
+		return
+	}
+	if cap(c.wide) < frames {
+		c.wide = make([]float64, frames)
+	}
+	mono := c.wide[:frames]
+	scaleAt := func(i int) float64 {
+		if i < len(fullScales) && fullScales[i] > 0 {
+			return fullScales[i]
+		}
+		return 1
+	}
+	for i := 0; i < frames; i++ {
+		mono[i] = (buf[i*2] + buf[i*2+1]) / (2 * scaleAt(i))
+	}
+	out := c.Process(mono)
+	if len(out) != frames {
+		return
+	}
+	for i, v := range out {
+		v *= scaleAt(i)
+		buf[i*2], buf[i*2+1] = v, v
+	}
 }

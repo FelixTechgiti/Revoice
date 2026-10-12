@@ -31,6 +31,9 @@ Tiefere technische Referenzen liegen anderswo:
   Fähigkeitsaushandlung, `/control`-Nachrichten, `/data`-Frames, Config-Push,
   Link-Authentifizierung und das Board-Profil `crown`. Vor dem Bau von
   Bindings für ein neues Board lesen.
+- [boards.md](boards.md) — wie die Firmware ihr Board erkennt und jedes Teil
+  nach Namen findet, welche Dateien ein Board beschreiben, und worauf man
+  achtet, wenn man die Firmware auf neuer Hardware ausprobiert.
 - [audio-states.md](audio-states.md) — wem der Lautsprecher gehört und was auf
   der Leitung liegt: die zwei Audio-Ebenen, Ducking, Flush-Semantik und die
   offenen Fragen, wie Sprache, Musik, Durchsagen und Wecker zusammenspielen.

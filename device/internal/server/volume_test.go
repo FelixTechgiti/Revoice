@@ -161,3 +161,18 @@ func TestTheArcExpiryHandsBackAndNeverPaintsTheRingItself(t *testing.T) {
 		}
 	}
 }
+
+func TestStepReportsWhetherTheLevelChanged(t *testing.T) {
+	vc := newVolumeController(func() led.Controller { return nil })
+	vc.Set(volumeMax, false)
+	if vc.StepUp() {
+		t.Fatal("step up at the ceiling reported a change")
+	}
+	if !vc.StepDown() {
+		t.Fatal("step down from the ceiling did not report a change")
+	}
+	vc.Set(volumeButtonFloor, false)
+	if vc.StepDown() {
+		t.Fatal("step down at the floor reported a change")
+	}
+}
