@@ -12,7 +12,7 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
-## 2.63.0-fx.1
+## 2.63.1-fx.1
 
 ### Der Echo bleibt in den Spotify- und AirPlay-Listen stehen
 
@@ -49,6 +49,16 @@ Dienste waren wieder sichtbar und erreichbar.
 Die beiden bisherigen Selbstheilungen bleiben als Rückfallebene erhalten. Sie
 starten die Dienste neu und unterbrechen damit, was gerade läuft; sie sollten
 jetzt kaum noch auslösen.
+
+### Warum die Nummer 2.63.0-fx.1 fehlt
+
+Sie wurde angelegt und nie veröffentlicht. Der Release-Workflow prüft die Form
+des Tags, bevor dessen Name in eine Shell gerät, und diese Prüfung zählte die
+erlaubten Zusätze einzeln auf — ohne den Zusatz, den jede Fassung dieses Forks
+trägt. Der Lauf brach nach acht Sekunden ab, mit dem Tag bereits angelegt. Ein
+Tag lässt sich nicht mehr verschieben, sobald ein Workflow auf ihm gelaufen
+ist, also bekommt derselbe Inhalt hier die nächste Nummer. Inhaltlich ist
+nichts anders.
 
 ## 2.62.0-fx.1
 
