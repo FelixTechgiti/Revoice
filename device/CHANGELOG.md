@@ -12,6 +12,51 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.64.0-fx.1
+
+### Jetzt bleibt der Echo wirklich in den Spotify- und AirPlay-Listen stehen
+
+**Die Reparatur aus 2.63.1-fx.1 war die falsche.** Sie hat nichts kaputt
+gemacht und sie hat auch nichts geholfen. Wer 2.63.1-fx.1 aufgespielt hat und
+den Echo weiterhin nicht gefunden hat, hat alles richtig gemacht — diese
+Fassung ist die, die es behebt.
+
+Der Echo hörte nach einer Weile auf, Gruppennachrichten anzunehmen. Dass er zu
+der Gruppe gehört, über die Telefone ihn finden, stand im System weiterhin
+richtig da; angenommen wurden die Nachrichten trotzdem nicht mehr. Es lag also
+nicht am Router, und die vorige Fassung hat genau dort gesucht.
+
+Die WLAN-Hardware führt eine eigene kleine Liste der Gruppen, auf die sie
+hören soll, und diese Liste wird irgendwann stillschweigend leer, ohne dass
+sich im System etwas ändert. Deshalb sah jede Anzeige gesund aus. Der Echo
+lässt jetzt die Gruppen einfach alle durch und prüft alle dreißig Sekunden
+nach, dass das noch so ist.
+
+**Zu tun ist nichts.** Nach dem Update sollte der Echo dauerhaft in der
+Spotify-App und in der AirPlay-Liste stehen.
+
+### Was das kostet
+
+Der Echo nimmt jetzt auch Gruppennachrichten an, die ihn nichts angehen. In
+einem Heimnetz sind das ein paar pro Sekunde, und das fällt neben allem
+anderen, was das Gerät ohnehin tut, nicht auf. In einem sehr belebten Netz
+wäre es messbar. Die gemessene Alternative ist, dass Spotify Connect und
+AirPlay gar nicht gehen.
+
+Die Durchlassregel wird nur gesetzt, solange einer der beiden Dienste
+eingeschaltet ist. Wer beide aus hat, zahlt nichts.
+
+### Was gemessen wurde
+
+Am Gerät, am 12.10.2026: über zwanzig Sekunden kam kein einziges Paket an,
+während sechs andere Geräte im selben Netz dieselbe Anfrage beantworteten.
+Nach dem Umlegen der Durchlassregel kamen nach zwei Sekunden wieder welche an,
+und beide Dienste waren sofort sichtbar und erreichbar — ohne dass sonst etwas
+angefasst wurde.
+
+Offen bleibt, was die Liste in der Hardware überhaupt leer werden lässt, und
+ob die Durchlassregel über Tage hält. Beides steht in #367.
+
 ## 2.63.1-fx.1
 
 ### Der Echo bleibt in den Spotify- und AirPlay-Listen stehen
