@@ -797,9 +797,18 @@ finally used, and that moment is a release. Both now take
 `(-[0-9A-Za-z.]+)?`, which is the character class the guard is actually for,
 and `controller/tests/test_release_tag_guard.py` holds them to the tags this
 fork cuts AND to refusing anything that could reach a shell as something else.
-The recovery is `gh run rerun <id>` on the refused run once the guard is
-fixed — the tag, the commit and the annotation are all fine and must not be
-re-cut.
+
+**The recovery is a NEW version number, and `gh run rerun` is not it** — this
+paragraph said it was, and the rerun was tried and failed identically. A
+tag-triggered workflow runs the file **at the tag's own commit**, and a rerun
+replays that same file; the tag necessarily predates the fix, so the fixed
+guard is never the one that runs. That is the opposite of the
+`Controller Build (main)` race elsewhere in this section, where a rerun IS the
+recovery because nothing about the run was wrong. So a refused tag stays
+refused for ever: renumber (`2.63.0-fx.1` → `2.63.1-fx.1`), move the changelog
+heading, and say in the entry why the number is missing — an entry for a
+version that was never published is worse than a gap, because the gap is what
+somebody notices.
 
 **A session's credential may only CREATE and FAST-FORWARD branches.** Every
 other write to a ref is refused by GitHub with `403` on `git-receive-pack`,
