@@ -2430,11 +2430,13 @@ gets credited for outages it cannot touch.
 | | what is true | what fixes it |
 |---|---|---|
 | **the membership is gone** | `/proc/net/igmp` has lost 224.0.0.251 while both responders still hold UDP 5353 | restarting the endpoints re-joins the group — `Watcher` |
-| **the membership is present and nothing arrives** | 224.0.0.251 joined, both endpoints healthy, and no mDNS reaches the interface | the interface's own filter has dropped the group — `MultiKeeper` holds it in ALLMULTI |
+| **the membership is present and nothing arrives** | 224.0.0.251 joined, both endpoints healthy, and no mDNS reaches the interface | **nothing found so far holds.** ALLMULTI restores it for seconds; the device goes deaf again. What removes the SYMPTOM is `internal/mdnsannounce`: stop waiting to be asked |
 
 **The second row read "unknown" until 2026-10-12**, and it is the one that was
-costing the feature. See "The interface stops accepting the group" below,
-including the fix that shipped for it first and was wrong.
+costing the feature. It still has no cure — two have been shipped and both were
+retracted. See "The interface stops accepting the group" below for what was
+measured, and "Announcing instead of answering" for what was done about it
+instead.
 
 `Watcher` reads the membership on the network-repair ticker. The rules that
 matter: **it opens no socket of its own** (joining from here would put the
@@ -2445,7 +2447,7 @@ is not absence**; and both the miss threshold and the doubling backoff exist
 because a re-association is exactly when the membership is legitimately gone
 for a moment AND when a restart is least likely to help.
 
-### The interface stops accepting the group, and only ALLMULTI fixes it (#367, 2026-10-12)
+### The interface stops accepting the group, and nothing found so far stops it (#367, 2026-10-12)
 
 **Inbound multicast stops for good while every local indicator says it should
 be arriving.** `/proc/net/igmp` holds 224.0.0.251 with two sockets,
@@ -2481,13 +2483,34 @@ MediaTek driver's offloaded filter goes stale while the host-side list it was
 built from does not, so **nothing on the device reports the difference** —
 which is why every instrument here read healthy for weeks.
 
+**That measurement is real and the conclusion drawn from it was wrong.**
+ALLMULTI shipped in v2.64.0-fx.1 with release notes saying the problem was
+fixed. Measured again the same evening, with the flag reading `0x1203`
+throughout: the device was deaf for eighteen seconds in the middle of a live
+browse. Toggling the flag off and on again moved nothing. A full re-join — both
+endpoints killed — gave a **four-second burst** (`859622 in=1458479`,
+`859628 in=1458498`) and then fourteen seconds frozen.
+
+So reception is intermittent on a scale of tens of seconds, in both directions,
+and setting the flag once happened to coincide with a window in which it came
+back. **Two releases were cut on exactly that coincidence** — see the lessons
+at the end of this section, which were written after the first one and did not
+prevent the second. The rule they should have been: *on an intermittent signal
+a repair is not a repair until it has been reproduced twice, with the failure
+re-established in between.*
+
+`MultiKeeper` stays. The flag costs nothing on a home segment, the two-second
+recovery was genuine, and taking it out would mean a third change to this area
+on no evidence at all. It is prevention that sometimes helps, and it is not the
+answer.
+
 That also explains the repair that did work: restarting both endpoints takes
 the membership refcount to 0 and back to 1, and the kernel then calls the
 driver's `set_rx_mode`, re-programming the chip. Re-programming is a SIDE
 EFFECT of that restart rather than its purpose, and `MultiKeeper` reaches it
 without stopping anybody's music.
 
-**Four things about the keeper:**
+**Four things about the keeper**, which hold whether or not it is sufficient:
 
 - **It re-checks rather than setting once.** The flag is host-side state that
   a re-association or a supplicant reconfigure can drop, so it rides the same
@@ -2526,6 +2549,82 @@ lessons, and the second is the one that cost the afternoon:
 
 `device/tools/igmpprobe` stays: disproving that theory is what it did, and it
 is still the way to send a membership report by hand on a device.
+
+**What is still not known is what drops reception**, and every instrument on
+the device reads healthy while it is happening. Open questions, each worth a
+measurement rather than a guess: the device roams between three BSSIDs on this
+network, two bands, two FRITZ!Boxes in a mesh; `iwpriv wlan0 set_power_mode 0`
+changes nothing and `get_power_mode` is not supported by this driver; and
+`Prober` did not fire once in twenty-six minutes of measured deafness, which is
+its own fault and is what #345 is about.
+
+### Announcing instead of answering (`internal/mdnsannounce`, #367)
+
+**Transmission is unaffected the whole time reception is dead.** The same
+device whose `InDatagrams` had been frozen for eight minutes still reached four
+other hosts with `ping 224.0.0.251`. Every repair above tries to make the Echo
+HEAR; this one stops needing it to.
+
+mDNS has always allowed a responder to speak unprompted — RFC 6762 §8.3, an
+ordinary response sent to the group with no question behind it — and every
+browser on the LAN treats one as a cache update. So the firmware re-sends its
+own announcements every 45 seconds, inside the 120s TTL the SRV, TXT and A
+records carry, and the picker entry never expires. A device that cannot hear a
+query is still listed, still resolvable from the cache, and still connectable,
+because TCP to it works throughout.
+
+**It does not compose the announcements, it keeps the ones its own responders
+made.** The firmware binds the group before either endpoint starts and watches
+for the announcement each sends on its way up; those copies arrive through the
+kernel's **multicast loopback**, which is a local delivery and therefore
+unaffected by the radio. The bytes are kept verbatim and sent again. A record
+this package never parsed cannot be a record it got wrong, and `pk=`, `ft=` and
+the rest go on being whatever the receiver that owns them says they are.
+
+Five things that are load-bearing:
+
+- **One socket, bound to the group, and it SENDS from 5353.** RFC 6762 §6:
+  every Multicast DNS response MUST have source port 5353, and a conforming
+  receiver discards one that does not. An ephemeral source port is legal for a
+  one-shot query — which is what `device/tools/mdnsprobe` does — and wrong for
+  this. Binding the group address rather than the wildcard also means Linux
+  fills the source address in from the outgoing device, so what leaves carries
+  the address the A record inside it claims.
+- **Multicast loopback is off for sending.** On Linux the flag belongs to the
+  SENDING socket, so turning it off stops the replay reaching the two
+  responders on this host — which would look to them like somebody else
+  claiming their names — and does nothing to the loopback copies of their
+  announcements, which are the whole input.
+- **A goodbye empties the cache.** A responder withdraws a name by repeating
+  the record with TTL 0 (RFC 6762 §10.1), and both send one on their way out.
+  Repeating a goodbye every 45 seconds would hold this device out of every
+  picker on the network for as long as the firmware ran. That is the one thing
+  the packets are parsed for, and the walk is a skip over names and record
+  data (RFC 1035 §4.1), never an interpretation of them.
+- **Identity is read as ONE value, not reset at each restart site.** The names
+  the endpoints publish, which receiver binary is running, whether each is
+  running at all, and the interface address — any change empties the cache. A
+  reset call at each place that restarts an endpoint would be twelve sites
+  today, a thirteenth is a normal thing to add, and nothing would go red when
+  one was forgotten: the stale packet would simply go on being announced. A
+  plain restart needs no reset at all, because a responder coming back under
+  the same name announces the same records and the cache keeps one copy.
+- **Every failure degrades to the old behaviour.** The socket not opening, the
+  cache being empty, an endpoint stopped — each means the device is findable
+  only while it can hear a query, which is where it was before. The other
+  direction, a ghost in somebody's picker that accepts a connection to
+  nothing, has no undo from here.
+
+The tests are written against `github.com/miekg/dns` rather than against bytes
+written out by hand: the question is whether the skip-walk agrees with a
+conforming encoder about where a record ends, and checking it against our own
+output would only prove we are consistent with ourselves.
+
+**This does not fix the fault in the row above.** A deaf device still misses
+everything else on the link, still cannot be resolved by a one-shot query from
+a host with a cold cache, and still has whatever is wrong with it. It removes
+the symptom somebody reports, which is the Echo dropping out of the AirPlay and
+Spotify pickers while it sits there working.
 
 **And two counters claim to reach the controller and do not.**
 `Watcher.Repairs` is documented as riding the stats report and nothing reads

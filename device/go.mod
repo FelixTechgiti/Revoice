@@ -15,7 +15,7 @@ require (
 
 require (
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
-	github.com/miekg/dns v1.1.41 // indirect
+	github.com/miekg/dns v1.1.41
 )
 
 replace github.com/Binozo/GoTinyAlsa => ../GoTinyAlsa
