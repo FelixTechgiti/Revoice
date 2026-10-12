@@ -59,7 +59,7 @@ hör die Antwort aus dem Dot. Gebrauchte Geräte kosten um die 10 €.
 | **Komplett lokal** | Wakeword, Spracherkennung, Antwort — alles läuft bei dir. Nichts geht nach draußen. |
 | **Eigene Wakewords** | „Hey Biscuit", der Name deiner Katze, was du willst. Der mitgelieferte [Trainer](oww_forge/README.md) baut das Modell aus synthetischer Sprache — du musst nichts einsprechen. Fertiges Modell im Dashboard hochladen, fertig. |
 | **Dazwischenreden** | Sag das Wakeword mitten in die Antwort hinein und der Assistent hält an. Ein Echo-Canceller auf dem Gerät sorgt dafür, dass er sich dabei nicht selbst hört. |
-| **Mehrere Räume, eine Antwort** | Hören zwei Dots denselben Satz, antwortet genau einer — der, der dich am besten verstanden hat. Kein Chor aus dem Nachbarzimmer. |
+| **Mehrere Räume, eine Antwort** | Hören zwei Dots denselben Satz, antwortet genau einer — der, der dich am lautesten gehört hat. Kein Chor aus dem Nachbarzimmer. |
 | **Wakeword auf dem Gerät** | Der Dot erkennt das Wakeword selbst und schickt nichts, bis er es hört — die Voreinstellung für neue Installationen. Umstellbar auf den Controller, wo neue Modelle ohne Firmware-Update ankommen; welcher Echo was tut, steht im Dashboard. [Wie es funktioniert](docs/listening.md). |
 | **Timer** | Laufen dort, wo sie gestellt wurden, und klingeln auch dort. |
 
@@ -206,8 +206,9 @@ Entwicklungsaufzeichnungen und keine Anleitungen.
 
 ## Bekannte Einschränkungen
 
-- **Klinkenbuchse:** Mit bereits eingestecktem Stecker zu booten funktioniert
-  unzuverlässig, und das Abziehen kann das Mikrofon rund dreißig Sekunden
+- **Klinkenbuchse unter FireOS** (nicht unter emOS): Mit bereits eingestecktem
+  Stecker zu booten funktioniert unzuverlässig, und das Abziehen kann das
+  Mikrofon rund dreißig Sekunden
   blockieren ([#117](https://github.com/wilbowes/EchoMuse/issues/117),
   [#141](https://github.com/wilbowes/EchoMuse/issues/141)). Im laufenden
   Betrieb ein- und ausstecken geht.
@@ -281,7 +282,8 @@ cd controller && python -m pytest tests/
 
 Fehlerberichte, Korrekturen und Hardware-Erkenntnisse sind alle willkommen —
 siehe [CONTRIBUTING.md](CONTRIBUTING.md). Am hilfreichsten ist ein Issue mit
-angehängtem Support-Bundle (Dashboard → Support → Bundle herunterladen): Es
+angehängtem Support-Bundle (Einstellungen → Support → Bundle einsammeln, dann
+herunterladen): Es
 enthält Logs, Versionen und Messwerte für eine Ferndiagnose, aber weder
 Transkripte noch Aufnahmen noch Netzwerknamen.
 

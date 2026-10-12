@@ -4,12 +4,12 @@
 // Sendspin (#89) would put a client on the device talking straight to Music
 // Assistant, which means the device pays, per second of audio, for:
 //
-//	1. ChaCha20-Poly1305 decryption   — Noise is MANDATORY in the spec, and
-//	   the whole WebSocket payload rides inside it.
-//	2. Audio decode                   — FLAC if we advertise it, nothing at
-//	   all if we advertise PCM and eat the bandwidth instead.
-//	3. A 2-D Kalman time filter       — runs once per sync message (~1/s) on
-//	   a handful of scalars. Not measured: it is noise next to the above.
+//  1. ChaCha20-Poly1305 decryption   — Noise is MANDATORY in the spec, and
+//     the whole WebSocket payload rides inside it.
+//  2. Audio decode                   — FLAC if we advertise it, nothing at
+//     all if we advertise PCM and eat the bandwidth instead.
+//  3. A 2-D Kalman time filter       — runs once per sync message (~1/s) on
+//     a handful of scalars. Not measured: it is noise next to the above.
 //
 // The budget it has to fit inside is already committed: ~18-20% of a core on
 // the mic pipeline, ~38% on shadow wake word. So this prints cost as **% of
@@ -47,8 +47,8 @@ import (
 // The stream Sendspin would actually carry. MA supports 16-bit only, and the
 // device's speaker path is already 48kHz.
 const (
-	sampleRate = 48000
-	channels   = 2
+	sampleRate     = 48000
+	channels       = 2
 	bytesPerSample = 2
 	pcmBytesPerSec = sampleRate * channels * bytesPerSample // 192000 B/s = 1.536 Mbps
 

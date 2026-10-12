@@ -564,6 +564,11 @@ class Device:
         self.muted     = False
         # HA's wake word picker (#286); seeded from the DB at connect.
         self.wake_word_enabled = True
+        # #776: set when the live wake word was turned on for a firmware that
+        # cannot honour off, so the stored value stays off. Cleared when the
+        # stored value is written, which is what makes a later "on" request
+        # from Home Assistant stick after an upgrade.
+        self.wake_word_temporarily_on = False
         self.listening = False
         self.thinking  = False
 
@@ -720,6 +725,9 @@ class Device:
         # from them: see em_wakelevel.
         self.wake_levels = em_wakelevel.LevelRing()
         self.mic_gain_db: float = 24.0
+        # (MICPGA, digital gain): the gain a wake's level reading still
+        # contains. Echoes that differ here are not compared by loudness.
+        self.adc_gains: tuple = (40, 88)
 
         # Barge-in (§3.2): wake word interrupts the thinking phase or TTS
         # playback. Controller-side feature — with it enabled the mic keeps
@@ -2429,7 +2437,8 @@ async def _barge_watcher(device: Device, playback_started: asyncio.Event):
                         # Capture time already carries the link's least
                         # delay; its smoothed RTT would count it twice.
                         won_by = await _claim_wake(
-                            device, fired_heard, levels.measure(device.mic_gain_db))
+                            device, fired_heard, levels.measure(device.mic_gain_db),
+                            over_playback=True)
                     verdict = em_barge.cede(
                         serves=serves, won_by=won_by,
                         device_id=device.device_id, score=score,
@@ -3436,7 +3445,8 @@ async def _run_voice_locked(device: Device, trigger_label: str = "unknown",
             # on the wake path) and VOICE_PREROLL_DISCARD only for the
             # initial wakeword-triggered turn.
             turn_label      = trigger_label
-            preroll_discard = esphome.VOICE_PREROLL_DISCARD if is_wakeword else 0
+            preroll_discard = em_listen.tail_discard(
+                is_wakeword, session is not None, esphome.VOICE_PREROLL_DISCARD)
             while True:
                 should_continue = False
                 try:
@@ -3513,7 +3523,11 @@ async def _run_voice_locked(device: Device, trigger_label: str = "unknown",
                     await leds_listening(device)
                     await _push_device_state(device)
                     turn_label      = "barge-in"
-                    preroll_discard = esphome.VOICE_PREROLL_DISCARD
+                    # A barge-in the Echo heard itself opened a session
+                    # (_private_barge), which starts after the wake word.
+                    preroll_discard = em_listen.tail_discard(
+                        True, device.listen_session is not None,
+                        esphome.VOICE_PREROLL_DISCARD)
                     # Reset spinner state for the next turn's thinking animation.
                     stop_spin.clear()
                     spin_task = None
@@ -3766,8 +3780,8 @@ def _arbitration_slack() -> float:
 
 
 def _arbitration_hold() -> float:
-    """Hold claims only on a mixed fleet; see em_listen.MIXED_HOLD_S. Only
-    Echoes that could claim count: one with no HA stands down first."""
+    """Hold claims whenever two or more Echoes could claim; see
+    em_listen.ARB_HOLD_S. One with no HA stands down first, so does not count."""
     return em_listen.arbitration_hold(
         em_listen.detector(d.listen_view, d.oww_trigger_capable)
         for d in list(_devices.values()) if esphome.can_serve_turn(d.device_id)
@@ -3776,22 +3790,29 @@ def _arbitration_hold() -> float:
 
 async def _claim_wake(device: "Device", heard_at: float | None,
                       level: tuple[float, float] | None = None,
-                      by: str = "controller") -> str:
+                      by: str = "controller",
+                      over_playback: bool = False) -> str:
     """Claim the utterance for `device`; returns the winner's id.
 
-    `level` is the wake's (level, peak) in dBFS, logged with its capture time
-    so contested wakes can be paired across Echos later; see em_wakelevel.
+    `level` is the wake's (level, peak) in dBFS. Its level is what the arbiter
+    compares across Echoes (em_arbiter.pick), and it is logged with its
+    capture time so contested wakes can be paired later; see em_wakelevel.
+    `over_playback` says this Echo heard the wake over its own speaker, which
+    the reading then contains, so the contest is decided on time.
     """
     hold = _arbitration_hold()
     won_by = await _wake_arbiter.contest(
         device.device_id, device.wake_arb_ms / 1000.0,
         heard_at=heard_at, slack_s=_arbitration_slack(), hold_s=hold,
+        level=level[0] if level is not None else None,
+        gains=device.adc_gains, over_playback=over_playback,
     )
     now = asyncio.get_event_loop().time()
     if hold > 0:
         ago = (now - heard_at) * 1000.0 if heard_at is not None else 0.0
-        log.info(f"[{device.device_id}] arbitration (mixed fleet, held "
-                 f"{hold * 1000:.0f}ms): heard {ago:.0f}ms ago, won by {won_by}")
+        log.info(f"[{device.device_id}] arbitration (held {hold * 1000:.0f}ms): "
+                 f"heard {ago:.0f}ms ago, won by {won_by} "
+                 f"({_wake_arbiter.last_why})")
     if level is not None:
         heard_wall = time.time() - (now - (heard_at if heard_at is not None else now))
         em_dbwriter.submit(db.log_device, device.device_id, "info", "controller", em_wakelevel.log_line(
@@ -3877,7 +3898,8 @@ async def _private_wake_turn(device: Device, ev: dict) -> None:
     won_by = device.device_id
     if serves and device.wake_arb_ms > 0 and _reachable_count() > 1:
         won_by = await _claim_wake(device, _wake_heard_at(device, ev),
-                                   _device_level(ev), by="device")
+                                   _device_level(ev), by="device",
+                                   over_playback=bool(ev.get("barge")))
     if not serves or won_by != device.device_id:
         wake_info = device.last_wake
         device.last_wake = None
@@ -3946,7 +3968,8 @@ async def _private_barge(device: Device, ev: dict) -> None:
     won_by = device.device_id
     if serves and device.wake_arb_ms > 0 and _reachable_count() > 1:
         won_by = await _claim_wake(device, _wake_heard_at(device, ev),
-                                   _device_level(ev), by="device")
+                                   _device_level(ev), by="device",
+                                   over_playback=True)
     verdict = em_barge.cede(
         serves=serves, won_by=won_by,
         device_id=device.device_id, score=score,
@@ -4507,9 +4530,8 @@ async def _stream_listen(device: Device):
                         # by the check, and a wrap hides that from it.
                         # _reachable_count, not len(_devices), for #354.
                         if serves and device.wake_arb_ms > 0 and _reachable_count() > 1:
-                            # No wait unless the fleet is mixed (Echoes
-                            # detecting in different places): then the claim
-                            # is held MIXED_HOLD_S from when it was heard.
+                            # Held ARB_HOLD_S from when it was heard, so
+                            # every Echo that heard it is counted.
                             # Capture time, not arrival (docs/listening.md):
                             # a device wake reports its age; ours dates from
                             # when its frame was captured (CaptureClock).
@@ -4523,7 +4545,8 @@ async def _stream_listen(device: Device):
                                 heard_at = heard
                             won_by = await _claim_wake(
                                 device, heard_at,
-                                device.wake_levels.measure(device.mic_gain_db))
+                                device.wake_levels.measure(device.mic_gain_db),
+                                over_playback=bool(ringing or device.speaking))
                         if not serves or won_by != device.device_id:
                             wake_info = device.last_wake
                             device.oww_paused.clear()
@@ -5118,6 +5141,8 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
         device.oww_model     = config.get("owwModel", f"{OWW_MODEL}_v0.1")
         device.wake_arb_ms   = int(config.get("wakeArbitrationMs", 300))
         device.mic_gain_db   = float(config.get("micGainDb", 24))
+        device.adc_gains     = (int(config.get("adcMicpga", 40)),
+                                int(config.get("adcDigitalGain", 88)))
         device.oww_speex_ns  = bool(config.get("owwSpeexNs", False))
         device.ns_asr        = bool(config.get("nsAsr", False))
         device.save_utterances = bool(config.get("saveUtterances", False))
@@ -5407,6 +5432,18 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
                 log.info(f"[{_d.device_id}] Wake word off declined — this "
                          f"firmware would still send audio on each wake")
                 return
+            # #776: when the live value was turned on for a firmware that cannot
+            # honour off, the stored value is still off. A request for "on" here
+            # must still be stored, or the person's choice comes back as off
+            # after the upgrade — they would have to set it twice. The live
+            # value is already on, so on_request reports no change; this writes
+            # the stored value and clears the temporary flag.
+            if on and _d.wake_word_temporarily_on:
+                _d.wake_word_temporarily_on = False
+                em_dbwriter.submit(db.set_wake_word_enabled, _d.device_id, True)
+                log.info(f"[{_d.device_id}] Wake word on stored — the temporary "
+                         f"on is now the stored choice")
+                return
             t = em_wakeword.on_request(want=on, enabled=enabled, mic_muted=mic_muted)
             if not t.changed:
                 return
@@ -5446,6 +5483,12 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
             set_wake_word=_set_wake_word,
             wake_word_enabled=device.wake_word_enabled,
         )
+        # #776: firmware that can honour the stored choice again (an upgrade)
+        # may meet a Home Assistant still showing the temporary "on". Without
+        # the capability the listen_state handler decides, once the Echo has
+        # said how it is listening.
+        if device.wake_word_off_capable:
+            esphome.update_wake_word(device_id, device.wake_word_enabled, refresh=True)
         # A device boots at its stored startupVolume, which an output mute
         # never overwrites — so a mute from before this connection has to be
         # sent again, or HA shows muted over audible music.
@@ -6020,6 +6063,41 @@ async def handle_control(ws: WebSocketServerProtocol, secure: bool = False):
                             if after.state == em_listen.STATE_DEGRADED:
                                 em_dbwriter.submit(db.log_device, device_id, "warning", "device",
                                               f"Wake word unavailable, button only: {after.reason}")
+                        # #776: a wake word stored OFF, on firmware that
+                        # cannot stop at the crossing, opens a session on every
+                        # wake that the controller then closes — while Home
+                        # Assistant reads "No wake word" throughout. Report
+                        # "on" so the device works, but KEEP the stored value
+                        # off: after an upgrade the firmware can honour off
+                        # again, and the person's choice comes back without them
+                        # setting it twice. Clearing it would lose that.
+                        #
+                        # Here and not on connect: syncListenState is sent
+                        # AFTER the ack, so at registration listen_reported is
+                        # still None and a check there would read "not private"
+                        # for a private Echo — the same bug in a new place.
+                        if em_wakeword.stored_off_unsupported(
+                                stored=not device.wake_word_enabled,
+                                listening_locally=after.state == em_listen.STATE_LOCAL,
+                                device_can=device.wake_word_off_capable):
+                            device.wake_word_enabled = True
+                            device.wake_word_temporarily_on = True
+                            esphome.update_wake_word(device_id, True, refresh=True)
+                            em_dbwriter.submit(db.log_device, device_id, "info",
+                                               "controller",
+                                               "Wake word reported on temporarily: "
+                                               "this firmware still sends audio "
+                                               "on each wake, so the stored off "
+                                               "is kept until it can honour it")
+                            log.info(f"[{device_id}] Wake word reported on "
+                                     f"temporarily — this firmware still sends "
+                                     f"audio on each wake, so the stored off is "
+                                     f"kept until it can honour it")
+                            await api._push_event({
+                                "type":      "device_update",
+                                "device_id": device_id,
+                                "state":     {"wake_word_enabled": True},
+                            })
                         await _push_device_state(device)
 
                     elif msg_type == "listen_end":

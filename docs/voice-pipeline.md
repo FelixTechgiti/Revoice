@@ -1,14 +1,14 @@
 # Die Sprachpipeline, erklärt
 
-Was zwischen deinem „Hey Rhasspy, mach das Licht aus" und dem Ausgehen des
+Was zwischen deinem „Hey Jarvis, mach das Licht aus" und dem Ausgehen des
 Lichts tatsächlich passiert — Stufe für Stufe, in verständlichen Worten, mit
 Nutzen und Kompromiss jeder Entwurfsentscheidung.
 
-Die Ein-Satz-Fassung: **Der Dot ist bewusst einfach gehalten** — er nimmt
-Klang so sauber wie möglich auf und schickt ihn weiter; die ganze Intelligenz
-(Wakeword erkennen, entscheiden, wann du fertig gesprochen hast, dich
-verstehen) sitzt im Controller und in Home Assistant, wo sie aktualisiert,
-abgestimmt und beobachtet werden kann, ohne die Hardware anzufassen.
+Die Ein-Satz-Fassung: Der Dot nimmt Klang so sauber auf, wie er kann, und
+horcht auf sein eigenes Wakeword; hört er es, geht das Gesagte an den
+Controller und an Home Assistant, die entscheiden, wann du fertig gesprochen
+hast und was du meintest. Alles Einstellbare wird im Dashboard gesetzt, ohne
+die Hardware anzufassen.
 
 ```
  DEINE STIMME
@@ -16,11 +16,12 @@ abgestimmt und beobachtet werden kann, ohne die Hardware anzufassen.
     ▼
 ┌─ Auf dem Echo Dot ──────────────────────────────────────────┐
 │  7 Mikrofone → Verstärkung → Echo-Auslöschung → Mikrofonwahl│
+│  → Wakeword                                                 │
 └──────────────────────────────│──────────────────────────────┘
-                               │  durchgehender Audiostrom (WLAN)
+                               │  was du nach dem Wakeword sagst (WLAN)
                                ▼
 ┌─ Auf dem Controller ────────────────────────────────────────┐
-│  Wakeword-Erkennung → Gesprächsführung → Klangbearbeitung   │
+│  Gesprächsführung (und das Wakeword, wenn du es so wählst)  │
 └──────────────────────────────│──────────────────────────────┘
                                │
                                ▼
@@ -79,11 +80,10 @@ Zuhörlogik weder auslösen noch verwirren. Sie ist auch die Voraussetzung für
 (siehe die Einstellung „Barge-in" im Konfigurationsleitfaden).
 
 **Haken:** Sie entfernt nur den *eigenen* Klang des Dots — gegen den
-Fernseher tut sie nichts (das ist ein anderes Problem, siehe Stufe 8). Sie
-kommt ausgeschaltet, bis du sie eingeschaltet und geprüft hast. (Seit v2.7.8
-bleibt die Auslöschung zwischen Antworten „warm", statt jedes Mal neu zu
-lernen — wenn Barge-in früher eine erhobene Stimme brauchte, sollte es das
-nicht mehr tun.)
+Fernseher tut sie nichts (das ist ein anderes Problem, siehe Stufe 8). Sie ist
+standardmäßig an. (Seit v2.7.8 bleibt die Auslöschung zwischen Antworten
+„warm", statt jedes Mal neu zu lernen — wenn Barge-in früher eine erhobene
+Stimme brauchte, sollte es das nicht mehr tun.)
 
 ## Stufe 4 — Mikrofonwahl („Beamforming" + „Lock-back")
 
@@ -151,27 +151,18 @@ weshalb bis dahin nichts ihn verlassen muss; bei einem Echo im
 Controller-Modus lässt der Controller es stattdessen über den Strom laufen.
 Dasselbe Modell, dieselbe Schwelle.
 
-Sind mehrere Geräte online, antwortet der **erste** Echo, der dich hört,
-sofort — beurteilt danach, wann jeder den Ton aufgenommen hat, nicht wann
-seine Nachricht beim Controller ankam. Jedes andere Gerät, das dasselbe Wort
-innerhalb des **Arbitrierungsfensters** erkennt (standardmäßig 700 ms,
-einstellbar), tritt still zurück, und sein Ring erlischt, sobald das andere
-Gerät das Gespräch für sich beansprucht. Eine Äußerung, eine Antwort, auch in
-Hörweite zweier Geräte — und ohne zusätzliche Verzögerung, weil der Gewinner
-das Gespräch sofort beansprucht, statt das Fenster abzuwarten.
+Sind mehrere Geräte online, antwortet der Echo, der dich am **lautesten**
+gehört hat — normalerweise der im Raum, in dem du stehst. Der Controller
+wartet bis zu eine Viertelsekunde, damit jeder Echo gezählt wird, der das Wort
+gehört hat, und jedes andere Gerät, das dasselbe Wort innerhalb des
+**Arbitrierungsfensters** erkennt (standardmäßig 700 ms, einstellbar), tritt
+still zurück. Eine Äußerung, eine Antwort, auch in Hörweite zweier Geräte. Mit
+einem Echo wird nie gewartet. Vor Controller 2.26.0 antwortete der Echo, der
+dich zuerst gehört hatte; die Messungen hinter der Änderung stehen in
+[listening.md](listening.md).
 
-
-Ein früherer Entwurf wartete das Fenster stattdessen ab und gab das Gespräch
-dem Gerät, das dich am *besten* gehört hatte. Er wurde aus zwei gemessenen
-Gründen verworfen: Er belastete jedes Aufwachen mit rund 364 ms, selbst ohne
-Konkurrenz, und der Gewinner nach Signal-Rausch-Abstand lieferte ein
-*schlechteres* Transkript als das Gerät, das dich schlicht zuerst gehört
-hatte.
-
-**Nutzen:** Weil das auf dem Controller statt auf dem Dot läuft, kannst du
-Wakeword und Empfindlichkeit live im Dashboard ändern, jeden Treffer *und*
-jeden Beinahe-Treffer im Reiter „Status" sehen, und künftige Verbesserungen
-brauchen keine Firmware-Updates.
+**Nutzen:** In beiden Modi kannst du Wakeword und Empfindlichkeit live im
+Dashboard ändern.
 
 **Haken:** Es ist eine Wahrscheinlichkeit, keine Gewissheit — der
 Empfindlichkeitsregler ist ein Kompromiss zwischen Fehlauslösern und
@@ -306,9 +297,16 @@ Antwort. Ist die Einstellung an, müssen die 30 Sekunden, die der Controller
 auf den Anfang einer Antwort wartet, von den ersten Worten erfüllt werden,
 nicht von den letzten.
 
-Die Antwort erreicht den Lautsprecher nicht schneller, als sie entsteht — ein
-Modell oder eine Sprachausgabe, die langsamer ist als Sprache, lässt also
-Lücken zwischen den Sätzen. Deshalb ist die Einstellung standardmäßig aus.
+**Haken:** Eine Antwort per Stimme zu unterbrechen (**Barge-in**)
+funktioniert, wenn es aktiviert ist — sag das Wakeword darüber, und die
+Antwort bricht ab —, und es ist standardmäßig an und hängt an der
+Echo-Auslöschung (Stufe 3), die ebenfalls standardmäßig an ist: Die Mikrofone
+bleiben während der Wiedergabe scharf, und die Echo-Auslöschung ist das, was
+das Gerät davon abhält, sich selbst zu wecken. Es funktioniert ab der ersten
+Antwort nach einem Neustart: Der Dot sichert, was seine Echo-Auslöschung über
+den eigenen Lautsprecher gelernt hat, und lädt es beim Start wieder, statt die
+ersten 10–20 Sekunden Sprache mit Neulernen zu verbringen. Unterbrechen durch
+*bloßes Reden* (ohne Wakeword) wird bewusst nicht versucht.
 
 **Haken:** Eine Antwort per Stimme zu unterbrechen (**Barge-in**)
 funktioniert, wenn es aktiviert ist — sag das Wakeword darüber, und die
@@ -324,13 +322,10 @@ Lautsprecher gelernt hat, und lädt es beim Start wieder, statt die ersten
 
 ## Jenseits von Sprache — Musik
 
-Jeder Echo erscheint in Home Assistant als **Media Player**, auf dem man
-wirklich etwas abspielen kann: `media_player.play_media`, der HA-Medienbrowser,
-Music Assistant, Radiostreams. Der Controller dekodiert mit ffmpeg, was immer
-du ihm hinwirfst, und streamt es zum Lautsprecher, dabei ein paar Sekunden
-voraus, damit ein WLAN-Schluckauf keine hörbare Lücke wird. Pause und Stopp
-sind trotzdem sofort — sie warten nicht, bis dieser Puffer leerläuft, sie
-werfen ihn weg.
+Das Wakeword über Musik hinweg zu hören hängt an der Echo-Auslöschung und an
+Barge-in (Stufe 3), beide standardmäßig an: Dieselbe Echo-Auslöschung, mit der
+du die eigene Stimme des Assistenten unterbrechen kannst, ist das, womit er
+dich über einem Lied hört.
 
 Das Wakeword über Musik zu sagen macht sie **leiser** (Ducking): Die Musik
 sinkt zu einem leisen Bett unter der Antwort und kommt danach wieder hoch. Sie
@@ -357,10 +352,11 @@ frühere Verhalten zurück — Pause fürs Gespräch, danach weiter.
 
 ## Entwurfsprinzipien, falls du dich fragst „warum ist das so?"
 
-1. **Einfaches Gerät, kluger Controller.** Alles, was driften, falsch
-   einschätzen oder abgestimmt werden muss, lebt dort, wo es beobachtet und
-   aktualisiert werden kann, ohne Hardware anzufassen. Der Dot nimmt auf,
-   verstärkt, löscht sein eigenes Echo und streamt — das war's.
+1. **Fähiges Gerät, kluger Controller.** Der Dot tut, was auf ihm passieren
+   muss: Er nimmt auf, verstärkt, löscht sein eigenes Echo, horcht auf sein
+   Wakeword und formt den Klang, den er abspielt. Alles, was driften, falsch
+   einschätzen oder abgestimmt werden muss, wird vom Controller aus gesetzt,
+   wo es beobachtet und aktualisiert werden kann, ohne Hardware anzufassen.
 2. **Messen, nicht verändern.** Der Controller verfolgt den
    Grundgeräuschpegel jedes Raums und nutzt ihn für *Entscheidungen* (spricht
    jemand?), schreibt den Ton auf dem Weg zur Spracherkennung aber nie um.

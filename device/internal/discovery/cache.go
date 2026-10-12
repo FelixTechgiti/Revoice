@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/wilbowes/EchoMuse/internal/atomicfile"
 	"github.com/wilbowes/EchoMuse/internal/devicepaths"
 )
 
@@ -97,9 +98,11 @@ func LoadEndpoint(path string) *ServerInfo {
 // there, on eMMC that cannot be replaced. Same rule as WriteConsolePassword,
 // for the same reason.
 //
-// Written to a temp file and renamed, so a power cut mid-write cannot leave a
+// Written through atomicfile.Write, so a power cut mid-write cannot leave a
 // truncated record: a half-written one does not parse, which reads as "no
-// cached controller" and costs a browse rather than a wrong address.
+// cached controller" and costs a browse rather than a wrong address. The sync
+// before the rename is what makes that true — ext4 can commit the rename
+// ahead of the data, leaving an EMPTY file (#849, #865).
 func SaveEndpoint(path string, info *ServerInfo) {
 	if info == nil || info.Host == "" || info.Port <= 0 {
 		return
@@ -117,13 +120,8 @@ func SaveEndpoint(path string, info *ServerInfo) {
 		log.Printf("[discovery] cache mkdir failed: %v", err)
 		return
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := atomicfile.Write(path, data, 0o644); err != nil {
 		log.Printf("[discovery] cache write failed: %v", err)
-		return
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		log.Printf("[discovery] cache rename failed: %v", err)
 		return
 	}
 	log.Printf("[discovery] remembered controller %s (tls_port=%d)", info.Addr, info.TLSPort)

@@ -112,6 +112,10 @@ Each mic buffer passes through, in order:
 raw 9ch S24_3LE → beamformer + fixed mic gain (micGainDb, applied to 24-bit samples) → mono S16_LE → [AEC] → [AGC] → [VAD gate] → /data WebSocket
 ```
 
+On the hardware reference the AEC stage cancels **all seven microphones**
+and passes on the one the beamformer chose (see "One filter per microphone"
+below); the diagram is the path the chosen one takes.
+
 Note the real buffer cadence: GoTinyAlsa's `GetAudioStream` reads the whole ALSA buffer per chunk (PeriodSize 512 × PeriodCount 5), so the mic pipeline runs on **160ms batches of 2560 samples**, not single 32ms periods. Anything assuming 512-sample buffers must handle multiples (this silently disabled AEC for four releases — see `aec.Process`).
 
 The always-on wake stream (`mic_start` without `lock_mic`) is **ungated and AGC-free**: every 32ms period is sent continuously (batched into 80ms frames) so openwakeword scores an uninterrupted stream, and no adaptive gain state can drift with room noise. The VAD gate and AGC apply only to bounded `lock_mic` turn streams (button-triggered), which get a fresh `ResetAGC()` per stream.
@@ -125,6 +129,36 @@ The always-on wake stream (`mic_start` without `lock_mic`) is **ungated and AGC-
   occupancy governor — all three are bypassed on that path, and `WriteFar`
   returns early so nothing fills a ring nothing drains. Measured 41.2dB in the
   unit test with the real 33-sample offset and polarity inversion applied.
+
+  **One filter per microphone (#814, 2026-10-08).** The echo path from the
+  speaker differs per microphone, the wake stream reads the centre one, and
+  each turn locks to whichever edge microphone heard the wake word best and
+  holds it through the reply. One filter after the selection is therefore
+  converged on the LAST turn's microphone when the next turn starts, which is
+  when the wake sound plays. Measured on 15LE from a raw capture: a filter
+  learnt on a microphone removed 24-26dB of the wake sound on that microphone
+  and between 23dB and MINUS 7dB on another (ch0/1, ch3/4 and ch2/5/6 share a
+  path; across those groups it does nothing or adds echo). The same night a
+  wake sound reached speech-to-text at -6.4dBFS, above the speech, and a
+  command lost the word naming its room. `aec.ProcessMicsWithRef` runs a
+  state per microphone on every period (`beamformer.MicChannels`,
+  `OutputChannel`), so all seven are converged whichever is chosen: on that
+  capture the second turn's wake sound, on a different microphone from the
+  first, went from 6.2dB removed to 26.2dB. Cost: 6.04ms per 32ms period for
+  the seven on an Echo, 19% of a core (JOURNAL 2026-10-03), while something
+  plays. The six not in use rest after 256ms of a bit-exact silent reference
+  (`quietHold`) and resume on the first frame that is not, which is the wake
+  sound's first frame; a rested microphone cancels the same as one that never
+  rested (35.1dB both in the test, over room noise). First run on 15LE: 17.6
+  to 23.7dB of the wake sound removed on four turns across three microphones,
+  leaving it 7.5-11.1dB below the speech where at the microphone it is 9-12dB
+  above, and speech within 0.2dB. The saved echo paths are one file for the seven
+  (`aec_echo_path.bin.mics`), all or nothing on load. **Hardware reference
+  only**: the software tap's ring is drained once per period and keeps one
+  filter on the microphone in use. The beamformer still chooses on RAW
+  energy, so playback still biases the choice; choosing on cancelled audio is
+  the next step in #731. `ProcessWithRef` and the single saved path remain
+  for `tools/aec_replay` and the tests, and the firmware no longer calls them.
 
   **The detector is deliberately narrow, and the narrowness is the point.**
   A reference channel is BIT-EXACT ZERO when nothing plays *and* carries audio
@@ -882,6 +916,18 @@ Two traps for whoever picks this up:
   property of the BOARD. The dashboard needs it together with `output_chain`,
   since the controller can supply neither half — no device reports the plug
   position to it, so its own copy of the chain can never implement this.
+
+  **Upstream built the same bypass with NO setting (#748, 2026-10-11), and the
+  2026-10-12 sync declined it.** Their `chainForJack` clears `GuardEnabled`
+  whenever a plug is in, measured on a FireOS 6 / emOS Dot as 0.00dB of guard
+  reduction with a plug in against 30.00dB without — which proves their bypass
+  works and says nothing about whether the internal driver is still in the
+  path. Their stated risk is a MISREAD plug position ("the same reading already
+  switches the internal amp off, so this adds no new dependency on it"), and
+  the observation above is about a CORRECT reading where ctl 5 does not gate
+  the driver. So the setting stays and the divergence in `jackrouting.go` is
+  deliberate; #254 is the one measurement that settles it, in either direction.
+  Do not re-litigate this on the next sync without that measurement.
 - The mic stall log line says "ALSA overrun", which is an interpretation.
   It measures the arrival gap in `readLoop`, and the GoTinyAlsa stream
   channel is 16 batches (2.56s) deep, so a stall of that goroutine looks
@@ -2732,7 +2778,9 @@ offered a switch it will ignore.
 
 Volume is **state, not a setting** — it rides the config channel but has no dashboard control (the slider was removed 2026-07-25: `SeedVolume` ignores later pushes, so moving it did nothing until the device restarted and any real volume change overwrote it). It is listed in `em_config_sections.STATE_KEYS`, exempt from section scoping, and shown read-only on the Status tab.
 
-Volume persists through reboots **controller-side**: every device `volume_state` report is stored into the device's `startupVolume` config, and the device restores it via `Server.SeedVolume` on the **first config push per run only** (later pushes must not stomp live changes). Until seeded (or a local volume change makes the device authoritative), the device suppresses its connect-time `volume_state` report — reporting the boot-default level is what used to clobber the stored value on reboot. Mute is the opposite: **device-sovereign**, persisted locally in `/data/local/etc/revoice/state.json` (survives OTA slot flips; written on toggle, restored at boot pre-connect — ADC mute immediately, button LED after LED init; the ring is not touched).
+Volume persists through reboots **controller-side**: every device `volume_state` report is stored into the device's `startupVolume` config, and the device restores it via `Server.SeedVolume` on the **first config push per run only** (later pushes must not stomp live changes). Until seeded (or a local volume change makes the device authoritative), the device suppresses its connect-time `volume_state` report — reporting the boot-default level is what used to clobber the stored value on reboot. Mute is the opposite: **device-sovereign**, persisted locally in `/data/local/etc/revoice/state.json` (survives OTA slot flips; written on toggle, restored at boot pre-connect — ADC mute immediately, button LED after LED init; the ring is not touched). **The write is synced, not only atomic (#849, #865):** temp file, `Sync`, rename, then a sync of the directory — `internal/atomicfile`. Write-then-rename alone survives a torn write but not a power cut: ext4 can commit the rename ahead of the data. In upstream's 2.26.0 UAT a mute followed by pulling the power within seconds left VVV with a zero-length `state.json` ("unreadable, ignoring", boots unmuted) and 15LE with the previous `{"muted":false}`, twice each, while C95 kept its mute on timing; the same step had passed in the 2.25.0 UAT for the same reason. An unreadable file still boots unmuted.
+
+**EVERY file the firmware replaces goes through it**, and that is the rule rather than a list: `server/state.go`, `config/console.go`, `config/report.go`, `aec/persist.go`, `sendspin/store.go`, `discovery/cache.go`, `airplay/airplay.go` and `spotify/events.go`. `atomicfile_test.go` fails on a bare `os.Rename` anywhere in the firmware, which is what makes it a rule rather than a list — and the last three are this fork's, so the change that introduced the package could not have covered them. `discovery/cache.go` is the one whose loss is most expensive: a missing `controller.json` puts a restarted device back on mDNS-only discovery, measured at 30-40 minutes offline. The other two are files a SUBPROCESS reads, so a half-written one is a receiver that refuses to start and a script librespot runs anyway.
 
 ## LED priority system
 

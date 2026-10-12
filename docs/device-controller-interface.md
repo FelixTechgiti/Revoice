@@ -8,9 +8,8 @@ durch Lesen des Dot-Quelltexts. Der Controller ist bereits boardunabhängig;
 ein neues Board ist fast vollständig ein frischer Satz
 Hardware-**Bindings** hinter demselben Wire-Protokoll.
 
-Begriffe in **fett** sind in [CONTEXT.md](../CONTEXT.md) definiert. Maßgeblich
-für jede Nachricht und jedes Feld ist der inline zitierte Code; wo dieses
-Dokument und der Code sich widersprechen, gewinnt der Code, und dieses
+Maßgeblich für jede Nachricht und jedes Feld ist der inline zitierte Code; wo
+dieses Dokument und der Code sich widersprechen, gewinnt der Code, und dieses
 Dokument ist der Fehler.
 
 ## Die zwei Regeln, denen alles andere dient
@@ -498,7 +497,12 @@ ESPHome-Voice-Assistant-API. Das Gerät setzt das nicht neu um und hängt für
 seine eigene Arbeit nicht von Amazons HALs oder Bibliotheken ab (siehe den
 Richtungshinweis in `CLAUDE.md` im Wurzelverzeichnis).
 
-## Board-Profil — `crown` (Echo Show 8, 1. Generation)
+Die `crown`-Bindings werden hinter einem Go-Build-Tag gebaut, das `server`
+spiegelt (ADR-0001). Die Hardware-Inventur — ALSA-Karten und -Geräte, Formate,
+Pfade der Eingabegeräte, Autostart — steht in
+`docs/echo-show-8-hardware-map.md` auf dem Branch von
+[PR #358](https://github.com/wilbowes/EchoMuse/pull/358), der nicht gemergt ist; dieser Abschnitt hält nur fest, worauf
+sich die *Schnittstelle* für das MVP festlegt.
 
 Die `crown`-Bindings werden hinter einem Go-Build-Tag gebaut, das `server`
 spiegelt (ADR-0001). Das Hardware-Inventar — ALSA-Karten und -Geräte,
@@ -539,7 +543,7 @@ digitalen Nullen. `device/tools/hw_refine_probe` bestätigt, dass der Bereich
 des Treibers exakt den Konstanten von checkers entspricht. Die vollständige
 Geschichte (warum „digitale Nullen" die ursprünglich falsche Lesart war, die
 Untersuchung zur Verstärkung, die tatsächlichen Aufnahmedaten) steht in
-[echo-show-8-hardware-map.md](echo-show-8-hardware-map.md#on-hardware-capture-2026-08-26--the-gono-go-measurement-done).
+derselben Datei auf dem Branch von [PR #358](https://github.com/wilbowes/EchoMuse/pull/358).
 
 **Weiterhin offen: der Störabstand im ruhigen Raum und über Distanz**, nicht
 die Rohaufnahme — der Test von heute war eine Plausibilitätsprüfung in einem

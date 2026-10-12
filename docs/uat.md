@@ -58,18 +58,16 @@ lieber deine Versionsnummern im bestehenden Issue.
 | Symptom | Issue |
 |---|---|
 | HAs Dialog „Sprachsatellit einrichten" läuft in einen Timeout und braucht „Wiederholen", nachdem der Klang gespielt hat | [#219](https://github.com/wilbowes/EchoMuse/issues/219) |
-| Die Wiedergabe bricht mitten in einer langen gesprochenen Antwort ab | [#324](https://github.com/wilbowes/EchoMuse/issues/324) |
 | Radio- oder Stream-Wiedergabe wird unterbrochen | [#325](https://github.com/wilbowes/EchoMuse/issues/325) |
-| Das Abziehen des Kopfhörersteckers blockiert das Mikrofon und wirft das Gerät ab | [#117](https://github.com/wilbowes/EchoMuse/issues/117) |
+| Das Abziehen des Kopfhörersteckers blockiert das Mikrofon und wirft das Gerät ab (nur FireOS; unter emOS behoben) | [#117](https://github.com/wilbowes/EchoMuse/issues/117) |
 | Seltsames Verhalten mit etwas an der Klinkenbuchse | [#141](https://github.com/wilbowes/EchoMuse/issues/141) |
 | Helligkeitssensor fehlt auf einem Gerät mit Seriennummer `G090LF` | [#90](https://github.com/wilbowes/EchoMuse/issues/90) |
-| WLAN verbindet sich nach einem Neustart nie wieder, in einem Netz ohne Internet | [#317](https://github.com/wilbowes/EchoMuse/issues/317) |
+| WLAN verbindet sich nach einem Neustart nie wieder, in einem Netz ohne Internet, auf einem vor der Behebung von #317 eingerichteten Gerät | [#439](https://github.com/wilbowes/EchoMuse/issues/439) |
 | Anderswo gestartete Musik bleibt stumm, bis ein Sprachgespräch endet | [#262](https://github.com/wilbowes/EchoMuse/issues/262) |
 | Doppel- und Dreifachtippen wird unzuverlässig erkannt | [#115](https://github.com/wilbowes/EchoMuse/issues/115) |
 | Hohe CPU-Last auf dem Gerät | [#176](https://github.com/wilbowes/EchoMuse/issues/176) |
 | Music Assistant zeigt den nächsten Titel 10–15 s, bevor er spielt | [#674](https://github.com/wilbowes/EchoMuse/issues/674) |
 | Musik setzt aus, wenn ein Sprachgespräch sie herunterregelt (2.25.0-ea.1) | [#671](https://github.com/wilbowes/EchoMuse/pull/671) |
-| Ein Stereokanal stumm, mit Knacken, am Line-Out | [#669](https://github.com/wilbowes/EchoMuse/issues/669) |
 
 ---
 
@@ -543,8 +541,9 @@ Stromtrennen.
 ### L2 · Das WLAN fällt aus
 **Tu:** Nimm den Access Point für eine Minute vom Netz, dann zurück.
 **Erwarte:** Das Gerät verbindet sich von allein wieder.
-**Melde:** Ein Gerät, das draußen bleibt. (Beachte das bekannte Issue #317 für
-Netze ohne Internet.)
+**Melde:** Ein Gerät, das draußen bleibt. (Ein vor der Behebung von #317
+eingerichtetes Gerät kann das in einem Netz ohne Internet weiterhin tun, siehe
+#439.)
 
 ### L3 · Home Assistant fällt aus
 **Tu:** Stoppe HA. Sag das Wakeword.

@@ -48,3 +48,5 @@ Tiefere technische Referenzen liegen anderswo:
   wir falsch gemacht haben. Auf Englisch.
 - [CLAUDE.md](../CLAUDE.md) — Orientierung im Code für Entwickelnde (und
   KI-Assistenten). Auf Englisch.
+- [archived/](archived/) — Dokumente, die als Aufzeichnung bleiben und nicht
+  mehr aktuell sind. Die Controller-Designspezifikation zu v2.2.0 liegt dort.

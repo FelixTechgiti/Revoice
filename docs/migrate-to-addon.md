@@ -12,7 +12,7 @@ verlieren, auf denen deine Automationen schon aufbauen.
 **Lies die ganze Seite, bevor du anfängst.** Der mit Abstand wichtigste
 Schritt — `tls/` kopieren — kommt früh, und ihn zu überspringen macht jedes
 Gerät verbindungsunfähig, auf eine Weise, die nicht offensichtlich ist und
-sich nicht aus dem Dashboard beheben lässt.
+für deren Behebung du zu jedem Gerät hingehen musst.
 
 ---
 
@@ -50,8 +50,11 @@ weit genug kommen, um überhaupt im Dashboard aufzutauchen.
 sich anhand des mDNS-Eintrags, den der Controller ankündigt, für TLS — nicht
 anhand dieser Einstellung.
 
-Sich davon zu erholen heißt, jeden Dot körperlich per USB anzuschließen und
-frische Zugangsdaten aufzuspielen. Vier Dateien zu kopieren vermeidet das.
+Sich davon zu erholen heißt, zu jedem Dot hinzugehen. Ab Firmware v2.17.0
+hältst du seine Aktionstaste fünf Sekunden lang und gibst die
+Kopplungsanfrage im Dashboard frei. Auf älterer Firmware, oder mit
+`require_device_tls` an, schließt du ihn per USB an und spielst frische
+Zugangsdaten auf. Vier Dateien zu kopieren vermeidet das.
 
 ---
 
@@ -84,15 +87,19 @@ Optionsbildschirm, und du trägst diese Werte von Hand neu ein:
 
 | `.env` | Add-on-Option |
 |---|---|
-| `SERVER_IP` | **Server IP** |
-| `SERVER_HOST` | **Server host** |
-| `MDNS_NAME` | **mDNS name** |
+| `SERVER_IP` | **Controller LAN IP address** |
+| `SERVER_HOST` | **Bind address** |
+| `MDNS_NAME` | **mDNS service name** |
 | `OWW_MODEL` | **Wake word model** |
-| `OWW_THRESHOLD` | **Wake word threshold** |
-| `DEVICE_APPROVAL` | **Device approval** |
-| `REQUIRE_DEVICE_TLS` | **Require device TLS** |
+| `OWW_THRESHOLD` | **Wake word sensitivity** |
+| `DEVICE_APPROVAL` | **Device approval policy** |
+| `REQUIRE_DEVICE_TLS` | **Require encrypted device connections** |
 | `ESPHOME_PROJECT_VERSION` | **ESPHome project version** |
-| `DEBUG` | **Debug** |
+| `EM_ESPHOME_PORT_BASE` | **ESPHome satellite base port** |
+| `DEBUG` | **Debug logging** |
+| `LOG_LEVELS` | **Per-area log levels** |
+| `EM_EXTRA_CA_CERT` | **Private CA certificate** |
+| `EM_TTS_WAIT_TIMEOUT` | **Reply wait (seconds)** |
 
 Vier haben keine Option, teils absichtlich, teils nicht:
 
@@ -187,8 +194,8 @@ Zertifizierungsstelle müssen zueinander passen.
 ### 4. Einstellungen eintragen und starten
 
 Trage die Optionen aus Schritt 2 von *Bevor du anfängst* ein und denke daran,
-**Server IP** auf die Adresse der Home-Assistant-Maschine zu ändern. Starte
-das Add-on und sieh in sein Log.
+**Controller LAN IP address** auf die Adresse der Home-Assistant-Maschine zu
+ändern. Starte das Add-on und sieh in sein Log.
 
 Auf `Opening database: /data/revoice.db` sollten deine Gerätenamen folgen,
 sowie sie sich verbinden. Ist das Add-on neuer als dein Container, siehst du
@@ -287,7 +294,8 @@ innerhalb eines Tages, nicht eines Monats.
 ## Fallstricke, an einer Stelle
 
 - **`tls/` kopieren, sonst geht nichts** — auf eine Weise, die dir keinen
-  brauchbaren Fehler gibt und sich nicht aus der Ferne beheben lässt.
+  brauchbaren Fehler gibt und für deren Behebung du zu jedem Dot hingehen
+  musst.
 - **Zuerst den alten Controller stoppen.** Zwei Controller in einem Netzwerk
   sind für ein Gerät ununterscheidbar, und Home Assistant richtet ein Gerät
   nicht neu aus, das an seiner alten Adresse noch antwortet.

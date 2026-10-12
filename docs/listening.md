@@ -186,9 +186,13 @@ Flag-Wechsels wurde zur ersten halben Sekunde des *nächsten* Befehls.
 Der Echo hält einen Ring des zuletzt verarbeiteten Tons (`ringMs`, 2 s) mit
 der Aufnahmezeit jedes 80-ms-Frames. Ein Wecken meldet die Aufnahmezeit des
 überschreitenden Frames; die Sitzung beginnt mit jedem Frame aus dem Ring, das
-**danach** aufgenommen wurde, und läuft dann live weiter. Das bestehende
-`VOICE_PREROLL_DISCARD` des Controllers entfernt das Ende des Wakewords, genau
-wie bei einem Wecken, das der Controller erkannt hat.
+**danach** aufgenommen wurde, und läuft dann live weiter. Der Controller
+schickt das alles an die Spracherkennung: `VOICE_PREROLL_DISCARD` (240 ms)
+greift nur bei einem Strom, den der Controller selbst bewertet hat, denn bei
+einer Sitzung schnitt es das erste Wort eines Befehls ab, der direkt auf das
+Wakeword folgte (`em_listen.tail_discard`). Ein Wecken, das in eine Antwort
+hineingesprochen wird, öffnet eine Sitzung auf dieselbe Weise und wird gleich
+behandelt.
 
 Die Zeitstempel kommen aus einem einzigen `time.Now()`, das genommen wird, wenn
 das Frame sowohl an die Bewertung als auch an den Ring geht — die Wartezeit in
@@ -260,22 +264,45 @@ sind der Ack-Timeout des Echos; ein privates Wecken, das später kommt, hat
 seine Sitzung bereits geschlossen, und der Controller ignoriert ein Wecken für
 eine Sitzung, die der Echo geschlossen hat.
 
-**Eine gemischte Flotte wartet, eine einheitliche nicht.** Erkennen manche
-Echos das Wakeword selbst und werden andere vom Controller bewertet, erreichen
-die beiden Wege den Arbiter unterschiedlich schnell — der erste eintreffende
-Anspruch ist dann nicht der zuerst gehörte: Am 2026-09-24 traf ein Echo in 10 m
-Entfernung, der auf dem Gerät erkannte, 16 ms vor einem ein, der einen Meter
-vom Sprecher stand und vom Controller bewertet wurde, und nahm das Gespräch.
-Auf einer gemischten Flotte wird der erste Anspruch deshalb bis 250 ms nach
-dem Zeitpunkt gehalten, zu dem er gehört wurde (`MIXED_HOLD_S`, abzüglich
-dessen, was er schon auf der Leitung verbracht hat), jeder bis dahin innerhalb
-des Fensters gehörte Anspruch wird eingesammelt, und der **zuerst** gehörte
-gewinnt. Widerrufen wird nichts: Bis das Halten endet, hat niemand das
-Gespräch. Eine Flotte, die auf eine Art erkennt, läuft unter gleichen
-Bedingungen und gewährt sofort dem ersten Eintreffen, wie oben. Ein Echo,
-dessen Modus noch nicht bekannt ist, zählt als anders, die Flotte hält also,
-statt zu raten. Ein Barge-in während der Wiedergabe feuert auf dem zweiten
-zweier Frames und wird vom ersten datiert.
+**Jeder Wettstreit wird gehalten, und der lauteste Echo gewinnt ihn** (#747).
+Sobald zwei oder mehr Echos Anspruch erheben können, wird der erste Anspruch
+bis 250 ms nach dem Zeitpunkt gehalten, zu dem er gehört wurde (`ARB_HOLD_S`,
+abzüglich dessen, was er schon auf der Leitung verbracht hat), und jeder bis
+dahin innerhalb des Fensters gehörte Anspruch wird eingesammelt. Widerrufen
+wird nichts: Bis das Halten endet, hat niemand das Gespräch.
+
+Dann wird einer gewählt: der **lauteste**. Lautstärke ist der gemittelte Pegel
+des Weckens, wie der Echo ihn gemessen hat — nach der Echokompensation und
+ohne die eingestellte Mikrofonverstärkung. Es gibt keinen Sicherheitsabstand.
+Richtig sein muss der Raum, und zwischen Räumen ist der Vorsprung groß;
+innerhalb eines Raums liegen die Pegel ein, zwei Dezibel auseinander, und
+welcher dieser Echos antwortet, spielt keine Rolle. Die Lautstärke wird nur
+benutzt, wenn man ihr trauen kann; der Wettstreit fällt auf „zuerst gehört"
+zurück, wenn:
+
+- ein Echo keinen Pegel geschickt hat (ältere Firmware);
+- ein Echo das Wecken über seinen eigenen Lautsprecher gehört hat, weil in der
+  Messung dann die Antwort oder die Musik steckt — ein Barge-in ist immer
+  dieser Fall;
+- die MICPGA- oder Digitalverstärkung der Echos sich unterscheidet, weil die
+  noch in der Messung steckt.
+
+Warum nicht die Zeit: Der Bewerter arbeitet in 80-ms-Frames auf einem Raster,
+das auf jedem Echo zu einem anderen Moment beginnt, also ist die Reihenfolge
+des Hörens überwiegend Frame-Ausrichtung. Drei Echos nebeneinander meldeten
+dasselbe Wort 89 bis 224 ms auseinander (2026-10-06); Schall legt einen Meter
+in 3 ms zurück. In vierzehn umstrittenen Weckvorgängen eines Haushalts lag der
+lauteste Echo um mindestens 9,7 dB vor jedem anderen, und „zuerst gehört"
+wählte ihn in acht Fällen.
+
+Nicht behandelt: Ein Echo mit schwachem Mikrofon misst leise und kann das
+Gespräch an einen lauteren weiter entfernten verlieren (#731), und auf
+Firmware vor v2.18.0 misst ein emOS-Echo rund 6 dB unter einem mit FireOS 5
+(#806). Ein Haushalt mit einem Echo wartet nie. Bis zum 2026-10-05 wurde nur
+eine gemischte Flotte gehalten — manche Echos erkennen auf dem Gerät, andere
+werden vom Controller bewertet —, und der zuerst Gehörte gewann immer. Ein
+Barge-in während der Wiedergabe feuert auf dem zweiten zweier Frames und wird
+vom ersten datiert.
 
 Die Protokollzeile zum Wecken meldet bei einem vom Controller bewerteten
 Wecken, wie lange nach der Ankunft es bewertet wurde und wie lange sein Frame

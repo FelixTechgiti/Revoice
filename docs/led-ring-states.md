@@ -13,7 +13,8 @@ Dieses Dokument ist die maßgebliche Verhaltensspezifikation: jeder
 Ring-Besitzer, jedes Ereignis und der jeweilige Ausgang. Einträge sind
 gekennzeichnet:
 
-- **[heute]** — aktuell ausgeliefertes Verhalten (v2.9.7)
+- **[heute]** — ausgeliefertes Verhalten zum Zeitpunkt des Eintrags (das
+  Dokument stammt aus v2.9.7; spätere Einträge nennen ihre Version)
 - **[vorgeschlagen]** — Entwurf, noch nicht gebaut, Freigabe ausstehend
 
 ---
@@ -239,12 +240,18 @@ sich nicht**.
 | L3 | Wartet auf Freigabe durch Administrator | Start | Weißes langsames Pulsieren | [heute] |
 | L4 | Verbindung still tot | beliebig | **Nichts für bis zu 45 s** — der Ring zeigt weiter den letzten Zustand | [heute] |
 | L5 | Verbindung still tot | beliebig | Erkannt bei der nächsten Interaktion (§3) oder über eine Frischeschwelle für Eingehendes | [vorgeschlagen] |
-| L6 | **Lautsprecherstrom endet** (EOS empfangen *und* Audiokanal leer) | PLAYING | **Der Controller schätzt das aus der Wanduhr und löscht den Ring auf langsamen Strecken zu früh** — gemessen bis zu 6,1 s zu früh | [heute] |
+| L6 | **Lautsprecherstrom endet** (EOS empfangen *und* Audiokanal leer) | PLAYING | Der Controller wartet auf den `playback_stats`-Bericht des Echos und löscht den Ring dann. Früher schätzte er das aus der Wanduhr und löschte auf langsamen Strecken bis zu 6,1 s zu früh (§5) | [heute] |
 | L7 | Lautsprecherstrom endet | PLAYING | Das Gerät löscht den Ring bzw. gibt ihn selbst zurück, aus dem Signal, das es ohnehin protokolliert (`pcm_speaker.go:309`) | [vorgeschlagen] |
 
 ---
 
-## 5. Warum L6 heute falsch ist
+## 5. Warum L6 falsch war (behoben)
+
+> **Seit dem Schreiben dieses Abschnitts behoben.** Der Controller schätzt das
+> Ende der Wiedergabe nicht mehr: Er wartet auf den `playback_stats`-Bericht
+> des Echos, den dieses sendet, sobald sein Audiokanal nach dem Stromende
+> leergelaufen ist, und löscht den Ring dann. Die Analyse darunter bleibt
+> stehen, weil sie der Grund für diesen Entwurf ist.
 
 `_run_post_turn_playback` erfährt nie, wann die Wiedergabe tatsächlich endete
 (`em_controller.py:746`):

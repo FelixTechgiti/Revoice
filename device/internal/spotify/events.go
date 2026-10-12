@@ -2,6 +2,7 @@ package spotify
 
 import (
 	"fmt"
+	"github.com/wilbowes/EchoMuse/internal/atomicfile"
 	"log"
 	"os"
 	"path/filepath"
@@ -191,17 +192,14 @@ func mkfifo(path string) error {
 	return syscall.Mkfifo(path, 0o600)
 }
 
-// writeFileAtomic writes through a temp file and renames, so librespot can
-// never run a half-written script. Same reason the console password and the
-// shairport config are written this way.
+// writeFileAtomic writes through a synced temp file and renames, so librespot
+// can never run a half-written script — and a power cut cannot leave an EMPTY
+// one, which ext4 allows when it commits the rename ahead of the data (#849,
+// #865). Same reason the console password and the shairport config are
+// written this way.
 func writeFileAtomic(path, content string) error {
-	tmp := path + ".part"
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("rename: %w", err)
+	if err := atomicfile.Write(path, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
 }

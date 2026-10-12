@@ -86,7 +86,7 @@ adb shell su -c 'dd if=/dev/block/mmcblk0p10' > boot_a_x.img
 
 # 2. Build. Reuses the kernel and DTBs out of your own image, and builds the
 #    init for that kernel's architecture: 64-bit for FireOS 5, 32-bit ARM for
-#    FireOS 6 (untested on hardware as of 2026-09-11).
+#    FireOS 6.
 ./build.sh boot_a_x.img emos-boot.img
 
 # 3. Flash (TWRP, or over the network from a running emOS — see below).
@@ -134,9 +134,9 @@ static and is the architecture it claims, builds emOS's own `wpa_supplicant`
 and `wpa_cli`, and runs the ring, password, timeout and WPA checks against the
 source being published.
 
-What it attaches is `emos-payload.zip` — `init`, `init32`, `wpa_supplicant`,
-`wpa_cli` and `em-wifi` under a manifest of sha256s — plus the loose `init`
-beside it. **That second copy is compatibility, not duplication**: a controller
+What it attaches is `emos-payload.zip` — `init32`, busybox, `wpa_supplicant`,
+`wpa_cli` and `em-wifi` under a manifest of sha256s, with busybox's source and
+licence beside it — plus the loose `init`. **That second copy is compatibility, not duplication**: a controller
 already in the field selects an emOS release by matching that exact asset name,
 so dropping it would strand every fielded controller.
 
@@ -772,7 +772,7 @@ not choose.
 
 ### What the slots actually contain
 
-Measured on G090LF11803611NF in TWRP, 2026-09-06, all reads. Recorded because
+Measured on …11NF in TWRP, 2026-09-06, all reads. Recorded because
 the paragraph above was written from the partition table alone and three of
 these were unknown.
 
