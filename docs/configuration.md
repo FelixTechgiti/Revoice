@@ -99,6 +99,17 @@ kleine Lautsprecher des Dots ist von Haus aus dröhnend und dumpf.
 Eine zusätzliche Präsenzanhebung für gesprochene Antworten. Probiere es, wenn
 Antworten aus der Entfernung dumpf klingen.
 
+### Response level
+Sets spoken responses relative to the device's normal volume: **Low** keeps
+the existing level, **Medium** adds 6dB, and **High** adds 12dB. The volume
+buttons still move both media and responses together; this setting only makes
+voice louder within that range. Near maximum volume the extra boost tapers
+away, reaching none at maximum, so it cannot drive the output above full
+scale. The wake sound remains independent and uses Wake sound level.
+
+Older firmware cannot apply this gain. Its control is disabled for those
+devices and explains that newer firmware is required.
+
 ### Speak while the reply is written
 Off by default. When it is off, the Dot starts speaking once Home Assistant
 has the whole reply. When it is on, it starts as soon as Home Assistant has the
@@ -220,6 +231,14 @@ Setze beim Schreiben dieser Automation `not_from: [unavailable, unknown]` an
 den Zustandsauslöser. Home Assistant stellt den Zustand einer Entität wieder
 her, wenn eine Verbindung zurückkommt, und ohne das feuert ein Neuverbinden
 den Auslöser.
+
+**Der Lautstärketon** spielt einen kurzen, tiefen Piepton mit schnellem
+Ausklang auf der neu gewählten Lautstärke, wenn du sie mit den physischen
+Tasten des Dots änderst und der Lautsprecher gerade still ist. Bei
+Lautstärkeänderungen aus Home Assistant und während Sprache oder Musik schon
+läuft bleibt er stumm. Drückst du am Maximum noch einmal Lauter, wiederholt er
+sich, damit die obere Grenze hörbar ist. Der Schalter folgt dem Bereich
+Flotte/Gerät des Abschnitts „Wiedergabe" und ist standardmäßig an.
 
 ### Lautstärke
 Die Lautstärke **folgt dem, was du tatsächlich benutzt**, und übersteht
@@ -454,6 +473,37 @@ Wo das Wakeword gehört wird. Pro Echo einstellbar, zwei Möglichkeiten:
   Revoice vor dem privaten Zuhören gearbeitet, und bestehende Installationen
   behalten diese Einstellung, bis du sie änderst.
 
+### Wakeword-Beispiele sammeln
+Um Beispiele für ein besseres eigenes Wakeword-Modell zu sammeln, schalte
+unter Config → Wakeword **Wakeword-Beispiele speichern** ein. Der Controller
+hält einen kurzen Audiopuffer im Speicher und sichert einen Ausschnitt, sobald
+dessen Bewertung die **Mindestbewertung** erreicht — dazu jede echte
+Auslösung. Im Modus **Beides (Vergleich)** sichert er auch die vom Echo
+gemeldeten Überschreitungen. Ein Ausschnitt enthält Ton vor und nach dem
+Höhepunkt der Bewertung; es wird **nicht** dauerhaft Raumton auf die Platte
+geschrieben.
+
+Die Ausschnitte prüfst du im Bereich „Activity" des Geräts. Markiere jeden als
+**Wakeword**, **kein Wakeword** oder **unsicher**. Daraus entsteht ein
+prüfbarer Satz positiver und negativer Beispiele; das Modell wird davon weder
+trainiert noch automatisch verändert. Das Markieren kopiert den Ausschnitt
+zusätzlich in einen dauerhaften, unbegrenzten Speicher auf der Platte, nach
+Markierung geordnet, zusammen mit Bewertung und Modell in einer kleinen
+Metadatendatei — ein Ausschnitt, den jemand behalten will, übersteht damit die
+Grenze von 50 pro Gerät weiter unten, statt irgendwann mit allem anderen
+weggeräumt zu werden. Das Sammeln ist standardmäßig aus, und die Ausschnitte
+sind nur für Admins sichtbar, weil sie gewöhnliche Sprache enthalten können.
+Eine Äußerung, die auf beiden Erkennern unter der gewählten Mindestbewertung
+bleibt, wird nicht gesichert.
+
+Sowohl die prüfbaren Ausschnitte als auch das markierte Archiv sind schlichte
+WAV-Dateien auf der Platte, in `data/recordings/wake_samples/` beziehungsweise
+`data/recordings/wake_samples_archive/<markierung>/` — und werden nirgendwohin
+hochgeladen. Der Controller behält höchstens **50 Ausschnitte je Echo** im
+ersten Ordner, die ältesten räumt er selbst weg; der zweite hat keine Grenze,
+und nichts entfernt daraus. Das Sammeln abzuschalten stoppt neue Ausschnitte
+sofort, lässt vorhandene aber genau dort, wo sie sind.
+
 Unter der Einstellung steht eine Zeile, was der Echo gerade wirklich tut —
 aus seiner eigenen Meldung, nicht aus der Konfiguration: privat zuhörend,
 sendend, oder **nur per Taste** mitsamt Grund. Die Startseite hat eine Zeile
@@ -596,6 +646,11 @@ Ein länger zurückliegendes Gespräch zeigt womöglich keine Schaltflächen —
 heißt nur, dass seine Aufnahme aus den letzten 10 herausgefallen ist und der
 Gesprächsverlauf sie überlebt hat.
 
+**Wake word microphone** — which of the seven microphones listens for the
+wake word. **Centre** is right for nearly every Echo. MK1 to MK6 are the six
+around the edge, for an Echo whose centre microphone has failed and no longer
+wakes. Older firmware ignores it, and shows the control disabled.
+
 ---
 
 ## 04 — Ring
@@ -627,6 +682,20 @@ Der Lautstärkebogen hält den Ring etwa zwei Sekunden, damit eine
 Gesprächsanimation ihn nicht sofort überschreibt — aber **ein Druck auf die
 Aktionstaste bricht ihn sofort ab**, die Lautstärke zu ändern und dann mit dem
 Gerät zu sprechen zeigt dir den Zuhör-Ring also unmittelbar.
+
+### Fernpegel-Bogen
+Die physischen Lautstärketasten zeigen immer den cyanfarbenen Pegelbogen. Ist
+diese Einstellung an, erscheint der Bogen für etwa zwei Sekunden auch dann,
+wenn die Lautstärke von anderswo geändert wird: Home Assistant, Music
+Assistant, eine Automation. Standardmäßig aus, weil Fernänderungen den Ring
+sonst unerwartet aufleuchten lassen. Für Lautstärke null (so schaltet Home
+Assistant stumm), für eine Wiederholung des aktuellen Pegels und für das
+Wiederherstellen beim Start erscheint er nie. Ältere Firmware kann das nicht
+und zeigt den Schalter deaktiviert.
+
+Der Bogen und der Regler in Home Assistant sind sich nicht einig, was „halb"
+heißt: 50 % aus Home Assistant erleuchten etwa ein Viertel des Rings. Das ist
+[#783](https://github.com/wilbowes/EchoMuse/issues/783).
 
 ### Wie ein Gespräch endet
 Der Ring sagt dir, *warum* ein Gespräch aufgehört hat, über den Rhythmus statt
@@ -778,6 +847,50 @@ Zwei Dinge vor dem Aktivieren:
 Die Diagnose liegt im Reiter **Status** des Geräts (Feld
 „Bluetooth proxy"): Scannerzustand, gesehene Advertisements, Anzahl der Geräte
 in der Nähe und ob Home Assistant verbunden ist und empfängt.
+
+## 07 — Sendspin (Early Access)
+
+**Sendspin player** makes the Echo a [Sendspin](https://github.com/Sendspin/spec)
+player, so Music Assistant can put it in a group with other speakers and play
+to all of them in sync. Music Assistant connects to the Echo directly; the
+controller only turns the player on and shows its status.
+
+To set it up:
+
+1. Turn on **Sendspin player** for the Echo. Music Assistant finds it on the
+   network within a few seconds, listed under the Echo's name.
+2. Press **Show pairing token** under the switch, then **Copy**.
+3. In Music Assistant, open the player and pair it with the token.
+
+The token pairs the Echo with a server, so treat it like a password. Anyone
+who has it can pair with that Echo. Pairing is remembered on both sides, so it
+is a one-time step per Music Assistant install.
+
+**Play without pairing** skips the token: any server that Music Assistant's
+operator approves can play. It is off by default, because without pairing the
+Echo cannot tell a real server from anything else on your network claiming to
+be one.
+
+Things to know:
+
+- **Music from Home Assistant wins.** Asking the Echo for music by voice, or
+  playing to its Home Assistant media player, takes the speaker. The Echo
+  leaves its Sendspin group, and Music Assistant does not put it back by
+  itself. Start the group again from Music Assistant.
+- **Voice still ducks the music.** A wake word lowers synced music exactly as
+  it lowers other music, and the other speakers in the group carry on.
+- **One volume.** Music Assistant's volume slider for the Echo is the Echo's
+  own volume: moving it moves Home Assistant's slider too, and the Echo's
+  buttons move both. Music Assistant's mute silences only the synced music;
+  the Echo's mute button still mutes the microphone.
+- **It needs the controller.** When the Echo loses its controller (the ring
+  pulses orange) it stops playing and leaves its group, and Music Assistant
+  reconnects it once the link is back.
+- **Mono.** The Echo asks for one channel, which is what its speaker plays.
+- The player listens on port **8928** and advertises itself over mDNS as
+  `_sendspin._tcp`. The connection is encrypted.
+- Decoding and decryption cost about 4% of one CPU core while playing,
+  measured on a Dot.
 
 ---
 

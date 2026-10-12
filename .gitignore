@@ -54,3 +54,7 @@ device/tools/speaker_profile/*.wav
 device/librespot/out/
 device/shairport/out/
 device/gaishim/out/
+# Coverage artefacts — .coveragerc is checked in, its output is not.
+.coverage
+coverage.out
+*.cover

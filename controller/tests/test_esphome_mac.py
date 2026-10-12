@@ -176,10 +176,27 @@ def test_migrations_are_append_only():
     rather than edited — which is the mistake this guards, and the one that
     broke every stats write and disconnect-looped the fleet when it happened.
     """
-    assert len(db.MIGRATIONS) == 28
+    assert len(db.MIGRATIONS) == 32
+    # Every index is one past upstream's: this fork's v25 (emos_ver) sits at
+    # 24, so each of upstream's later migrations lands one slot further on.
+    # Spelled out rather than computed, because the stored schema_version is
+    # an INDEX into this list and a shift that nothing checks is a migration
+    # applied to the wrong schema.
+    # v31 is its own entry (emos_version, emos_build), not appended onto v30.
+    assert "emos_version" in db.MIGRATIONS[30]
+    assert "emos_version" not in db.MIGRATIONS[29]
+    # v30 is its own entry (wake_samples), not appended onto v29.
+    assert "wake_samples" in db.MIGRATIONS[29]
+    assert "wake_samples" not in db.MIGRATIONS[28]
+    # v29 is its own entry (device_boots, device_wear), not appended onto v28.
+    assert "device_wear" in db.MIGRATIONS[28]
+    assert "device_boots" in db.MIGRATIONS[28]
+    assert "device_boots" not in db.MIGRATIONS[27]
     # v28 is its own entry (token_confirmed_at), not appended onto v27.
     assert "token_confirmed_at" in db.MIGRATIONS[27]
     assert "token_confirmed_at" not in db.MIGRATIONS[26]
+    # v25 is this fork's own (emos_ver), and upstream has nothing there.
+    assert "emos_ver" in db.MIGRATIONS[24]
     assert "esphome_mac" in db.MIGRATIONS[18]
     assert "esphome_mac" not in db.MIGRATIONS[17]
     # v20 is its own entry and did not get appended onto v19's.

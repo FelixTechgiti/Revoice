@@ -48,7 +48,7 @@ korrekt zurückgegeben werden kann.
 
 | # | Besitzer | Optik | Lebensdauer | Hoheit | Code |
 |---|---|---|---|---|---|
-| 1 | **Lautstärkebogen** | Cyan, N von 12 proportional | 2-s-Fenster (`volumeLEDSecs`) | Gerätelokal; nur physische Tastendrücke | `volume.go:145` |
+| 1 | **Lautstärkebogen** | Cyan, N von 12 proportional | 2-s-Fenster (`volumeLEDSecs`) | Gerätelokal; physische Tastendrücke, und auf Wunsch auch geänderte Fernpegel | `volume.go:145` |
 | 2 | **Mute-Ring** | Dauerhaft rot `(180,0,0)` + Tasten-LED (gpio444, active-high) | Bis zum Aufheben; übersteht Neustart und OTA | **Gerätehoheitlich**, gespeichert in `/data/local/etc/revoice/state.json` | `mute.go:132` |
 | 3 | **Verbindungszustand** | Oranges Sinus-Pulsieren (getrennt) / weißes langsames Pulsieren (Freigabe ausstehend) | Bis die Verbindung geklärt ist | Gerätelokal | `cmd/server.go:161,174` |
 | 4 | **Gesprächs- / Medienanimation** | `solid` · `spin` · `rotate` · `pulse` · `meter` · `off`, in Szenenfarbe | Bis ersetzt oder `ttlSec` abläuft (30 s Zuhören / 135 s Spinner / je Antwort für den Pegel) | Vom Controller vorgegeben, vom Gerät gezeichnet | `animator.go:53` |
@@ -215,7 +215,8 @@ sich nicht**.
 | V2 | LISTENING / THINKING / PLAYING | Wie V1 | Bogen 2 s → gibt mitten im Bild an die laufende Animation zurück | [heute] |
 | V3 | MUTED | Wie V1 | Bogen 2 s → **roter Ring wiederhergestellt** (der Ablauf kennt Mute) | [heute] |
 | V4 | DISCONNECTED | Wie V1 | Bogen 2 s → orangenes Pulsieren geht weiter | [heute] |
-| V5 | Ferngesetzt (Controller / HA) oder `SeedVolume` beim Start | `Set(level, showRing=false)` | **Kein Bogen** — es steht niemand am Gerät | [heute] |
+| V5 | Ferngesetzt (Controller / HA / Sendspin), Einstellung aus | `Set(level, showRing=false)` | Kein Bogen — Standardverhalten | [heute] |
+| V6 | Ferngesetzt, `remoteVolumeArc` an, wirksamer Pegel auf ungleich null geändert | `Set(level, showRing=true)` | Cyanfarbener Bogen 2 s, dann normale Rückgabe | [heute] |
 
 ### 4.4 Ring-Nachrichten vom Controller
 
@@ -381,10 +382,12 @@ Zustand aufblitzen lässt.
 speichert nur `{mu, gen}` (`animator.go:45`) — kein Muster —, dafür müsste das
 aktuelle Muster neben der Generation mitgeführt werden. Etwa drei Zeilen.
 
-*Die Korrektheit ist heute exakt:* Weder `em_player` noch der Durchsagepfad
-zeichnen den Ring (Durchsagen rufen direkt `_run_post_turn_playback` auf, das
-keine LED-Aufrufe hat), also gilt „der Ring zeigt einen Gesprächszustand" ⟺
-„ein Sprachgespräch läuft".
+*Diese Äquivalenz gilt seit dem 2026-10-05 nicht mehr.* Sie war exakt:
+Weder `em_player` noch der Durchsagepfad zeichneten den Ring, also galt „der
+Ring zeigt einen Gesprächszustand" ⟺ „ein Sprachgespräch läuft". Seit #780
+zeigen eine Durchsage und die Eröffnung eines von Home Assistant gestarteten
+Gesprächs das Wiedergabe-Meter, während kein Sprachgespräch läuft. Option A
+würde einen Tastendruck während einer Durchsage jetzt als Abbruch lesen.
 
 *Das Risiko ist eine künftige Fußangel, kein heutiger Fehler.* Die Äquivalenz
 ist ein stillschweigender Vertrag. An dem Tag, an dem die Musikwiedergabe

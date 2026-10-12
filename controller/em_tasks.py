@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-log = logging.getLogger("echomuse.tasks")
+log = logging.getLogger("revoice.tasks")
 
 _live: set[asyncio.Task] = set()
 

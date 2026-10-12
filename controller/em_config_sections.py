@@ -23,10 +23,10 @@ config key ends up belonging to no section.
 SECTIONS: dict[str, dict] = {
     "playback": {
         "label": "Playback",
-        "keys": ["eqBands", "eqLoudness", "duckDb",
+        "keys": ["eqBands", "eqLoudness", "duckDb", "responseLevel",
                  "limiterEnabled", "limiterThreshold", "limiterRelease",
                  "bassGuardEnabled", "bassGuardDb", "bassGuardJackBypass",
-                 "audioHoldoffMs", "streamReply"],
+                 "audioHoldoffMs", "streamReply", "volumeButtonSound"],
     },
     "wakeword": {
         "label": "Wake word",
@@ -34,13 +34,14 @@ SECTIONS: dict[str, dict] = {
             "owwModel", "owwThreshold", "owwSpeexNs",
             "bargeInEnabled", "bargeInThreshold", "wakeArbitrationMs",
             "owwOnDevice", "wakeSound", "wakeSoundLevel",
+            "wakeClipCapture", "wakeClipMinScore",
         ],
     },
     "microphones": {
         "label": "Microphones",
         "keys": [
             "adcMicpga", "adcDigitalGain", "micGainDb",
-            "beamformingEnabled", "beamAngle",
+            "beamformingEnabled", "beamAngle", "wakeMic",
             "aecEnabled", "aecDelayMs", "aecTailMs", "aecRefSource", "nsAsr",
             "saveUtterances",
         ],
@@ -49,6 +50,7 @@ SECTIONS: dict[str, dict] = {
         "label": "Ring",
         "keys": [
             "ledScene", "ledListenColor", "ledThinkColor",
+            "remoteVolumeArc",
             "meterAttack", "meterDecay", "meterFloor",
             "meterGamma", "meterRef", "meterCurve",
         ],
@@ -69,7 +71,11 @@ SECTIONS: dict[str, dict] = {
     },
     "bluetooth": {
         "label": "Bluetooth",
-        "keys": ["bleProxyEnabled"],
+        "keys": ["bleProxyEnabled", "bleProxyConnections"],
+    },
+    "sendspin": {
+        "label": "Sendspin",
+        "keys": ["sendspinEnabled", "sendspinUnpaired"],
     },
     # Streaming protocols the DEVICE speaks for itself, with no controller
     # hop. Its own section rather than a line in playback: playback is about
@@ -78,7 +84,7 @@ SECTIONS: dict[str, dict] = {
     # other.
     "streaming": {
         "label": "Streaming",
-        "keys": ["sendspinEnabled", "spotifyEnabled", "spotifyName",
+        "keys": ["spotifyEnabled", "spotifyName",
                  "airplayEnabled", "airplay2Enabled", "airplayName",
                  "airplayVolumeControl", "spotifyVolumeControl"],
     },

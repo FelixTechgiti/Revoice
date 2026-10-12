@@ -1,100 +1,72 @@
 package sendspin
 
 import (
+	"path/filepath"
 	"testing"
-	"time"
 )
 
-// The supervisor is driven by the config push, which re-sends the whole
-// config on every controller reconnect — so Start and Stop are called
-// repeatedly on a client that is already in that state, and both have to be
-// no-ops there. These run without a network: nothing here reaches session().
+// One volume (Wil, 2026-09-30): with the device owning it, a server's volume
+// command moves the DEVICE's volume and the synced music itself plays at
+// unity, so the level is never applied twice.
+func TestServerVolumeMovesTheDeviceVolume(t *testing.T) {
+	c, err := New(Config{StorePath: filepath.Join(t.TempDir(), "s.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []int
+	c.OnVolume(func(v int) { got = append(got, v) })
 
-func newTestClient() *Client {
-	return NewClient(Options{TimeSyncInterval: time.Hour}, "",
-		&fakeSink{}, &fakePlane{})
+	set := c.store.settings()
+	set.Volume = 40
+	c.applySettings(set)
+	if len(got) != 1 || got[0] != 40 {
+		t.Fatalf("device told %v, want [40]", got)
+	}
+	if c.player.gainTarget != unity {
+		t.Errorf("synced music attenuated by the server volume as well: gain %d", c.player.gainTarget)
+	}
+
+	// The device echoing its new level back is not a change.
+	c.SetVolume(40)
+	if c.store.settings().Volume != 40 || len(got) != 1 {
+		t.Error("the echo of a server's own command looped")
+	}
+	// A button press is: it becomes what the server is told.
+	c.SetVolume(55)
+	if c.store.settings().Volume != 55 {
+		t.Error("device volume not recorded for the server")
+	}
+
+	// Mute stays the player's own: the Echo's mute button is the mic.
+	set = c.store.settings()
+	set.Muted = true
+	c.applySettings(set)
+	if c.player.gainTarget != 0 {
+		t.Error("server mute did not silence synced music")
+	}
 }
 
-func TestStartIsIdempotent(t *testing.T) {
-	c := newTestClient()
-	c.Start()
-	c.Start()
-	c.Start()
-	if !c.Running() {
-		t.Fatal("not running after Start")
-	}
-	c.Stop(GoodbyeUserRequest)
-	if c.Running() {
-		t.Fatal("still running after Stop")
+// Without the device owning volume (the interop harness), the server volume
+// is a gain on synced music, as before.
+func TestWithoutADeviceVolumeTheServerVolumeIsAGain(t *testing.T) {
+	c, _ := New(Config{StorePath: filepath.Join(t.TempDir(), "s.json")})
+	set := c.store.settings()
+	set.Volume = 50
+	c.applySettings(set)
+	if c.player.gainTarget != volumeGain(50, false) {
+		t.Errorf("gain %d, want %d", c.player.gainTarget, volumeGain(50, false))
 	}
 }
 
-func TestStopBeforeStartDoesNothing(t *testing.T) {
-	// The connect-time config push arrives with the setting off, on a client
-	// that has never started.
-	c := newTestClient()
-	c.Stop(GoodbyeUserRequest)
-	if c.Running() {
-		t.Fatal("Stop started something")
+// The Echo's scale is 0..127 (unity at 127); HA maps it proportionally and
+// so must this, so one volume reads one number everywhere.
+func TestVolumeMappingRoundTrips(t *testing.T) {
+	for pct := 0; pct <= 100; pct++ {
+		if got := LevelToPercent(PercentToLevel(pct, 127), 127); got != pct {
+			t.Errorf("%d%% -> %d -> %d%%", pct, PercentToLevel(pct, 127), got)
+		}
 	}
-}
-
-func TestStopAndStartAgainWorks(t *testing.T) {
-	// Somebody toggles the switch in Home Assistant twice.
-	c := newTestClient()
-	c.Start()
-	c.Stop(GoodbyeUserRequest)
-	c.Start()
-	if !c.Running() {
-		t.Fatal("the client did not come back")
-	}
-	c.Stop(GoodbyeShutdown)
-}
-
-func TestLeaveWithNoSessionIsSafe(t *testing.T) {
-	// The arbiter holds this callback and calls it on a preemption, which
-	// can land between sessions — the supervisor is mid-backoff, or the
-	// client was never started at all.
-	c := newTestClient()
-	c.Leave("preempted")
-	c.Start()
-	c.Leave("preempted")
-	c.Stop(GoodbyeUserRequest)
-}
-
-func TestLeavingDoesNotStopTheSupervisor(t *testing.T) {
-	// The plane may come back — Home Assistant's track ends — and the
-	// backoff loop reconnects. What it must NOT do is rejoin the group by
-	// itself: reconnecting is not rejoining, and that is the server's
-	// decision once this client reappears.
-	c := newTestClient()
-	c.Start()
-	c.Leave("preempted")
-	if !c.Running() {
-		t.Fatal("a preemption stopped the supervisor — the device would " +
-			"never come back when the plane was free again")
-	}
-	c.Stop(GoodbyeUserRequest)
-}
-
-func TestTheBackoffIsBoundedAtBothEnds(t *testing.T) {
-	// The floor is short because a Music Assistant restart is the common
-	// cause and the group is waiting; the ceiling is long because a server
-	// that is simply not installed must not have this device browsing
-	// forever. Reconnecting is the normal case on links measured at
-	// 4.6–7.1% loss, so it also has to be quiet.
-	if reconnectMin < time.Second {
-		t.Fatalf("reconnect floor %s would browse in a tight loop", reconnectMin)
-	}
-	if reconnectMin > 10*time.Second {
-		t.Fatalf("reconnect floor %s is a long time to be silent after a "+
-			"server restart", reconnectMin)
-	}
-	if reconnectMax < reconnectMin {
-		t.Fatal("the backoff ceiling is below its floor")
-	}
-	if reconnectMax > 10*time.Minute {
-		t.Fatalf("reconnect ceiling %s is longer than anyone will wait "+
-			"before deciding the feature is broken", reconnectMax)
+	if PercentToLevel(100, 127) != 127 || LevelToPercent(127, 127) != 100 || PercentToLevel(0, 127) != 0 {
+		t.Error("endpoints")
 	}
 }

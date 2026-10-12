@@ -50,7 +50,9 @@ KINDS: dict[str, str] = {
     "bargeInEnabled": BOOL,
     "bargeInThreshold": FLOAT,
     "duckDb": FLOAT,
+    "responseLevel": STR,
     "beamAngle": FLOAT,
+    "wakeMic": INT,
     "beamformingEnabled": BOOL,
     "agcEnabled": BOOL,
     "aecEnabled": BOOL,
@@ -58,8 +60,13 @@ KINDS: dict[str, str] = {
     "aecTailMs": INT,
     "aecRefSource": STR,
     "bleProxyEnabled": BOOL,
+    "bleProxyConnections": BOOL,
+    "sendspinEnabled": BOOL,
+    "sendspinUnpaired": BOOL,
     "wakeSound": BOOL,
     "wakeSoundLevel": STR,
+    "volumeButtonSound": BOOL,
+    "remoteVolumeArc": BOOL,
     "eqBands": FLOAT_LIST,
     "eqLoudness": BOOL,
     "bassGuardEnabled": BOOL,
@@ -88,6 +95,8 @@ KINDS: dict[str, str] = {
     "nsAsr": BOOL,
     "saveUtterances": BOOL,
     "audioHoldoffMs": INT,
+    "wakeClipCapture": BOOL,
+    "wakeClipMinScore": FLOAT,
 }
 
 

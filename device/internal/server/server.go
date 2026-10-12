@@ -70,6 +70,11 @@ type Server struct {
 	// the controller persists every report into startupVolume, and a boot-
 	// default report would clobber the saved value (the reboot-reset bug).
 	volumeSeeded atomic.Bool
+
+	// remoteVolumeArc is the opt-in accessibility setting from config. It is
+	// atomic because config pushes and volume commands arrive on independent
+	// control callbacks. Physical buttons bypass it and always show the arc.
+	remoteVolumeArc atomic.Bool
 }
 
 func NewServer(buttonController buttons.Controller, microphone mic.Microphone, speaker speaker.Speaker) *Server {
@@ -160,23 +165,36 @@ func NewServer(buttonController buttons.Controller, microphone mic.Microphone, s
 // A button press makes the device's level authoritative (see volumeSeeded):
 // its change report updates the controller's stored value, and a config
 // push arriving later this run must not override it.
-func (s *Server) VolumeStepUp() {
+func (s *Server) VolumeStepUp() bool {
 	s.volumeSeeded.Store(true)
-	s.volume.StepUp()
+	return s.volume.StepUp()
 }
 
 // VolumeStepDown decreases volume one step — called by button handler.
-func (s *Server) VolumeStepDown() {
+func (s *Server) VolumeStepDown() bool {
 	s.volumeSeeded.Store(true)
-	s.volume.StepDown()
+	return s.volume.StepDown()
 }
 
-// SetVolume sets volume to an explicit level (0–volumeMax) — called by controller
-// command. Remote changes don't paint the volume arc: nobody is at the
-// device, and the ring lighting up unprompted reads as a glitch.
+// SetVolume sets volume to an explicit level (0–volumeMax) — called by a live
+// remote source such as the controller, Home Assistant, or Sendspin. The
+// opt-in accessibility setting shows the existing cyan arc only when the
+// effective level changes to a non-zero value; mute and repeated state syncs
+// remain invisible.
 func (s *Server) SetVolume(level int) {
 	s.volumeSeeded.Store(true)
-	s.volume.Set(level, false)
+	level = clampVolumeLevel(level)
+	// HA represents mute as volume zero. Do not replace the mute indication
+	// with an empty cyan arc and a two-second black hold.
+	showRing := s.remoteVolumeArc.Load() && level != 0 && level != s.volume.Get()
+	s.volume.Set(level, showRing)
+}
+
+// SetRemoteVolumeArc applies the runtime config controlling feedback for live
+// remote volume changes. It deliberately does not affect physical buttons or
+// the silent boot-time SeedVolume path.
+func (s *Server) SetRemoteVolumeArc(enabled bool) {
+	s.remoteVolumeArc.Store(enabled)
 }
 
 // SetVolumeFromAirPlay applies a volume a phone chose on its AirPlay slider,
@@ -234,6 +252,13 @@ func (s *Server) VolumeSeeded() bool {
 // VolumeLevel returns the current volume level (0–volumeMax).
 func (s *Server) VolumeLevel() int {
 	return s.volume.Get()
+}
+
+// VolumeAtMax reports whether a further physical Volume Up press is pinned at
+// the top of the supported clean-output range. The button handler uses it to
+// replay the preview cue even though the numeric level cannot change.
+func (s *Server) VolumeAtMax() bool {
+	return s.volume.Get() >= volumeMax
 }
 
 // SetVolumeApply wires what applies the volume to the audio (the speaker's

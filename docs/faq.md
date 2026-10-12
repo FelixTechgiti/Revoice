@@ -218,6 +218,26 @@ Firmware ließ einen Teil des Lautsprecherwegs auf FireOS 6' Kernel
 abgeschaltet ([#587](https://github.com/wilbowes/EchoMuse/issues/587)).
 
 
+### Wie aktualisiere ich emOS?
+Öffne den Echo im Dashboard und geh auf **Updates**. Ein Echo auf emOS hat
+dort einen Bereich **emOS** mit der laufenden Version und der neuesten
+Veröffentlichung; drück **Update**. Das braucht einen Controller neuer als
+2.25.0 und installiert emOS 0.10 oder später. Auf einem älteren Controller
+führst du stattdessen die Bau- und Flash-Schritte des Assistenten erneut aus.
+
+Der Echo startet neu und ist nach etwa einer Minute zurück — WLAN,
+Einstellungen und Konsolenpasswort bleiben unangetastet. Erreicht das neue
+Image den Controller nicht, startet sich der Echo alle drei Minuten selbst neu
+und legt nach drei Versuchen das vorherige Image zurück und zeigt einen
+bernsteinfarbenen Ring. Das dauert etwa elf Minuten, und das Protokoll des
+Echos sagt danach, dass er zurückgerollt ist.
+
+**Lass den Echo während des Updates am Strom.** Ein Stromausfall in der einen
+Sekunde, in der die Boot-Partition geschrieben wird, hinterlässt ein Image,
+das nicht startet — und davon zu genesen braucht TWRP, ein USB-Kabel und den
+Einrichtungsassistenten. Nach diesem Schreibvorgang kann nichts mehr diesen
+Zustand herbeiführen.
+
 ### Wie führe ich den Assistenten auf einem emOS-Gerät noch einmal aus?
 emOS hat kein adb, der Assistent sieht das Gerät also nicht direkt. Öffne die
 USB-Konsole, führe `/init recovery` aus, und der Echo startet in TWRP neu — wo
@@ -425,11 +445,20 @@ Barge-in**, falls noch nicht geschehen.
 
 ### Kann er Timer?
 Ja — frag danach, wie du es erwarten würdest, und er klingelt auf dem Echo
-selbst. Einen zu stoppen macht den Echo nicht mehr taub. **Einen klingelnden
-Timer per Sprache zu stoppen, kann weiterhin unzuverlässig sein**, weil der
-Klingelton mit dem konkurriert, was du sagst. Melde, was du gesagt hast und
-was passiert ist; die Formulierungen, die Leute tatsächlich benutzen, sind der
-nützliche Teil.
+selbst.
+
+Zum Stoppen drückst du die Aktionstaste, oder du sagst das Wakeword und danach
+irgendetwas („Stopp", „sei still", in jeder Sprache). Das Wakeword pausiert
+den Klingelton und zeigt den Lausch-Ring; sagst du vier Sekunden lang nichts,
+klingelt es weiter. Jeder Echo, der dich hört, kann einen Timer stoppen, der
+auf einem anderen klingelt. Ein Befehl, der über einen klingelnden Timer
+gesprochen wird, stoppt den Timer und geht **nicht** an Home Assistant — sag
+ihn also noch einmal, wenn es still ist.
+
+Das ist Controller 2.26.0 (Early Access ab 2.26.0-ea.1). Davor ließ sich ein
+klingelnder Timer nur mit einem englischen Stoppwort wie „stop" oder „cancel"
+beenden.
+
 
 ---
 
@@ -456,6 +485,29 @@ Verbindung ab und kommt als ausstehend zurück.
 
 ### Ich habe ein Gerät neu hinzugefügt und sein Sprach-Port fehlt.
 Gleiche Behebung, gleiche Antwort: Controller aktualisieren.
+
+### Kann Home Assistant das Zuhören eines Geräts beenden oder sagen, ob sein Mikrofon stumm ist?
+Ja, beides — über zwei getrennte Bedienelemente.
+
+**Wake word** ist die Auswahl, die Home Assistant an jeden Sprachsatelliten
+hängt. **No wake word** verhindert, dass das Gerät aufwacht; wählst du das
+Wakeword, ist es wieder an (beide Auswahlfelder, auch **Wake word 2**). In
+einer Automation nimmst du `select.select_option` mit `no_wake_word` oder dem
+Namen des Wakewords. Die Wahl übersteht einen Neustart des Controllers. Das
+Mikrofon bleibt an, also hören `start_conversation` und `ask_question`
+weiterhin zu. Im Standardmodus [Zuhören](listening.md) hört der Echo sein
+Wakeword weiterhin selbst, und der Controller schließt diese Sitzung sofort.
+Bis das Schließen ankommt (meist ein Bruchteil einer Sekunde, nie mehr als 3
+Sekunden) sendet der Echo, was auf das Wakeword folgt.
+
+**Microphone Muted** (`binary_sensor`) ist die physische Stummtaste,
+schreibgeschützt — denn nur die Taste kann wieder öffnen. Prüf ihn vor
+`assist_satellite.ask_question`: ein stummes Gerät nimmt nichts auf, und HA
+wartet ohne Zeitgrenze auf eine Antwort.
+
+Die beiden sind unabhängig voneinander: die Taste ändert die
+Wakeword-Einstellung nie. Das **Mute** des Media Players ist noch einmal etwas
+anderes — es schaltet nur den Lautsprecher stumm.
 
 ### Mein Gerät hat seine Home-Assistant-Entitäts-IDs geändert.
 Das passiert immer, wenn ein Gerät gelöscht und neu hinzugefügt wird — HA

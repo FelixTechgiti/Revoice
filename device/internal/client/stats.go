@@ -83,6 +83,13 @@ type DeviceStats struct {
 	// never as "nothing is running" — the NULL-not-zero rule, and the
 	// difference between "your AirPlay is broken" and "I cannot see".
 	Endpoints map[string]interface{} `json:"endpoints,omitempty"`
+	// Sendspin is the player's status (sendspin.Status), nil when it is off.
+	// No secrets: the pairing token is asked for separately.
+	Sendspin interface{} `json:"sendspin,omitempty"`
+	// Emmc is the eMMC's wear report (platform.Emmc), re-read every few hours
+	// rather than per tick: wear moves in 10% steps over years, and a device
+	// can run for months without the reboot that the register copy needs.
+	Emmc interface{} `json:"emmc,omitempty"`
 	// The base OS deliberately does NOT ride this message — it is a static
 	// property of the boot and goes out once, on registration (control.go).
 	// It was here first and that was the bug: the payload reconcile asks for
@@ -104,13 +111,13 @@ func (c *ControlClient) SendStats(s DeviceStats) {
 		"linkSpeedMbps":    s.LinkSpeedMbps,
 		"wifiFreqMhz":      s.WifiFreqMhz,
 		"wifiBssid":        s.WifiBssid,
+		"tcpUpRetrans":     s.TcpUpRetrans,
+		"tcpUpSegs":        s.TcpUpSegs,
 		"txBytes":          s.TxBytes,
 		"rxBytes":          s.RxBytes,
 		"txErrors":         s.TxErrors,
 		"txDropped":        s.TxDropped,
 		"rxCrcErrors":      s.RxCrcErrors,
-		"tcpUpRetrans":     s.TcpUpRetrans,
-		"tcpUpSegs":        s.TcpUpSegs,
 		"ble":              s.Ble,
 		"owwShadow":        s.OwwShadow,
 		"ambientLux":       s.AmbientLux,
@@ -121,5 +128,7 @@ func (c *ControlClient) SendStats(s DeviceStats) {
 		"thermalCoreLimit": s.ThermalCoreLimit,
 		"aecRef":           s.AecRef,
 		"endpoints":        s.Endpoints,
+		"sendspin":         s.Sendspin,
+		"emmc":             s.Emmc,
 	})
 }

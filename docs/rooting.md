@@ -333,10 +333,13 @@ Der Lichtring sagt dir, in welchem Fall du bist:
 | Rot, stehend | Eine Bootstufe ist gescheitert | Rettbar — nach TWRP gehen und wiederherstellen |
 | Ein Segment kreist um einen vollen blauen Ring, länger als eine Minute | emOS ist nie gestartet | Nach TWRP gehen und wiederherstellen |
 
-Die letzte Zeile ist die einzige, die dich braucht. Sie heißt, dass der Kernel
-hochkam und unsere init nie lief — nichts auf dem Gerät wird sich also selbst
-richten. Das Kreisen ist die eigene Boot-Animation des Kernels, die noch
-läuft, weil der Userspace den Ring nie beansprucht hat.
+Spiel das Image aus TWRP zurück, wenn der Ring rot und stehend endet — oder
+wenn ein einzelnes Segment länger als eine Minute um einen vollen blauen Ring
+kreist. Alles andere heißt, dass emOS startet; dann lass es zu Ende laufen
+(#642). Das Kreisen heißt, dass der Kernel hochkam und unsere init nie lief —
+nichts auf dem Gerät wird sich also selbst richten. Es ist die eigene
+Boot-Animation des Kernels, die noch läuft, weil der Userspace den Ring nie
+beansprucht hat.
 
 Die bernsteinfarbene Zeile ist gerade deshalb wichtig, damit du *nicht*
 eingreifst: emOS zählt Starts, die nie das Netzwerk erreicht haben, und legt

@@ -195,6 +195,7 @@ Schalter, der stillschweigend nichts tut.
 | [Sprachpipeline](docs/voice-pipeline.md) | Der ganze Weg vom Mikrofon zur Antwort |
 | [LED-Ring](docs/led-ring-states.md) · [Audio-Zustände](docs/audio-states.md) | Was der Ring gerade sagen will |
 | [Geräte-Protokoll](docs/device-controller-interface.md) | Für alle, die eine eigene Firmware bauen |
+| [Boards](docs/boards.md) | Wie die Firmware ihr Board erkennt und jedes Teil nach Namen findet (englisch) |
 | [SETUP.md](SETUP.md) · [JOURNAL.md](JOURNAL.md) | Wie die Hardware funktioniert und wie das herausgefunden wurde |
 
 Die Dokumentation im Ordner `docs/` ist auf Deutsch. `SETUP.md`,
@@ -213,6 +214,8 @@ Entwicklungsaufzeichnungen und keine Anleitungen.
 - **Mehrfach-Tippen** auf die Aktionstaste (doppelt, dreifach) wird im
   Controller gemessen und ist deshalb von Netzwerkschwankungen abhängig.
   Langes Drücken wird auf dem Gerät gemessen und ist zuverlässig.
+- **emOS übers Netz aktualisieren** braucht emOS 0.10 oder neuer als Ziel.
+  Ein Gerät darunter wird weiterhin mit dem Assistenten aktualisiert.
 - Nur die **2. Generation** des Echo Dot wird unterstützt.
 
 ---

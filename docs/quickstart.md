@@ -195,6 +195,13 @@ Das Gerät erscheint in HA als **`<Name> Voice Assistant`** (z. B. „Wohnzimmer
 Voice Assistant") mit dem Modell „Echo Dot Gen 2 (biscuit)" — der
 Bluetooth-Proxy taucht, falls aktiviert, getrennt als `<Name> BT Proxy` auf.
 
+Jedes Gerät hat außerdem einen **Media Player**, ein Ereignis
+**Action Button** (bei Firmware mit Halte-Erkennung), einen Sensor
+**Ambient Light** (wo verbaut) und einen schreibgeschützten Sensor
+**Microphone Muted**. Die Auswahl **Wake word** in HA schaltet die Erkennung
+ab und wieder an. Siehe
+[die FAQ](faq.md#kann-home-assistant-das-zuhören-eines-geräts-beenden-oder-sagen-ob-sein-mikrofon-stumm-ist).
+
 > **Automatische Erkennung:** Läuft Home Assistant im **selben Subnetz** wie
 > der Controller, sollten die Geräte auch von allein als erkannte
 > „revoice-…"-Einträge auftauchen (behoben in v2.7.5 — frühere Versionen

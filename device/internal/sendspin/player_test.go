@@ -1,253 +1,191 @@
 package sendspin
 
 import (
-	"encoding/json"
+	"encoding/binary"
 	"math"
 	"testing"
+	"time"
 )
 
-func TestEveryFormatWeMightAskForIsAdvertised(t *testing.T) {
-	// The rule whose failure is silent. A request that does not match an
-	// advertised tuple exactly makes the server log a warning on ITS side
-	// and fall back to the base format; the client is told nothing and
-	// keeps receiving what it had. client/hello is a one-shot, so a format
-	// missing here cannot be added without reconnecting.
-	//
-	// Stereo is the case this pins. Nothing requests it today — the music
-	// plane is mono end to end — and it becomes worth requesting the moment
-	// there is a plug in the jack. Dropping it from the list because
-	// "nothing uses it" is the change that makes a later jack insert appear
-	// to work and change nothing.
-	want := map[Format]bool{
-		{Codec: CodecFLAC, Channels: 1, SampleRate: 48000, BitDepth: 16}: false,
-		{Codec: CodecFLAC, Channels: 2, SampleRate: 48000, BitDepth: 16}: false,
-		{Codec: CodecPCM, Channels: 1, SampleRate: 48000, BitDepth: 16}:  false,
-		{Codec: CodecPCM, Channels: 2, SampleRate: 48000, BitDepth: 16}:  false,
-	}
-	for _, f := range SupportedFormats() {
-		if _, ok := want[f]; !ok {
-			t.Fatalf("advertised a format nothing can render: %+v", f)
-		}
-		want[f] = true
-	}
-	for f, seen := range want {
-		if !seen {
-			t.Fatalf("not advertised: %+v", f)
-		}
-	}
+const periodFrames = 2048 // the speaker's mix period
+
+// syncedFilter maps server time to client time as client = server - offset.
+func syncedFilter(offset int64) *timeFilter {
+	f := newTimeFilter()
+	f.update(offset, 200, 1)
+	f.update(offset, 200, 1_000_000)
+	return f
 }
 
-func TestNothingUndecodableIsAdvertisedAhead(t *testing.T) {
-	// The whole safety property of the list. The server picks the client's
-	// highest priority it can encode, and the spec requires it to encode all
-	// three — so the first entry IS the one that will be chosen. A codec
-	// advertised first with no decoder behind it does not leave the option
-	// open; it guarantees a stream this device turns into noise, with no
-	// error anywhere: the frames arrive, something interprets them, and the
-	// speaker plays the result.
-	seenUndecodable := false
-	for i, f := range SupportedFormats() {
-		if !Decodable(f.Codec) {
-			seenUndecodable = true
-			continue
-		}
-		if seenUndecodable {
-			t.Fatalf("format %d (%s) is decodable but sits behind one that "+
-				"is not — the server will pick the undecodable one", i, f.Codec)
-		}
+// ramp is audio whose every sample says where it came from.
+func ramp(start, n int) []int16 {
+	s := make([]int16, n)
+	for i := range s {
+		s[i] = int16((start + i) % 30000)
 	}
+	return s
 }
 
-func TestThePreferredFormatIsAdvertisedAndDecodable(t *testing.T) {
-	f := PreferredFormat()
-	if !Supports(f) {
-		t.Fatalf("we would request %+v without advertising it", f)
+func at(us int64) time.Time { return epoch.Add(time.Duration(us) * time.Microsecond) }
+
+func sample(out []byte, i int) int16 { return int16(binary.LittleEndian.Uint16(out[i*4:])) }
+
+func newTestPlayer(offset int64) *player {
+	p := newPlayer(syncedFilter(offset))
+	// 10s of audio in 25ms chunks, first sample due at server 5s.
+	for c := 0; c < 400; c++ {
+		p.push(5_000_000+int64(c)*25_000, ramp(c*1200, 1200))
 	}
-	if !Decodable(f.Codec) {
-		t.Fatalf("we would request %s, which nothing can decode", f.Codec)
-	}
-	if f.Channels != 1 {
-		t.Fatalf("preferred channels = %d, want mono — the music plane is "+
-			"mono end to end", f.Channels)
-	}
+	return p
 }
 
-func TestFlacIsStillAdvertisedEvenThoughItCannotBeDecodedYet(t *testing.T) {
-	// client/hello is a one-shot: a format absent from it can never be
-	// requested for the life of the connection, and a later request for an
-	// unadvertised format fails silently. So the list names everything this
-	// device might ever ask for while the ORDER names what it can serve
-	// today. Dropping FLAC because "we cannot decode it" would mean a
-	// reconnect is required to ever use it.
-	found := false
-	for _, f := range SupportedFormats() {
-		if f.Codec == CodecFLAC {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("FLAC was dropped from the advertised set — adding the " +
-			"decoder would then also need a reconnect to take effect")
-	}
-}
-
-func TestSupportsMatchesOnAllFourFieldsAtOnce(t *testing.T) {
-	// The server's own match is the whole tuple. A client that checked only
-	// the codec would accept a 44.1kHz stream, resample nothing, and play
-	// everything 8.8% fast.
-	base := PreferredFormat()
-	for _, bad := range []Format{
-		{Codec: base.Codec, Channels: base.Channels, SampleRate: 44100, BitDepth: base.BitDepth},
-		{Codec: base.Codec, Channels: base.Channels, SampleRate: base.SampleRate, BitDepth: 24},
-		{Codec: CodecOpus, Channels: base.Channels, SampleRate: base.SampleRate, BitDepth: base.BitDepth},
-		{Codec: base.Codec, Channels: 6, SampleRate: base.SampleRate, BitDepth: base.BitDepth},
-	} {
-		if Supports(bad) {
-			t.Fatalf("accepted a format we never advertised: %+v", bad)
-		}
-	}
-}
-
-func TestOpusIsNotAdvertised(t *testing.T) {
-	// Deliberate: servers must support all three, so a subset is legal, and
-	// the decoders worth having are cgo on a platform where every cgo
-	// dependency is a cross-compilation problem. If this ever changes it
-	// should be because someone decided to, not because a list grew.
-	for _, f := range SupportedFormats() {
-		if f.Codec == CodecOpus {
-			t.Fatal("opus advertised — there is no decoder behind it")
-		}
-	}
-}
-
-func TestAStreamStartConvertsToTheTupleTheServerMatchedOn(t *testing.T) {
-	s := StreamStart{Codec: CodecFLAC, SampleRate: 48000, Channels: 1, BitDepth: 16}
-	if !Supports(s.Format()) {
-		t.Fatalf("a stream/start for our own preferred format did not match")
-	}
-}
-
-func TestBufferCapacityIsSizedAtWorstCaseCompression(t *testing.T) {
-	// A lossless codec's worst case is 1:1, and FLAC approaches it on dense
-	// loud material — precisely the content people turn up. Sizing against
-	// the measured 40% average would leave the server free to overrun the
-	// buffer exactly then.
-	got := BufferCapacity(5.46, 1)
-	want := int(5.46 * 48000 * 1 * 2)
-	if got != want {
-		t.Fatalf("BufferCapacity = %d, want %d", got, want)
-	}
-	if stereo := BufferCapacity(5.46, 2); stereo != 2*want {
-		t.Fatalf("stereo capacity = %d, want %d", stereo, 2*want)
-	}
-}
-
-func TestBufferCapacityRefusesNonsenseRatherThanReturningIt(t *testing.T) {
+func TestFirstPeriodLandsOnTheSampleDueAtThatInstant(t *testing.T) {
+	const off = 777_000 // server clock ahead of ours
+	out := make([]byte, periodFrames*4)
 	for _, tc := range []struct {
-		secs float64
-		ch   int
+		name      string
+		playAtUs  int64
+		wantFirst int16 // sample value at out[0], -1 for silence then data
+		lead      int
 	}{
-		{0, 1}, {-1, 1}, {5, 0}, {5, -2},
+		{"exactly due", 5_000_000 - off, 0, 0},
+		{"10ms late: skip 480", 5_000_000 - off + 10_000, 480, 0},
+		{"5ms early: 240 frames of silence", 5_000_000 - off - 5_000, 0, 240},
 	} {
-		if got := BufferCapacity(tc.secs, tc.ch); got != 0 {
-			t.Fatalf("BufferCapacity(%v, %d) = %d, want 0", tc.secs, tc.ch, got)
+		p := newTestPlayer(off)
+		if !p.Fill(out, at(tc.playAtUs)) {
+			t.Fatalf("%s: nothing played", tc.name)
+		}
+		for i := 0; i < tc.lead; i++ {
+			if sample(out, i) != 0 {
+				t.Fatalf("%s: frame %d not silent", tc.name, i)
+			}
+		}
+		if got := sample(out, tc.lead); got != tc.wantFirst {
+			t.Errorf("%s: first sample %d, want %d", tc.name, got, tc.wantFirst)
 		}
 	}
 }
 
-func TestVolumeIsThePerceptualCurveFromTheSpec(t *testing.T) {
-	// In the spec rather than left to the client so one volume value sounds
-	// the same in every room. A client applying its own curve is a speaker
-	// audibly louder than the rest of the group at the same setting.
-	for _, v := range []int{1, 10, 25, 50, 75, 99} {
-		want := math.Pow(float64(v)/100, 1.5)
-		if got := VolumeAmplitude(v); math.Abs(got-want) > 1e-12 {
-			t.Fatalf("VolumeAmplitude(%d) = %v, want %v", v, got, want)
-		}
-	}
-	if VolumeAmplitude(0) != 0 {
-		t.Fatal("volume 0 is not silent")
-	}
-	if VolumeAmplitude(100) != 1 {
-		t.Fatal("volume 100 is not unity")
-	}
-	if VolumeAmplitude(-5) != 0 || VolumeAmplitude(150) != 1 {
-		t.Fatal("out-of-range volume was not clamped")
+func TestNotYetDueIsNothingToPlay(t *testing.T) {
+	p := newTestPlayer(0)
+	if p.Fill(make([]byte, periodFrames*4), at(5_000_000-200_000)) {
+		t.Error("played a stream 200ms before its first sample was due")
 	}
 }
 
-func TestVolumeIsMonotonic(t *testing.T) {
-	prev := -1.0
-	for v := 0; v <= 100; v++ {
-		got := VolumeAmplitude(v)
-		if got < prev {
-			t.Fatalf("volume %d is quieter than %d", v, v-1)
+// The DAC's crystal is not the server's. Measured on this hardware at
+// -0.056% against the system clock; run a DAC 600ppm slow and check the
+// correction keeps the error inside the spec's 1ms floor using only small
+// steps — never a second snap, never more than 0.5% speed in a period.
+func TestDriftIsCorrectedWithSmallStepsWithinOneMillisecond(t *testing.T) {
+	for _, ppm := range []float64{-600, -56, 0, 56, 600} {
+		p := newTestPlayer(0)
+		out := make([]byte, periodFrames*4)
+		periodUs := float64(periodFrames) * 1e6 / 48000 * (1 + ppm/1e6)
+		playAt := 5_000_000.0
+		var prevOut int16 = -1
+		for k := 0; k < 180; k++ { // ~7.7s
+			if !p.Fill(out, at(int64(playAt))) {
+				t.Fatalf("ppm %v period %d: ran dry", ppm, k)
+			}
+			// Continuity: consecutive periods join with at most a step.
+			if prevOut >= 0 {
+				if d := int(sample(out, 0)) - int(prevOut); d < 0 || d > 1+maxStepFrames {
+					t.Fatalf("ppm %v period %d: discontinuity %d at the boundary", ppm, k, d)
+				}
+			}
+			prevOut = sample(out, periodFrames-1)
+			if k > 20 {
+				if e := p.stats().LastErrorUs; e > 1000 || e < -1000 {
+					t.Fatalf("ppm %v period %d: error %dus outside ±1ms", ppm, k, e)
+				}
+			}
+			playAt += periodUs
 		}
-		prev = got
-	}
-}
-
-func TestTheWireNamesAreTheSpecsNames(t *testing.T) {
-	// Every one of these is matched by string on the far side, so a rename
-	// during a refactor is a silent protocol break.
-	raw, err := json.Marshal(PlayerSupport{
-		SupportedFormats: []Format{PreferredFormat()},
-		BufferCapacity:   1024,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{
-		`"supported_formats"`, `"buffer_capacity"`,
-		`"codec"`, `"channels"`, `"sample_rate"`, `"bit_depth"`,
-	} {
-		if !contains(string(raw), key) {
-			t.Fatalf("client/hello support object is missing %s: %s", key, raw)
+		st := p.stats()
+		if st.Snaps != 1 {
+			t.Errorf("ppm %v: %d snaps, want only the start", ppm, st.Snaps)
 		}
-	}
-
-	state, err := json.Marshal(PlayerState{SupportedCommands: []string{CommandVolume}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{
-		`"output_delay_ms"`, `"required_lead_time_ms"`, `"min_buffer_ms"`,
-		`"supported_commands"`,
-	} {
-		if !contains(string(state), key) {
-			t.Fatalf("client/state player object is missing %s: %s", key, state)
+		if ppm == 0 && st.Corrections != 0 {
+			t.Errorf("no drift, yet %d corrections", st.Corrections)
 		}
 	}
 }
 
-func TestAnUnsetVolumeIsOmittedRatherThanSentAsZero(t *testing.T) {
-	// volume is required only when 'volume' is in supported_commands, and a
-	// zero sent by accident is a speaker the group believes is silent.
-	raw, err := json.Marshal(PlayerState{})
-	if err != nil {
-		t.Fatal(err)
+// A disturbance past 5ms (a stall, a clock step) is a one-shot resync, not a
+// second of audible speed change.
+func TestALargeErrorSnaps(t *testing.T) {
+	p := newTestPlayer(0)
+	out := make([]byte, periodFrames*4)
+	p.Fill(out, at(5_000_000))
+	next := int64(5_000_000) + int64(periodFrames)*1_000_000/48000 + 20_000 // 20ms jump
+	p.Fill(out, at(next))
+	if st := p.stats(); st.Snaps != 2 {
+		t.Errorf("snaps %d, want 2", st.Snaps)
 	}
-	if contains(string(raw), `"volume"`) || contains(string(raw), `"muted"`) {
-		t.Fatalf("unset volume/mute reached the wire: %s", raw)
-	}
-}
-
-func TestTheCodecHeaderIsOmittedForNonFlacStreams(t *testing.T) {
-	raw, err := json.Marshal(StreamStart{Codec: CodecPCM, SampleRate: 48000,
-		Channels: 1, BitDepth: 16})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if contains(string(raw), "codec_header") {
-		t.Fatalf("a PCM stream/start carries a codec header: %s", raw)
+	want := int16((2048 + 960) % 30000)
+	if got := sample(out, 0); got < want-1 || got > want+1 {
+		t.Errorf("after the jump, first sample %d, want ~%d", got, want)
 	}
 }
 
-func contains(hay, needle string) bool {
-	for i := 0; i+len(needle) <= len(hay); i++ {
-		if hay[i:i+len(needle)] == needle {
-			return true
-		}
+func TestRunningDryMidPeriodPadsWithSilenceAndCountsAnUnderrun(t *testing.T) {
+	p := newPlayer(syncedFilter(0))
+	p.push(5_000_000, ramp(0, 1000))
+	out := make([]byte, periodFrames*4)
+	if !p.Fill(out, at(5_000_000)) {
+		t.Fatal("nothing played")
 	}
-	return false
+	if sample(out, 999) != 999 || sample(out, 1000) != 0 || sample(out, periodFrames-1) != 0 {
+		t.Error("tail after the data is not silence")
+	}
+	if p.stats().Underruns != 1 {
+		t.Errorf("underruns %d", p.stats().Underruns)
+	}
+	if p.Fill(out, at(5_100_000)) {
+		t.Error("an empty queue played")
+	}
+}
+
+func TestClearDropsEverything(t *testing.T) {
+	p := newTestPlayer(0)
+	p.clear()
+	if p.active() || p.buffered() != 0 {
+		t.Error("clear left audio queued")
+	}
+}
+
+func TestUnsynchronisedClockPlaysNothing(t *testing.T) {
+	p := newPlayer(newTimeFilter())
+	p.push(5_000_000, ramp(0, 48000))
+	if p.Fill(make([]byte, periodFrames*4), at(5_000_000)) {
+		t.Error("played before the clock was synchronised")
+	}
+}
+
+func TestVolumeFollowsThePerceptualCurve(t *testing.T) {
+	if volumeGain(100, false) != unity || volumeGain(0, false) != 0 || volumeGain(80, true) != 0 {
+		t.Error("endpoints or mute wrong")
+	}
+	want := math.Pow(0.5, 1.5) * float64(unity)
+	if g := float64(volumeGain(50, false)); math.Abs(g-want) > 1 {
+		t.Errorf("volume 50: gain %v, want %v", g, want)
+	}
+	// Applied with a ramp across the period: no step at the boundary.
+	p := newPlayer(syncedFilter(0))
+	full := make([]int16, 48000)
+	for i := range full {
+		full[i] = 20000
+	}
+	p.push(5_000_000, full)
+	p.setGain(50, false)
+	out := make([]byte, periodFrames*4)
+	p.Fill(out, at(5_000_000))
+	if sample(out, 0) != 20000 {
+		t.Errorf("ramp did not start from the old gain: %d", sample(out, 0))
+	}
+	if s := sample(out, periodFrames-1); s > 7200 || s < 7000 {
+		t.Errorf("ramp did not reach the new gain: %d", s)
+	}
 }

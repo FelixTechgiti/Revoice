@@ -42,7 +42,7 @@ from collections import deque
 
 import numpy as np
 
-log = logging.getLogger("echomuse")
+log = logging.getLogger("revoice")
 
 # Silero's usual operating point. Speech measured 0.72-1.00, non-speech
 # 0.02-0.03, so this is not a tight call on the data we have.

@@ -97,6 +97,7 @@ import em_tasks
 import em_timers
 import em_turnclock
 import em_volume
+import em_wakeword
 import em_output_mute
 
 # ── VAD sentinels ──────────────────────────────────────────────────────────────
@@ -254,6 +255,7 @@ LIGHT_KEY        = 4   # the LED ring's RESTING colour, as an HA light
 MUTE_SWITCH_KEY  = 5   # microphone mute — closes only, never opens
 AUDIO_STATE_KEY  = 6   # is this Echo audible right now (em_audiostate)
 AUDIO_SOURCE_KEY = 7   # ...and what is making the sound
+MIC_MUTED_KEY    = 8   # the mic mute button, as a read-only binary sensor (#438)
 
 # Press types the event entity advertises. double/triple were parked because
 # detecting them means delaying the single press by the multi-tap window to
@@ -408,9 +410,6 @@ class RevoiceSatellite(SatelliteServerProtocol):
         # different things to find in the stats, and recording all of them
         # as "cancelled" loses the distinction the field is read for.
         self._turn_end_reason: Optional[str] = None
-        # Set when this turn's transcript dismissed a ringing alarm locally —
-        # suppresses HA's "there are no timers" reply for that turn.
-        self._dismissed_alarm   = False
         self._tts_audio_url:    Optional[str] = None
         self._tts_audio_data:   Optional[bytes] = None
         self._tts_event         = asyncio.Event()
@@ -536,6 +535,10 @@ class RevoiceSatellite(SatelliteServerProtocol):
     @property
     def _ambient_lux_capable(self) -> bool:
         return self._device_has("ambient_light")
+
+    @property
+    def _mic_capable(self) -> bool:
+        return self._device_has("mic")
 
     def _voice_assistant_flags(self) -> int:
         """
@@ -829,6 +832,17 @@ class RevoiceSatellite(SatelliteServerProtocol):
                     name="Audio Source",
                     icon="mdi:speaker-play",
                 )
+            # Read-only (#438): a writable entity would be a remote unmute.
+            # Beside the switch above rather than instead of it: the switch
+            # is how HA CLOSES the microphone, this is how HA READS it, and
+            # a read-only entity cannot be the thing that reopens one.
+            if self._mic_capable:
+                yield api_pb2.ListEntitiesBinarySensorResponse(
+                    object_id="mic_muted",
+                    key=MIC_MUTED_KEY,
+                    name="Microphone Muted",
+                    icon="mdi:microphone-off",
+                )
             yield api_pb2.ListEntitiesDoneResponse()
             return
 
@@ -843,6 +857,9 @@ class RevoiceSatellite(SatelliteServerProtocol):
             if self._audio_state_capable:
                 for m in self._audio_state_msgs():
                     yield m
+            # Otherwise HA shows "unknown" until the button is next pressed.
+            if self._mic_capable:
+                yield self._mic_muted_msg()
             return
 
         if isinstance(msg, api_pb2.SubscribeVoiceAssistantRequest):
@@ -857,6 +874,10 @@ class RevoiceSatellite(SatelliteServerProtocol):
 
         if isinstance(msg, api_pb2.VoiceAssistantConfigurationRequest):
             log.debug(f"[{self._log_name}] VoiceAssistantConfigurationRequest")
+            # HA's picker shows whatever we report here, so an empty list is
+            # how "No wake word" survives a reconnect.
+            srv = self._owning_server
+            enabled = srv is None or srv.wake_word_enabled
             yield api_pb2.VoiceAssistantConfigurationResponse(
                 available_wake_words=[
                     api_pb2.VoiceAssistantWakeWord(
@@ -865,42 +886,28 @@ class RevoiceSatellite(SatelliteServerProtocol):
                         trained_languages=list(self.oww_model_info.languages),
                     )
                 ],
-                active_wake_words=[self.oww_model_id],
+                active_wake_words=[self.oww_model_id] if enabled else [],
                 max_active_wake_words=1,
             )
             return
 
         if isinstance(msg, api_pb2.VoiceAssistantSetConfiguration):
-            # HA writing a wake-word choice back to us (its select entity's
-            # async_select_option). Handled explicitly rather than falling into
-            # the generic "unhandled" debug, which made a user-visible control
-            # silently do nothing.
-            #
-            # We advertise ONE model with max_active_wake_words=1, so HA's
-            # dropdown offers exactly our model plus "no wake word" — there is
-            # nothing to switch between, and a request naming our own model is
-            # genuinely a no-op rather than an unimplemented one. Selecting our
-            # model back is therefore correct and silent.
-            #
-            # An EMPTY list means "no wake word", i.e. deafen this satellite.
-            # That is a real request we do not implement — wake detection is
-            # controller-side config, not an HA-owned setting — so it is logged
-            # at warning rather than accepted quietly. Honouring it, and
-            # offering a choice worth making, both wait on multi-model support
-            # (#112).
+            # HA's wake word picker (#286): "No wake word" turns detection
+            # off, our model turns it back on. Applied synchronously because
+            # HA reads the configuration back straight after writing it.
             requested = list(msg.active_wake_words)
-            if requested == [self.oww_model_id]:
-                log.debug(
-                    f"[{self._log_name}] VoiceAssistantSetConfiguration: "
-                    f"{self.oww_model_id} already active — nothing to do"
-                )
-            else:
+            want = em_wakeword.requested_on(requested, self.oww_model_id)
+            if want is None:
                 log.warning(
                     f"[{self._log_name}] VoiceAssistantSetConfiguration asked "
-                    f"for active_wake_words={requested or '[] (no wake word)'} "
-                    f"— not applied; this device's wake word is set in the "
-                    f"Revoice dashboard and stays {self.oww_model_id}"
+                    f"for active_wake_words={requested} — not applied. This "
+                    f"device's wake word is {self.oww_model_id}, set in the "
+                    f"Revoice dashboard; choose it to listen, or \"No wake "
+                    f"word\" to stop."
                 )
+            else:
+                log.info(f"[{self._log_name}] wake word {'on' if want else 'off'} from HA")
+                self._apply_wake_word(want)
             yield _HANDLED
             return
 
@@ -1275,30 +1282,6 @@ class RevoiceSatellite(SatelliteServerProtocol):
             if self._trace:
                 self._trace.stt_text = text
                 self._trace.t_stt_ms = self._trace.elapsed_ms()
-            # Spoken dismissal of a RINGING alarm is ours to handle: HA has
-            # already discarded the timer by the time it fires, so it would
-            # answer "there are no timers" (see em_timers.is_dismissal). Acted
-            # on here, at the transcript, rather than waiting for a CANCELLED
-            # that structurally cannot arrive.
-            srv = self._owning_server
-            if (srv is not None and srv.timer_ringing
-                    and em_timers.is_dismissal(text)):
-                # Stopping the ring is the generous match; suppressing HA's
-                # reply is NOT. "Turn off the kitchen light" is a dismissal by
-                # the rule above and also a real command HA answers, so the
-                # reply is only swallowed when the utterance is nothing but a
-                # dismissal (em_timers.is_dismissal_only).
-                self._dismissed_alarm = em_timers.is_dismissal_only(text)
-                log.info(
-                    f"[{self._log_name}] Spoken dismissal {text!r} — "
-                    f"stopping alarm locally"
-                    + ("" if self._dismissed_alarm
-                       else "; utterance carries a command, HA's reply stands")
-                )
-                task = asyncio.create_task(srv.dismiss_timer_alarm())
-                self._timer_tasks.add(task)
-                task.add_done_callback(self._timer_tasks.discard)
-                task.add_done_callback(self._log_timer_task_error)
             if self._on_stt_end and not self._turn_cancelled:
                 em_tasks.spawn(self._on_stt_end(text))
 
@@ -1453,6 +1436,23 @@ class RevoiceSatellite(SatelliteServerProtocol):
             muted=self._current_muted,
         )
 
+    def _mic_muted_msg(self) -> api_pb2.BinarySensorStateResponse:
+        srv = self._owning_server
+        return api_pb2.BinarySensorStateResponse(
+            key=MIC_MUTED_KEY,
+            state=bool(srv is not None and srv.mic_muted),
+        )
+
+    def _apply_wake_word(self, on: bool) -> None:
+        """Hand HA's wake word choice to the controller, synchronously."""
+        set_fn = (self._owning_server._set_wake_word
+                  if self._owning_server is not None else None)
+        if set_fn is None:
+            log.warning(f"[{self._log_name}] wake word change requested "
+                        f"but device not connected")
+            return
+        set_fn(on)
+
     def _announce_play_cb(self):
         """
         Where announcement audio goes, resolved at call time.
@@ -1603,7 +1603,6 @@ class RevoiceSatellite(SatelliteServerProtocol):
         self._turn_active           = True
         self._turn_cancelled        = False
         self._turn_end_reason       = None
-        self._dismissed_alarm       = False
         self._tts_event.clear()
         self._tts_audio_url         = None
         self._tts_audio_data        = None
@@ -1746,18 +1745,6 @@ class RevoiceSatellite(SatelliteServerProtocol):
                 why = self._turn_end_reason or "cancelled"
                 log.info(f"[{self._log_name}] Turn {why} while waiting for TTS")
                 if trace: trace.outcome = why
-                return
-
-            if self._dismissed_alarm:
-                # We stopped the alarm ourselves off the transcript. HA does
-                # not know the timer existed any more, so its reply is "there
-                # are no timers" — playing it would contradict the alarm that
-                # just stopped, and the silence IS the confirmation.
-                log.info(
-                    f"[{self._log_name}] Alarm dismissed locally — "
-                    f"suppressing HA's reply"
-                )
-                if trace: trace.outcome = "alarm_dismissed"
                 return
 
             if self._tts_audio_url:
@@ -2724,6 +2711,14 @@ class DeviceESPhomeServer:
         # HA's output mute; lives on the server so it survives the device
         # reconnecting, which is exactly when it has to be re-applied.
         self.output_mute = em_output_mute.OutputMute()
+        # The physical mic mute button (#438) and HA's wake word picker
+        # (#286). On the server so both outlive a reconnect: `mic_muted` is
+        # compared against to tell a press from the device's re-report.
+        self.mic_muted: bool = False
+        self.wake_word_enabled: bool = True
+        # Injected by device_connected(); applies HA's wake word choice
+        # synchronously. None when no device is connected.
+        self._set_wake_word = None
         # Injected by device_connected() — async callable(pcm_bytes) for
         # standalone announce playback (setup wizard, push TTS) when no
         # voice turn is active.
@@ -2811,8 +2806,8 @@ class DeviceESPhomeServer:
         begins a ring calls the injected orchestrator. A CANCELLED can still
         end a ring — the registry handles it, and an HA that behaves that way
         keeps working — but do not rely on one arriving for a RINGING alarm:
-        HA discards a timer when it finishes, so a spoken dismissal is
-        recognised from the transcript instead (em_timers.is_dismissal).
+        HA discards a timer when it finishes, so stopping one by voice is
+        decided on the controller (em_timers.DismissListen).
         """
         transition = self._timers.apply(event_type, timer_id)
         ev_name = {
@@ -2972,7 +2967,10 @@ async def start_esphome_servers(
     """
     global _azc
 
-    _azc = AsyncZeroconf()
+    # See em_controller.main()'s AsyncZeroconf call for why this is pinned to
+    # SERVER_IP's own interface rather than left to auto-detect every one on
+    # the host.
+    _azc = em_hostip.bind_mdns(AsyncZeroconf, SERVER_IP)
     loop = asyncio.get_event_loop()
 
     all_devices = await loop.run_in_executor(None, db.get_all_devices)
@@ -3543,6 +3541,8 @@ async def device_connected(
     play_ring_effect=None,
     start_conversation=None,
     set_mute=None,
+    set_wake_word=None,
+    wake_word_enabled: bool = True,
 ) -> None:
     """
     Called by em_controller.handle_control() when an Echo Dot connects.
@@ -3569,6 +3569,12 @@ async def device_connected(
     word, for HA's announce-then-listen (`assist_satellite.start_conversation`
     and `ask_question`). Same reasoning: it drives the mic, the ring and the
     voice lock.
+
+    set_wake_word: callable(on: bool) — applies HA's wake word picker (#286)
+    synchronously.
+
+    wake_word_enabled: HA's stored picker choice, set before the port comes
+    up so HA's first read is already correct.
     """
     server = _servers.get(device_id)
     if server is None:
@@ -3591,6 +3597,8 @@ async def device_connected(
     server._ring_alarm = ring_alarm
     server._stop_alarm = stop_alarm
     server._start_conversation = start_conversation
+    server._set_wake_word = set_wake_word
+    server.wake_word_enabled = bool(wake_word_enabled)
     if server._server is not None:
         log.debug(f"[esphome.{device_id[-8:]}] device_connected: port {server.port} already listening")
         return
@@ -3620,6 +3628,7 @@ async def device_disconnected(device_id: str) -> None:
     server._ring_alarm = None
     server._stop_alarm = None
     server._start_conversation = None
+    server._set_wake_word = None
     await server.stop()
     log.info(f"[esphome.{device_id[-8:]}] ESPHome port {server.port} down (device disconnected)")
 
@@ -3821,6 +3830,36 @@ def update_device_ring(device_id: str, idle_ring: str, brightness: int,
         satellite._send_one(satellite._light_state_msg())
     except Exception as e:
         log.debug(f"[esphome.{device_id[-8:]}] ring state push failed: {e}")
+def get_mic_muted_and_wake_word(device_id: str) -> tuple[bool, bool]:
+    """(mic muted, wake word on) as the server remembers them; (False, True)
+    with no server."""
+    server = _servers.get(device_id)
+    if server is None:
+        return False, True
+    return server.mic_muted, server.wake_word_enabled
+
+
+def update_mic_muted(device_id: str, muted: bool) -> None:
+    """Record the mic mute button's state and push it to HA's binary sensor."""
+    server = _servers.get(device_id)
+    if server is None:
+        return
+    server.mic_muted = bool(muted)
+    satellite = server.get_satellite()
+    if satellite is None:
+        return
+    satellite._send_one(satellite._mic_muted_msg())
+
+
+def update_wake_word(device_id: str, enabled: bool) -> None:
+    """Record HA's wake word choice (#286). Nothing to push: HA re-reads the
+    configuration itself after writing it."""
+    server = _servers.get(device_id)
+    if server is None:
+        return
+    server.wake_word_enabled = bool(enabled)
+
+
 def output_mute_report(device_id: str, level: int) -> tuple[bool, int | None]:
     """(keep, send) for a device volume report (see
     em_output_mute.device_report). (True, None) when no server exists."""

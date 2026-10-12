@@ -17,7 +17,7 @@ import logging
 import socket
 import struct
 
-log = logging.getLogger("echomuse.tcp")
+log = logging.getLogger("revoice.tcp")
 
 # Numbers from include/uapi/linux/tcp.h, for a Python that lacks the names.
 TCP_THIN_LINEAR_TIMEOUTS = getattr(socket, "TCP_THIN_LINEAR_TIMEOUTS", 16)

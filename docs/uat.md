@@ -215,10 +215,21 @@ mit einem auf **Auf diesem Echo** und dem anderen auf **Auf dem Controller**.
 ## D — Tonausgabe
 
 ### D1 · Lautstärke
-**Tu:** Ändere die Lautstärke im Dashboard, in HA und mit den Tasten am Gerät.
-**Erwarte:** Alle drei stimmen überein, und der Pegel übersteht einen
-Neustart.
-**Melde:** Wenn eines der drei den anderen widerspricht.
+**Tu:** Schalte den Lautstärketon ein. Ändere die Lautstärke im Leerlauf mit
+den Tasten am Gerät, drück nach dem Maximum noch zweimal Lauter, und ändere
+sie dann aus HA heraus; wiederhole beides bei laufender Musik. Schalte unter
+Config → Ring den **Fernpegel-Bogen** ein und wiederhole die Fernänderungen,
+einschließlich einer Lautstärke von null; schick danach denselben Pegel
+ungleich null noch einmal und starte neu.
+**Erwarte:** Der Pegel stimmt überein und übersteht einen Neustart. Eine
+Tastenänderung im Leerlauf spielt einen kurzen, tiefen Ton mit schnellem
+Ausklang auf der neuen Lautstärke, und jeder weitere Druck auf Lauter am
+Maximum wiederholt ihn; Fernänderungen und laufende Wiedergabe spielen den Ton
+nicht.
+**Melde:** Wenn eines der drei den anderen widerspricht, wenn der Ton bei
+laufender Wiedergabe kommt, oder wenn der Bogen bei null oder beim
+Neustart-Wiederherstellen erscheint.
+
 
 ### D2 · Sprache ist bei niedriger Lautstärke verständlich
 **Tu:** Stelle auf ~20 %, frage etwas mit langer Antwort.
@@ -243,25 +254,40 @@ Spiel etwas Bassbetontes laut.
 merklich schlechter werden.
 **Melde:** Kein Unterschied zwischen an und aus.
 
-### D6 · Die Kopfhörerbuchse
+### D6 · Antwortpegel
+**Tu:** Stell die Gerätelautstärke auf etwa 30 % und stell dieselbe Frage bei
+Antwortpegel Niedrig, Mittel und Hoch. Wiederhole das nahe der
+Maximallautstärke.
+**Erwarte:** Die Stimme wird bei 30 % schrittweise lauter, ohne dass sich
+Musik oder Gerätelautstärke ändern. Nahe am Maximum schrumpfen die
+Unterschiede; am Maximum sind sie gleich. Keine Einstellung übersteuert oder
+löst eine Lautstärke-Ringanimation aus.
+**Melde:** Wenn sich Musik oder Gerätelautstärke bewegen, wenn es bei 30 %
+keinen Unterschied gibt, bei Verzerrung, oder wenn am Maximum eine Anhebung
+übrig bleibt.
+
+### D7 · Die Kopfhörerbuchse
 **Tu:** Steck etwas in die 3,5-mm-Buchse.
 **Erwarte:** Der Ton wechselt auf die Buchse.
 **Melde:** Alles, was über die bekannten Buchsenfehler in der Tabelle oben
 hinausgeht.
 
-### D7 · Speak while the reply is written
-**Do:** Config → Playback → turn on "Speak while the reply is written" and save.
-Ask for something long ("explain in two paragraphs how a refrigerator works").
-Turn it off, save, and ask again.
-**Expect:** With it on, speech starts at the first sentence and the controller
-log shows `TTS streaming early`. With it off, speech starts once the whole reply
-is ready. The words are the same either way, and neither change needs a restart.
-On a model or a TTS engine slower than speech, pauses between sentences with it
-on are expected, which is why it is off by default.
-**Flag:** Speech that never starts or stops part-way with it on; no difference in
-when speech starts between the two settings on a setup where Home Assistant's
-agent and TTS engine both stream; a change that needs a restart. Give the model,
-the TTS engine and the length of the reply.
+### D8 · Sprechen, während die Antwort entsteht
+**Tu:** Config → Wiedergabe → „Sprechen, während die Antwort entsteht"
+einschalten und speichern. Frag nach etwas Längerem („erklär in zwei Absätzen,
+wie ein Kühlschrank funktioniert"). Dann ausschalten, speichern und noch einmal
+fragen.
+**Erwarte:** Eingeschaltet beginnt die Sprache beim ersten Satz, und im
+Controller-Log steht `TTS streaming early`. Ausgeschaltet beginnt sie, wenn die
+ganze Antwort fertig ist. Die Worte sind in beiden Fällen dieselben, und keine
+der beiden Änderungen braucht einen Neustart. Bei einem Modell oder einer
+TTS-Engine, die langsamer ist als die Sprache, sind eingeschaltet Pausen
+zwischen den Sätzen zu erwarten — deshalb ist es standardmäßig aus.
+**Melde:** Sprache, die eingeschaltet nie beginnt oder mittendrin abbricht;
+keinen Unterschied im Einsatzzeitpunkt zwischen beiden Einstellungen auf einem
+Aufbau, bei dem Home Assistants Agent und die TTS-Engine beide streamen; eine
+Änderung, die einen Neustart braucht. Gib das Modell, die TTS-Engine und die
+Länge der Antwort an.
 
 ---
 
@@ -438,6 +464,30 @@ soll dir sagen, dass du aktualisieren sollst — er darf sich niemals selbst
 aktualisieren.
 **Melde:** Einen Hinweis mit leeren Notizen; oder jede Schaltfläche, die
 behauptet, das Update auszuführen.
+
+### J4 · Ein emOS-Update wird angeboten (nur emOS-Echos)
+**Tu:** Auf einem Echo mit emOS: Gerät → **Updates**.
+**Erwarte:** Ein Bereich **emOS** unter Firmware mit der Version auf dem Gerät
+und der neuesten Veröffentlichung. Ein Update wird nur angeboten, wenn die
+Veröffentlichung neuer ist; eine älter als 0.10 liest sich als „mit dem
+Assistenten installieren". Ein Echo auf FireOS hat keinen emOS-Bereich.
+**Melde:** „Aktuell" auf einem Echo, das hinterherhinkt; einen emOS-Bereich auf
+einem FireOS-Echo; „Version noch nicht gelesen" auf einem Echo, das seit einer
+Minute verbunden ist.
+
+### J5 · **Destruktiv** — ein emOS-Update anwenden
+**Tu:** Drück Update und bestätige. Lass den Echo am Strom. Beobachte das Log
+unter den Bereichen.
+**Erwarte:** Prüfen, laufendes Image lesen, bauen, senden, schreiben, neu
+starten — dann „läuft und bestätigt" etwa eine Minute nach dem Neustart. Der
+Bereich zeigt die neue Version, und der Echo behält WLAN und Einstellungen.
+**Melde:** Jeden Schritt, der etwas als geändert meldet und dann fehlschlägt;
+einen Echo, der auf der alten Version zurückkommt, ohne dass das Log einen
+Rollback nennt.
+**Zieh ihn nicht ab, während „Boot-Partition wird geschrieben" steht.** Ist er
+nach fünfzehn Minuten nicht zurück, schreib das in den Bericht, bevor du ihn
+anfasst; ein bernsteinfarbener Ring heißt, dass er gerade selbst das vorherige
+Image zurücklegt.
 
 ---
 
