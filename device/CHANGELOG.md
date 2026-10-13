@@ -12,6 +12,52 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.67.0-fx.1
+
+### Dein Echo startet AirPlay und Spotify nicht mehr alle elf Minuten neu
+
+Das Gerät hat sich bisher mehrmals pro Stunde selbst repariert, und die
+Reparatur war ein Neustart beider Empfänger. Auf Studio waren das an einem
+Tag **21 Reparaturen und 45 Neustarts von shairport-sync**. Jeder davon
+beendet eine laufende AirPlay-Wiedergabe und nimmt das Gerät für rund vier
+Sekunden aus jeder Geräteliste.
+
+Diese Reparatur hat nie etwas repariert. Sie hat sich nur selbst bestätigt:
+Der Test, der entscheidet ob das Echo das Netz noch hört, hat die Pakete am
+Zähler einer Firewall-Regel gezählt — und diese Regel zählt auch die
+Ankündigungen, die das Echo **selbst** verschickt. Ein Neustart der
+Empfänger erzeugt genau solche Ankündigungen. Der Test hat also sein eigenes
+Echo gehört und daraus geschlossen, dass die Reparatur gewirkt hat.
+
+Nachgemessen am Gerät, mit nach Absender getrennten Zählern: in 22 Minuten
+kam **kein einziges** Paket von einem anderen Rechner an, während die
+Reparatur zweimal „hört das Netz wieder" meldete — über genau die zwei
+Pakete, die das Echo Sekunden vorher selbst gesendet hatte.
+
+Auch das rätselhafte Elf-Minuten-Muster löst sich damit auf: es war die
+Rechnung des Tests selbst (zweimal fünf Minuten bis zur Diagnose, eine
+Minute bis zur nächsten Messung), nicht irgendetwas im Netz.
+
+### Was sich sonst ändert
+
+Der Test misst jetzt an der richtigen Stelle — am mDNS-Socket, der ohnehin
+offen ist und Absender ohnehin unterscheiden muss. Er meldet weiterhin im
+Protokoll, wenn das Gerät nichts mehr hört, und **unternimmt nichts mehr
+dagegen**. Dass dein Echo trotzdem in den AirPlay- und Spotify-Listen
+auftaucht, erledigt seit 2.65.0-fx.1 die regelmäßige Selbstankündigung.
+
+Die zweite Reparatur bleibt unverändert: Wenn die Gruppenmitgliedschaft
+wirklich verloren geht, startet das Gerät die Empfänger weiterhin neu. Dafür
+gibt es einen belegten Mechanismus.
+
+### Verifikation
+
+In CI verifiziert (`go test`, `go vet` für ARM mit `-tags server`, `gofmt`).
+Die Fehlanalyse selbst ist am echten Gerät verifiziert, über zwei
+aufeinanderfolgende Reparaturen mit nach Absender getrennten Zählern.
+Dass dadurch weniger Neustarts passieren, ist **nicht verifiziert** — das
+zeigt sich erst im Betrieb.
+
 ## 2.66.0-fx.1
 
 ### Nur eine Diagnose-Möglichkeit, nichts was du merkst
