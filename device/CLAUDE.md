@@ -2700,6 +2700,58 @@ Four things not to unpick:
 Both halves are gated on an endpoint actually being enabled. A device with both
 switched off has nothing to be invisible with.
 
+## The AirPlay device ID is the HomeKit private key, so picking it wrong is permanent (#375, 2026-10-13)
+
+**shairport-sync derives its Ed25519 identity from the device ID string, with
+no stored pairing to fall back on**, so the interface that ID is read off
+decides whether a HomeKit pairing survives a reboot. Read off
+`pair_ap/pair_homekit.c` at the 4.3.7 pin rather than measured:
+
+```c
+server_keypair(uint8_t *public_key, uint8_t *private_key, const char *device_id)
+{
+  uint8_t seed[crypto_sign_SEEDBYTES] = { 0 };
+  memcpy(seed, device_id, len);          /* len = strlen(device_id), capped at 32 */
+  crypto_sign_seed_keypair(public_key, private_key, seed);
+}
+```
+
+The seed IS the ID. `pk=` in the TXT record, the key a controller pins at
+pairing, and the key it verifies against on every later connection are all the
+same pure function of it.
+
+**And the ID came from `ifb0`** — the kernel's intermediate functional block,
+a traffic-shaping dummy that carries nothing and is given a **random MAC at
+every boot**. shairport takes the first interface `getifaddrs` returns with a
+hardware address, and on this board, under emOS, that was it. Measured across
+two boots of one Echo: `EE989004DDF2@Studio`, then `8EC201F2B2C5@Studio`.
+
+So every reboot minted a new accessory and killed the old one's key. There is
+nothing to repair afterwards: an owner has to remove the entry in Apple Home
+and add it again.
+
+Three things worth keeping:
+
+- **The general rule: an identity that a peer PINS may not be derived from
+  anything the kernel is free to re-roll.** A name in a picker recovers by
+  itself; a long-term key does not, and the two were the same string here.
+- **The fix is an ORDERING, not a named interface.** `compat/android_ifaddrs.c`
+  puts an interface that is UP and carries a non-zero hardware address in
+  front, which is the radio on this board and on any board — naming `wlan0`
+  would be the same mistake `event2` is, one board's accident written down as
+  a fact.
+- **The predicate is tested with its teeth checked.** `compat/ifaddrscheck.c`
+  drives it against Studio's measured interface table and re-rolls the dummy
+  MACs to prove the answer does not move; breaking the predicate fails three
+  of its checks, which is the only reason to believe the passing ones.
+
+**What hid it was that nothing on the device is wrong while it happens.**
+Audio played for 22 minutes with zero underruns, both endpoints were alive,
+`endpoint_health` was clean, and the only visible fault was in somebody's
+phone. The one on-device tell is the advertised name changing across boots,
+which nothing compares against anything, and which only `-v` on the receiver
+prints at all.
+
 ## AirPlay latency, and why the prime depth is not one number
 
 **The music plane's prime gate was ~1s of PERMANENT latency for every
