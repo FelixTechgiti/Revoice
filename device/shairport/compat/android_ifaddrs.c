@@ -27,6 +27,29 @@
  * `mdns_tinysvcmdns.c` takes the first non-loopback AF_INET/AF_INET6 entry
  * as the host's main address, and an address message carries only an
  * interface index — so the link table has to exist before it can be named.
+ *
+ * **And among the links, a real network interface comes before a kernel
+ * pseudo-device.** That is not tidiness either; it decides the identity the
+ * Echo has on the network. `common.c` takes the MAC of the FIRST AF_PACKET
+ * entry carrying one, and that MAC becomes the AirPlay 2 device ID, the
+ * `_raop._tcp` instance name, and the identity HomeKit pairs against.
+ * Netlink dumps links by interface index, and on this board the index order
+ * is:
+ *
+ *	ifb0   8e:c2:01:f2:b2:c5   traffic-shaping dummy, DOWN
+ *	ifb1   1a:41:fd:78:5f:51   the same, DOWN
+ *	wlan0  fc:a1:83:c6:93:15   the radio
+ *
+ * so shairport-sync was taking its identity from `ifb0` — whose address the
+ * kernel generates at random when the module loads, i.e. **a different one
+ * after every reboot**. Measured on Studio across two boots, 2026-10-12 and
+ * 2026-10-13: the device advertised `EE989004DDF2@Studio`, then
+ * `8EC201F2B2C5@Studio`, matching ifb0's address both times to all 48 bits.
+ *
+ * The cost is not cosmetic. An AirPlay 2 speaker added to Apple Home is
+ * remembered by that identity, so every reboot retires the accessory its
+ * owner added and leaves a dead entry reading "No Response" that no amount
+ * of repairing the network will revive.
  */
 
 #ifdef __ANDROID__
@@ -72,9 +95,40 @@ struct em_link {
 struct em_ctx {
   struct ifaddrs *head;
   struct ifaddrs *tail;
+  /* The last entry of the preferred run at the front of the list. See
+   * em_link_is_primary. NULL until one is placed. */
+  struct ifaddrs *pref_tail;
   struct em_link links[EM_MAX_LINKS];
   int nlinks;
 };
+
+/*
+ * Whether this link is a real network interface whose MAC may stand for the
+ * device. Returns 1 for an interface that is UP and carries a hardware
+ * address that is not all zeros.
+ *
+ * Both halves are needed and neither is a formality. Without IFF_UP the
+ * traffic-shaping dummies win on index order, which is the whole fault this
+ * exists for; without the zero test, `lo` wins, since it is UP and its
+ * address is six zero bytes — and an all-zero device ID is the failure the
+ * header comment above already names.
+ *
+ * It deliberately does NOT look at IFF_RUNNING or at whether an address has
+ * been assigned: at the moment shairport-sync starts, the radio may be
+ * associated and not yet have a lease, and an identity that depended on that
+ * would change with the weather. UP is a property of the interface having
+ * been brought up, which on this device happens once at boot.
+ */
+static int em_link_is_primary(unsigned int flags, const unsigned char *hw,
+                              int hwlen) {
+  int i;
+  if (!(flags & IFF_UP) || hw == NULL || hwlen <= 0)
+    return 0;
+  for (i = 0; i < hwlen; i++)
+    if (hw[i] != 0)
+      return 1;
+  return 0;
+}
 
 static void em_append(struct em_ctx *ctx, struct em_node *n) {
   n->pub.ifa_next = NULL;
@@ -85,8 +139,27 @@ static void em_append(struct em_ctx *ctx, struct em_node *n) {
   ctx->tail = &n->pub;
 }
 
+/*
+ * Splice a node into the preferred run at the front, keeping the order the
+ * kernel reported among equals. The list stays singly linked and the tail
+ * pointer stays correct for the one case that moves it — a list whose every
+ * entry so far is preferred.
+ */
+static void em_insert_preferred(struct em_ctx *ctx, struct em_node *n) {
+  if (ctx->pref_tail) {
+    n->pub.ifa_next = ctx->pref_tail->ifa_next;
+    ctx->pref_tail->ifa_next = &n->pub;
+  } else {
+    n->pub.ifa_next = ctx->head;
+    ctx->head = &n->pub;
+  }
+  if (n->pub.ifa_next == NULL)
+    ctx->tail = &n->pub;
+  ctx->pref_tail = &n->pub;
+}
+
 static struct em_node *em_node_new(struct em_ctx *ctx, const char *name,
-                                   unsigned int flags) {
+                                   unsigned int flags, int preferred) {
   struct em_node *n = calloc(1, sizeof(*n));
   if (!n)
     return NULL;
@@ -96,7 +169,10 @@ static struct em_node *em_node_new(struct em_ctx *ctx, const char *name,
   }
   n->pub.ifa_name = n->name;
   n->pub.ifa_flags = flags;
-  em_append(ctx, n);
+  if (preferred)
+    em_insert_preferred(ctx, n);
+  else
+    em_append(ctx, n);
   return n;
 }
 
@@ -202,7 +278,8 @@ static void em_handle_link(struct em_ctx *ctx, struct nlmsghdr *nlh) {
   /* The AF_PACKET entry, which is what common.c reads the MAC from. Emitted
    * even with no hardware address (a tunnel, or lo) so the interface is in
    * the list at all; sll_halen is then 0 and the caller copies nothing. */
-  n = em_node_new(ctx, name, ifi->ifi_flags);
+  n = em_node_new(ctx, name, ifi->ifi_flags,
+                  em_link_is_primary(ifi->ifi_flags, hwaddr, hwlen));
   if (!n)
     return;
   sll = (struct sockaddr_ll *)&n->addr;
@@ -251,7 +328,7 @@ static void em_handle_addr(struct em_ctx *ctx, struct nlmsghdr *nlh) {
   if (!label)
     label = link ? link->name : "";
 
-  n = em_node_new(ctx, label, link ? link->flags : 0);
+  n = em_node_new(ctx, label, link ? link->flags : 0, 0);
   if (!n)
     return;
 
