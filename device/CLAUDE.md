@@ -2430,7 +2430,7 @@ gets credited for outages it cannot touch.
 | | what is true | what fixes it |
 |---|---|---|
 | **the membership is gone** | `/proc/net/igmp` has lost 224.0.0.251 while both responders still hold UDP 5353 | restarting the endpoints re-joins the group — `Watcher` |
-| **the membership is present and nothing arrives** | 224.0.0.251 joined, both endpoints healthy, and no mDNS reaches the interface | **nothing found so far holds.** ALLMULTI restores it for seconds; the device goes deaf again. What removes the SYMPTOM is `internal/mdnsannounce`: stop waiting to be asked |
+| **the membership is present and nothing arrives** | 224.0.0.251 joined, both endpoints healthy, and no mDNS reaches the interface | **nothing found so far holds**, and since #384 nothing is attempted either — the endpoint restart that looked like a repair was being credited by a counter measuring its own announcements. ALLMULTI restores reception for seconds; the device goes deaf again. What removes the SYMPTOM is `internal/mdnsannounce`: stop waiting to be asked |
 
 **The second row read "unknown" until 2026-10-12**, and it is the one that was
 costing the feature. It still has no cure — two have been shipped and both were
@@ -2672,24 +2672,59 @@ Three things worth keeping from it:
 - **It asked every host on the link to answer, on a cadence, for ever.** That
   cost was accepted for a measurement that could never have worked.
 
+### And the third version measured the repair's own echo (#384, 2026-10-13)
+
+**It then read the packet counter on the firewall's own mDNS rule, which
+cannot be fooled BY the firewall and could be fooled by us.** A rule matches on
+the DESTINATION address and says nothing about where a packet came from, and
+the kernel delivers a locally sent multicast packet back up the input path with
+the outgoing interface still on it. So this device's own announcements moved
+the counter the probe read.
+
+The repair is what made that fatal rather than merely imprecise: it restarted
+both endpoints, both announced themselves as they came up, and the loopback
+copies landed on the counter the probe was about to sample. **The repair
+manufactured the recovery it then reported**, once a minute after every
+attempt, for ever.
+
+Measured on Studio with the arrivals split by source in `mangle PREROUTING` —
+a table `netfilter.Sync` never touches, so nothing can displace it:
+
+| repair | what the prober logged | our own source | any other host |
+|---|---|---|---|
+| #20, 12:31:39 | 12:32:39 — `2 mDNS packet(s) arrived` | 12:31:45 **+2** | **0** |
+| #21, 12:42:39 | 12:43:39 — `2 mDNS packet(s) arrived` | 12:42:47 **+2** | **0** |
+
+Nothing from any other host arrived in the whole 22 minutes, while broadcast
+came in at roughly 3 packets a second throughout. And the **~11-minute period**
+this file recorded as unexplained is the prober's own arithmetic: two 5-minute
+windows to declare deafness, plus the minute to the next sample after the
+repair. Episodes #17 to #21 are spaced 11:00, 11:00, 11:00, 11:00. Nothing on
+the network has that period, because nothing on the network was involved.
+
 ### What it does now
 
-It reads the packet counter on the firewall's own mDNS rule
-(`netfilter.CountInput` / `PacketsFor`). That cannot be fooled by the firewall
-because it IS the firewall: a rule that accepted a packet counted it. One exec,
-nothing sent, nothing asked of anybody else's network.
+**The group socket's own count of packets from OTHER hosts**
+(`mdnsannounce.Listener.ForeignCount`, adapted by `mcast.SocketSample`).
+`Watch` already has to tell them apart, because it caches only what this
+device published — so the packets it discards ARE the measurement, and the
+instrument costs one counter on a socket that is already open: no exec, no
+positional parsing of iptables output, and no new rule on a firewall whose
+device is managed over the network it protects.
 
-Four things not to unpick:
+Five things not to unpick:
 
-- **A counter that goes DOWN is a rule re-insertion, never silence.** Counters
-  are per-rule, and this firmware deletes and re-inserts on every config push
-  and every repair rather than trusting `-C`. Reading a reset as silence would
-  report a fault every time somebody saved a setting.
-- **A MISSING rule is not a zero reading.** Zero is a measurement; absent means
-  the firewall is not in the state we believe and the sample says nothing.
-- **Nothing acts on it**, the same call `wifi.Describe` makes on the
-  `no controller` lines. What is missing is duration and frequency with nobody
-  present (#142).
+- **A counter that goes DOWN is a process restart, never silence**, and the
+  Tracker's existing re-baseline covers it — it was written for rule
+  re-insertion and the reading is the same.
+- **No SOCKET is not a reading of zero** (`mcast.ErrNoSocket`). Zero is a
+  measurement; absent means this device cannot be asked, and a probe that
+  reads the two the same way reports a device deaf it has never listened to.
+- **A packet whose origin cannot be decided is counted as neither.** If the
+  interface address will not read, every arrival would look foreign and a deaf
+  device would report hearing the whole LAN.
+- **Nothing acts on it any more**, and that is a decision rather than the old
+  omission — see the repair below.
 - **Deaf is not the same as unheard.** Announcements go out UNPROMPTED, so a
   responder that hears nothing still advertises, and a device can be deaf and
   listed at once — measured the same day, when this warning and the controller's
@@ -2697,8 +2732,80 @@ Four things not to unpick:
   line states the measurement and hands visibility to `em_mdnsscan`, pinned by
   `TestTheDeafLineDoesNotClaimTheDeviceIsInvisible`.
 
+**The repair is gone, and fixing the instrument is what removed it.** Restarting
+the endpoints was credited with a fresh join that re-programs the chip's address
+filter; the mechanism was disproved on 2026-10-12, and the evidence for it was
+the echo above. It cost 21 repairs and 45 `shairport-sync` restarts in one day
+on Studio, each dropping whatever AirPlay session was live. With a correct
+counter a genuinely deaf device no longer talks the probe out of its verdict, so
+the repair would fire on every cycle instead — which makes it dangerous rather
+than merely useless. `internal/mdnsannounce` already removes the symptom it
+reached for. **The membership `Watcher` keeps ITS repair**: that one answers a
+different question (`/proc/net/igmp` has genuinely lost the group) and has a
+mechanism that holds.
+
+**Four versions, and every one of them measured something nearer than the
+network.** A query whose answers the firewall dropped; the port's total,
+including unicast; the mDNS rule, including our own loopback; and now the
+socket. `device/CLAUDE.md` has said since version one that *a wrong instrument
+that agrees with the symptom is worse than none* — and the thing that finally
+caught it was splitting one counter by SOURCE, which is the question none of
+the first three had been asked.
+
 Both halves are gated on an endpoint actually being enabled. A device with both
 switched off has nothing to be invisible with.
+
+## The AirPlay device ID is the HomeKit private key, so picking it wrong is permanent (#375, 2026-10-13)
+
+**shairport-sync derives its Ed25519 identity from the device ID string, with
+no stored pairing to fall back on**, so the interface that ID is read off
+decides whether a HomeKit pairing survives a reboot. Read off
+`pair_ap/pair_homekit.c` at the 4.3.7 pin rather than measured:
+
+```c
+server_keypair(uint8_t *public_key, uint8_t *private_key, const char *device_id)
+{
+  uint8_t seed[crypto_sign_SEEDBYTES] = { 0 };
+  memcpy(seed, device_id, len);          /* len = strlen(device_id), capped at 32 */
+  crypto_sign_seed_keypair(public_key, private_key, seed);
+}
+```
+
+The seed IS the ID. `pk=` in the TXT record, the key a controller pins at
+pairing, and the key it verifies against on every later connection are all the
+same pure function of it.
+
+**And the ID came from `ifb0`** — the kernel's intermediate functional block,
+a traffic-shaping dummy that carries nothing and is given a **random MAC at
+every boot**. shairport takes the first interface `getifaddrs` returns with a
+hardware address, and on this board, under emOS, that was it. Measured across
+two boots of one Echo: `EE989004DDF2@Studio`, then `8EC201F2B2C5@Studio`.
+
+So every reboot minted a new accessory and killed the old one's key. There is
+nothing to repair afterwards: an owner has to remove the entry in Apple Home
+and add it again.
+
+Three things worth keeping:
+
+- **The general rule: an identity that a peer PINS may not be derived from
+  anything the kernel is free to re-roll.** A name in a picker recovers by
+  itself; a long-term key does not, and the two were the same string here.
+- **The fix is an ORDERING, not a named interface.** `compat/android_ifaddrs.c`
+  puts an interface that is UP and carries a non-zero hardware address in
+  front, which is the radio on this board and on any board — naming `wlan0`
+  would be the same mistake `event2` is, one board's accident written down as
+  a fact.
+- **The predicate is tested with its teeth checked.** `compat/ifaddrscheck.c`
+  drives it against Studio's measured interface table and re-rolls the dummy
+  MACs to prove the answer does not move; breaking the predicate fails three
+  of its checks, which is the only reason to believe the passing ones.
+
+**What hid it was that nothing on the device is wrong while it happens.**
+Audio played for 22 minutes with zero underruns, both endpoints were alive,
+`endpoint_health` was clean, and the only visible fault was in somebody's
+phone. The one on-device tell is the advertised name changing across boots,
+which nothing compares against anything, and which only `-v` on the receiver
+prints at all.
 
 ## AirPlay latency, and why the prime depth is not one number
 
