@@ -178,7 +178,7 @@ func stubReader(t *testing.T) *int32 {
 	t.Helper()
 	var starts int32
 	old := startMetadataReader
-	startMetadataReader = func(path string, stop <-chan struct{}, fn func(float64)) {
+	startMetadataReader = func(path string, stop <-chan struct{}, fn func(float64), _ func(PlayState)) {
 		atomic.AddInt32(&starts, 1)
 		<-stop
 	}
@@ -307,7 +307,7 @@ func TestANonBlockingWriterReachesTheReader(t *testing.T) {
 	got := make(chan float64, 4)
 	stop := make(chan struct{})
 	defer close(stop)
-	go readMetadataPipe(path, stop, func(db float64) { got <- db })
+	go readMetadataPipe(path, stop, func(db float64) { got <- db }, nil)
 
 	// Give the reader a moment to create the FIFO and open it. It should then
 	// hold it for good — that is the property under test.
@@ -351,7 +351,7 @@ func TestTheReaderStaysAvailableAcrossSeveralWrites(t *testing.T) {
 	got := make(chan float64, 8)
 	stop := make(chan struct{})
 	defer close(stop)
-	go readMetadataPipe(path, stop, func(db float64) { got <- db })
+	go readMetadataPipe(path, stop, func(db float64) { got <- db }, nil)
 
 	var w *os.File
 	var err error

@@ -77,13 +77,14 @@ var startMetadataReader = readMetadataPipe
 const pipeRetryDelay = 30 * time.Second
 
 // readMetadataPipe creates the FIFO if needed and reads it for the life of
-// the stop channel, reporting AirPlay volume changes.
+// the stop channel, reporting AirPlay volume and transport changes.
 //
 // Every failure is logged once and retried, never fatal. This is a
 // convenience on top of a receiver that works without it: an AirPlay endpoint
 // that refused to start because a pipe could not be made would be a strictly
 // worse device than one whose volume slider does nothing.
-func readMetadataPipe(path string, stop <-chan struct{}, onVolume func(db float64)) {
+func readMetadataPipe(path string, stop <-chan struct{}, onVolume func(db float64),
+	onPlay func(PlayState)) {
 	for {
 		select {
 		case <-stop:
@@ -125,7 +126,7 @@ func readMetadataPipe(path string, stop <-chan struct{}, onVolume func(db float6
 			}
 		}()
 
-		VolumeFromMetadata(f, onVolume)
+		WatchMetadata(f, onVolume, onPlay)
 		close(done)
 		f.Close()
 
