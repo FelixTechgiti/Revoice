@@ -867,6 +867,21 @@ jobs:
             device/shairport/compat/mdnscheck.c
           /tmp/mdnscheck
 
+      # Which interface the Echo takes its AirPlay identity FROM. shairport
+      # reads the MAC of the first AF_PACKET entry getifaddrs returns, and
+      # that MAC is the AirPlay 2 device ID, the _raop._tcp instance name and
+      # what HomeKit pairs against. Netlink dumps by interface index, which on
+      # this board puts two traffic-shaping dummies in front of the radio —
+      # and the kernel generates their addresses at random when the module
+      # loads. Nothing fails: the speaker simply becomes a DIFFERENT speaker
+      # after every reboot, and the accessory its owner added to Apple Home is
+      # left reading "No Response" for ever.
+      - name: The AirPlay identity comes from the radio and survives a reboot
+        run: |
+          cc -O2 -Wall -Wextra -o /tmp/ifaddrscheck \
+            device/shairport/compat/ifaddrscheck.c
+          /tmp/ifaddrscheck
+
       # The port range an AirPlay 2 session's own sockets are taken from
       # (#79). Every rejection here falls back to upstream's "ask the kernel",
       # which on a default-DROP device is a session that negotiates and then
