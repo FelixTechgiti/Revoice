@@ -795,14 +795,19 @@ func renderConfig(delaySec float64, metadataPipe string, verbosity int) string {
 		general += fmt.Sprintf(
 			"  audio_backend_latency_offset_in_seconds = %.4f;\n", -delaySec)
 	}
+	general += "};\n"
 	// The receiver's own diagnostics, off unless somebody asked. Written here
 	// rather than passed as -v so that it survives the restarts the firmware
 	// makes on its own, which is the whole difficulty with reading a session
 	// this thing ends by itself.
+	//
+	// In its OWN section: 4.3.7 accepts `general.log_verbosity` and warns that
+	// it is deprecated (measured on a device 2026-10-12), so the accepted
+	// spelling today is the one that will still be accepted after the next
+	// version bump.
 	if verbosity >= 1 && verbosity <= 3 {
-		general += fmt.Sprintf("  log_verbosity = %d;\n", verbosity)
+		general += fmt.Sprintf("diagnostics = {\n  log_verbosity = %d;\n};\n", verbosity)
 	}
-	general += "};\n"
 	if metadataPipe == "" {
 		return general
 	}
