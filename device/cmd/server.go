@@ -564,6 +564,29 @@ func main() {
 		Name:            deviceID,
 		BackendDelaySec: envFloat("EM_AIRPLAY_LATENCY_OFFSET", speaker.LocalPrimeSeconds()),
 		OnVolume:        airplayVolume(s),
+		// A pause has to empty the music plane, and nothing else can carry
+		// the news (#387). shairport-sync answers a pause by ceasing to
+		// write to its pipe and sends no end-of-stream, because a pipe has
+		// none — so the periods already queued play out and the Echo keeps
+		// singing for seconds after the button. This is the same shape
+		// `dropQueue` exists for, reached from a fourth producer.
+		//
+		// **Unconditional, unlike the volume handler.** Pausing is not a
+		// preference, and setting it here is also what asks shairport for
+		// metadata at all on a device whose owner never turned the volume
+		// slider on.
+		OnPlayState: func(st airplay.PlayState) {
+			if st == airplay.PlayStatePlaying {
+				return
+			}
+			// DropMusicQueue rather than FlushMusic: flush ARMS the discard
+			// for the remainder of a stream that is ending, which is right
+			// for a producer that sends an end-of-stream and permanent for
+			// one that does not. `dropQueue` clears the flag instead, so the
+			// next track plays.
+			log.Printf("[airplay] sender %s — dropping the queued music", st)
+			pcmSpeaker.DropMusicQueue()
+		},
 		// Off unless somebody asked, and an env var rather than a config key
 		// for EM_AIRPLAY_LATENCY_OFFSET's reason: it is a diagnostic for one
 		// device rather than a user preference, and it exists so a session

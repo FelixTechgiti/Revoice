@@ -12,6 +12,54 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.68.0-fx.1
+
+### Pause an AirPlay hält jetzt wirklich an
+
+Bisher hat dein Echo nach dem Pausieren noch sekundenlang weitergespielt.
+Der Grund: shairport-sync hört beim Pausieren einfach auf, Audio zu
+schicken — ein Ende-Signal gibt es auf diesem Weg nicht. Was schon im
+Puffer des Geräts lag, lief also in aller Ruhe zu Ende.
+
+shairport sagt durchaus Bescheid, über denselben Metadaten-Kanal, über den
+auch der Lautstärkeregler kommt. Nur hat das niemand gelesen. Jetzt wird
+beim Pausieren und beim Stoppen der gepufferte Ton verworfen.
+
+### Zwei Dinge, die dabei herauskamen
+
+**Die Metadaten wurden auf den meisten Geräten gar nicht erst angefordert.**
+Sie hingen an der Einstellung „AirPlay-Lautstärke ändert die
+Gerätelautstärke", und die ist standardmäßig aus. Pausieren ist keine
+Geschmacksfrage, also werden die Metadaten jetzt immer angefordert, sobald
+AirPlay läuft.
+
+**Und selbst dann wären die Pausemeldungen verworfen worden.** Der Parser
+hat jedes Metadaten-Element ohne Nutzlast weggeworfen — und genau das sind
+die Transportmeldungen: sie bestehen nur aus ihrem Code. Richtig, solange
+nur die Lautstärke gelesen wurde; falsch ab dem Moment, in dem etwas
+anderes dazukam.
+
+### Nebeneffekt, den du merken wirst
+
+Das Umschalten der Lautstärke-Einstellung startet den AirPlay-Empfänger
+nicht mehr neu. Vorher hat es das getan — mitten in einer laufenden
+Wiedergabe — um eine Konfigurationsdatei zu schreiben, die sich gar nicht
+geändert hätte.
+
+### Was das NICHT behebt
+
+Die Verzögerung, bis nach dem Play-Druck der erste Ton kommt. AirPlay 2
+bringt im gepufferten Modus rund zwei Sekunden von sich aus mit; das ist
+Apples Design. Was unsere Kette obendrauf legt, ist bisher nur
+konfiguriert und nicht gemessen.
+
+### Verifikation
+
+In CI verifiziert (`go test`, `gofmt`, `go vet` für ARM mit `-tags server`).
+Die Tests wurden gegengeprüft, indem die Änderung zurückgedreht wurde — drei
+fallen dann um. Am echten Gerät **nicht verifiziert**: das zeigt sich erst,
+wenn jemand Pause drückt.
+
 ## 2.66.0-fx.1
 
 ### Nur eine Diagnose-Möglichkeit, nichts was du merkst

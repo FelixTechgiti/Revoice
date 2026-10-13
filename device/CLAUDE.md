@@ -2894,6 +2894,52 @@ timing. When the thing under test is WHETHER SOMEBODY ELSE CAN REACH US, the
 probe has to behave like them — otherwise it measures the half that already
 worked and reports the whole.
 
+## A pause reaches the music plane only because somebody reads the metadata (#387)
+
+**shairport-sync answers a pause by ceasing to write to its pipe.** It sends
+no end-of-stream, because a pipe has none — so the periods already queued on
+the device play out at their own pace and the Echo keeps singing for seconds
+after the button. Reported by the device's owner, 2026-10-13.
+
+The transport state has been on the metadata stream all along, beside the
+volume (`metadata_hub.c` at the 4.3.7 pin): `pbeg`/`pres` playing, `paus`
+paused, `pend` stopped. `airplay.Options.OnPlayState` reads them and
+`cmd/server.go` calls `PcmSpeaker.DropMusicQueue()` on anything that is not
+playing — `dropQueue` rather than `flush`, because flush ARMS the discard for
+the remainder of a stream that is ending, which is permanent for a producer
+that never sends one.
+
+**Two things sat in front of it, and both are the same mistake at different
+depths: a true statement about the only consumer there was.**
+
+- **The metadata gate was `OnVolume != nil`**, which is
+  `airplayVolumeControl` and defaults OFF — so on an ordinary device
+  shairport was never asked for metadata at all. The comment arguing for that
+  gate is right about what it protects (a FIFO nobody reads blocks the
+  process decoding the audio) and wrong about the condition: what must be
+  true is that SOMETHING reads the pipe, not that the volume setting is on.
+  Either handler opens it now.
+- **`parseItem` discarded every item with no payload**, with the comment
+  *"session begin/end carry nothing but their code — and nothing here wants
+  one"*. The transport codes are exactly those items, so the state was thrown
+  away one layer below the code meant to read it. It returns the item with
+  nil `Data` now and lets the caller decide; `parseVolumeDB` refuses nil, so
+  the volume half is untouched.
+
+**The handlers are looked up PER EVENT rather than captured when the reader
+starts**, which is what let the receiver restart go. `SetVolumeHandler` used
+to kill shairport-sync mid-track whenever the volume setting crossed
+nil↔non-nil, because the config file says whether to ask for metadata and is
+written at exec. With a transport handler always installed that gate never
+moves, so the restart is gone — and the restart it replaced was killing a
+live AirPlay session to rewrite a file that was about to be identical. The
+condition is the GATE, never the handler; a test pins both directions.
+
+**It does not touch the delay before the first note**, which is a different
+number and still unmeasured — see "AirPlay latency, and why the prime depth
+is not one number" above, and note that AirPlay 2's buffered mode carries
+about two seconds of Apple's own.
+
 ## Volume / mute persistence
 
 **Volume is applied in software, and the DAC stays at unity (2026-09-24).**

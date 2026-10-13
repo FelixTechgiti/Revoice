@@ -45,7 +45,45 @@ import (
 const (
 	metaTypeSSNC = "ssnc"
 	metaCodePVOL = "pvol"
+
+	// The transport codes, read off shairport-sync 4.3.7's own
+	// `metadata_hub.c` at the pin rather than from memory. `pres` and `pbeg`
+	// both mean playing there; `paus` and `pend` are the two that matter here.
+	metaCodePBEG = "pbeg"
+	metaCodePRES = "pres"
+	metaCodePAUS = "paus"
+	metaCodePEND = "pend"
 )
+
+// PlayState is what the sender last did with its transport.
+//
+// Three values rather than two, because a PAUSE and a STOP want the same
+// thing from the music plane and say different things about what comes next:
+// a stop ends the session, a pause is somebody who intends to carry on.
+// Nothing here acts on that difference yet, and collapsing them now would
+// throw away the only chance to.
+type PlayState int
+
+const (
+	// PlayStatePlaying — audio is coming, or already is.
+	PlayStatePlaying PlayState = iota
+	// PlayStatePaused — the sender pressed pause.
+	PlayStatePaused
+	// PlayStateStopped — the session ended.
+	PlayStateStopped
+)
+
+func (p PlayState) String() string {
+	switch p {
+	case PlayStatePlaying:
+		return "playing"
+	case PlayStatePaused:
+		return "paused"
+	case PlayStateStopped:
+		return "stopped"
+	}
+	return "unknown"
+}
 
 // item is one parsed metadata item, with type and code decoded from hex.
 type item struct {
@@ -99,9 +137,18 @@ func parseItem(s string) (item, bool) {
 	}
 	raw, ok := between(s, `<data encoding="base64">`, "</data>")
 	if !ok {
-		// Items with no payload are legitimate — session begin/end carry
-		// nothing but their code — and nothing here wants one.
-		return item{}, false
+		// **An item with no payload is legitimate and is KEPT, with nil
+		// Data.** It used to be discarded here, with the comment "session
+		// begin/end carry nothing but their code — and nothing here wants
+		// one" — true of the only consumer there was, and load-bearing for
+		// the next one: `paus`, `pend`, `pbeg` and `pres` are precisely the
+		// payload-less items, so the transport state was thrown away one
+		// layer below the code meant to read it (#387).
+		//
+		// Deciding what a caller wants is the caller's; this answers whether
+		// the item parsed. `parseVolumeDB` refuses nil anyway, so the volume
+		// half is untouched.
+		return item{Type: t, Code: c}, true
 	}
 	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
 	if err != nil {
@@ -153,15 +200,46 @@ func parseVolumeDB(data []byte) (float64, bool) {
 	return db, true
 }
 
-// VolumeFromMetadata reads the stream and reports every AirPlay volume change
-// as decibels. Blocks until r ends.
-func VolumeFromMetadata(r io.Reader, onVolume func(db float64)) {
+// WatchMetadata reads the stream and reports what this device acts on: every
+// AirPlay volume change in decibels, and every transport change. Blocks until
+// r ends. Either callback may be nil.
+//
+// **Both ride ONE stream and therefore one reader.** They were two features
+// arriving months apart, which is exactly how a second pipe, a second FIFO
+// and a second goroutine get built for a file that is already open — and a
+// FIFO with two readers delivers each byte to one of them, so the second
+// reader would not be a duplicate, it would be a thief.
+func WatchMetadata(r io.Reader, onVolume func(db float64), onPlay func(PlayState)) {
 	scanItems(r, func(it item) {
-		if it.Type != metaTypeSSNC || it.Code != metaCodePVOL {
+		if it.Type != metaTypeSSNC {
 			return
 		}
-		if db, ok := parseVolumeDB(it.Data); ok {
-			onVolume(db)
+		switch it.Code {
+		case metaCodePVOL:
+			if onVolume == nil {
+				return
+			}
+			if db, ok := parseVolumeDB(it.Data); ok {
+				onVolume(db)
+			}
+		case metaCodePBEG, metaCodePRES:
+			if onPlay != nil {
+				onPlay(PlayStatePlaying)
+			}
+		case metaCodePAUS:
+			if onPlay != nil {
+				onPlay(PlayStatePaused)
+			}
+		case metaCodePEND:
+			if onPlay != nil {
+				onPlay(PlayStateStopped)
+			}
 		}
 	})
+}
+
+// VolumeFromMetadata is WatchMetadata with no transport handler, kept because
+// the volume is the half with hardware verification behind it.
+func VolumeFromMetadata(r io.Reader, onVolume func(db float64)) {
+	WatchMetadata(r, onVolume, nil)
 }
