@@ -474,31 +474,77 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// ─── The latency offset ──────────────────────────────────────────────────────
+// ─── The two latency settings ────────────────────────────────────────────────
 //
 // The config file was declared and never written for the whole life of this
-// package, which is why the one setting that can take latency out of an
-// AirPlay stream was unreachable — and AirPlay latency is what the fault
-// report was about. So the sign, the absent case and the failure case are all
-// pinned: getting the sign wrong makes the complaint worse rather than
-// failing, and shairport-sync REFUSES TO START on a config file it was told
-// about and cannot read.
+// package, which is why the settings that can take latency out of an AirPlay
+// stream were unreachable — and AirPlay latency is what the fault report was
+// about. There are TWO of them and they answer different questions (#389):
+// one says how much audio we hold, the other moves the instant the sender
+// scheduled. Writing the first as a negative version of the second is what
+// the package did until #389, and it capped the second at -1.0s without
+// saying so.
+//
+// Pinned here: that each lands on its own key, that neither is asserted when
+// nobody measured it, and that a config which could not be written costs the
+// settings rather than the receiver.
 
-func TestOurOwnBufferIsCompensatedForWithTheOppositeSign(t *testing.T) {
-	// shairport-sync's own sample: "if the output device delays by 100 ms,
-	// set this to -0.1". The music plane's prime is our delay.
-	got := renderConfig(0.1, "", 0)
-	if !strings.Contains(got, "audio_backend_latency_offset_in_seconds = -0.1000") {
-		t.Fatalf("a 100ms backend delay must compensate as -0.1; got:\n%s", got)
+func TestOurOwnBufferIsDeclaredAsTheBackendBufferLength(t *testing.T) {
+	// How much WE hold, positive, on the key shairport reads it from.
+	// `audio_stdout.c` defaults this to 1.0 and our plane holds 0.171, so
+	// leaving it unset was a statement wrong by a factor of six.
+	got := renderConfig(0.171, 0, "", 0)
+	if !strings.Contains(got, "audio_backend_buffer_desired_length_in_seconds = 0.1710") {
+		t.Fatalf("a 171ms plane must be declared as 0.1710; got:\n%s", got)
+	}
+	if strings.Contains(got, "audio_backend_latency_offset_in_seconds") {
+		t.Fatalf("declaring our buffer must not also move the sender's "+
+			"schedule — that is the conflation #389 is about; got:\n%s", got)
 	}
 }
 
-func TestNoKnownDelayWritesNoOffsetRatherThanZero(t *testing.T) {
-	// Absent means nobody measured; 0.0 asserts there is no delay. A caller
-	// that does not know its own pipeline must not make the second claim.
-	got := renderConfig(0, "", 0)
-	if strings.Contains(got, "audio_backend_latency_offset_in_seconds") {
-		t.Fatalf("an unknown delay must not assert an offset; got:\n%s", got)
+func TestTheTrimIsWrittenAsANegativeOffset(t *testing.T) {
+	// Giving latency BACK means asking for less of it, and `rtp.c` adds this
+	// to what the sender requested. A positive value here would lengthen the
+	// wait rather than shorten it, which is the one way to make the reported
+	// fault worse while every test still passes.
+	got := renderConfig(0, 1.2, "", 0)
+	if !strings.Contains(got, "audio_backend_latency_offset_in_seconds = -1.2000") {
+		t.Fatalf("a 1.2s trim must be written as -1.2; got:\n%s", got)
+	}
+}
+
+func TestTheTrimStaysWithinWhatTheStreamCanCarry(t *testing.T) {
+	// rtp.c throws the offset away — silently, reverting to the sender's full
+	// latency — when `notified + 11035 + offset - backend_buffer` reaches
+	// zero. With both settings written as this package writes them, the
+	// default must leave real headroom rather than sitting on the edge.
+	const senderFrames = 77175 + 11035 // every AirPlay 2 sender, rtp.c
+	const rate = SourceRate
+	left := senderFrames - DefaultLatencyTrimSec*rate - 0.171*rate
+	if left <= 0 {
+		t.Fatalf("the default trim leaves %.0f frames of stream latency, so "+
+			"shairport would discard it and nothing would change", left)
+	}
+	// And a resend needs room: first check 0.10s, interval 0.25s, last check
+	// 0.10s. Under ~0.35s a missing packet cannot be asked for in time.
+	if sec := left / rate; sec < 0.35 {
+		t.Fatalf("the default trim leaves %.3fs, under the resend floor", sec)
+	}
+}
+
+func TestNothingMeasuredWritesNothingRatherThanZero(t *testing.T) {
+	// Absent means nobody measured; 0.0 asserts there is nothing there. A
+	// caller that does not know its own pipeline must not make the second
+	// claim, for either setting.
+	got := renderConfig(0, 0, "", 0)
+	for _, key := range []string{
+		"audio_backend_buffer_desired_length_in_seconds",
+		"audio_backend_latency_offset_in_seconds",
+	} {
+		if strings.Contains(got, key) {
+			t.Fatalf("an unknown pipeline must not assert %s; got:\n%s", key, got)
+		}
 	}
 }
 
@@ -517,8 +563,8 @@ func TestTheReceiverStartsWithoutAConfigItCouldNotWrite(t *testing.T) {
 
 func TestAWrittenConfigIsPassedWithMinusC(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "shairport-sync.conf")
-	c := New(Options{Name: "Lounge", ConfigPath: path, BackendDelaySec: 0.171},
-		nil, nil)
+	c := New(Options{Name: "Lounge", ConfigPath: path,
+		BackendDelaySec: 0.171, LatencyTrimSec: 1.2}, nil, nil)
 	if got := c.writeConfig(); got != path {
 		t.Fatalf("writeConfig returned %q, want %q", got, path)
 	}
@@ -526,8 +572,15 @@ func TestAWrittenConfigIsPassedWithMinusC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "-0.1710") {
-		t.Fatalf("the offset is not in the file:\n%s", body)
+	// BOTH, because the file is the only place they reach shairport and a
+	// call site that forwards one of the two would otherwise pass.
+	for _, want := range []string{
+		"audio_backend_buffer_desired_length_in_seconds = 0.1710",
+		"audio_backend_latency_offset_in_seconds = -1.2000",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("%q is not in the file:\n%s", want, body)
+		}
 	}
 	args := strings.Join(c.args(path), " ")
 	if !strings.Contains(args, "-c "+path) {
@@ -567,7 +620,7 @@ func TestAllThreePortsArePinnedToTheOnesTheFirewallOpens(t *testing.T) {
 // look healthy and a speaker nobody can see (#298). The failure is silent at
 // both ends, which is why it is pinned here rather than left to a reviewer.
 func TestRenderConfigNamesTheInterface(t *testing.T) {
-	got := renderConfig(0, "", 0)
+	got := renderConfig(0, 0, "", 0)
 	want := fmt.Sprintf("  interface = %q;\n", netfilter.Iface)
 	if !strings.Contains(got, want) {
 		t.Fatalf("config does not name the interface; want %q in:\n%s", want, got)
@@ -660,7 +713,7 @@ func TestLogVerbosityIsWrittenOnlyWhenItWasAskedFor(t *testing.T) {
 		{4, ""},  // out of range is unset, not clamped
 		{-1, ""}, // and so is nonsense
 	} {
-		got := renderConfig(0, "", tc.verbosity)
+		got := renderConfig(0, 0, "", tc.verbosity)
 		if tc.want == "" {
 			if strings.Contains(got, "log_verbosity") {
 				t.Errorf("verbosity %d wrote a log_verbosity line:\n%s",

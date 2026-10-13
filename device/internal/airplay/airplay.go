@@ -109,6 +109,24 @@ const (
 	readFrames = 2048
 )
 
+// DefaultLatencyTrimSec is how much of the sender's requested stream latency
+// this device gives back, in seconds (#389).
+//
+// Derived rather than chosen. An AirPlay 2 sender asks for 77175 + 11035
+// frames — 2.0005s at 44.1kHz, and `rtp.c` logs the first number only when it
+// is something else, so it is the same on every sender. shairport's resend
+// machinery needs a floor under that: `resend_control_first_check_time` 0.10,
+// `resend_control_check_interval_time` 0.25 and
+// `resend_control_last_check_time` 0.10 mean a missing packet cannot be
+// noticed, asked for and delivered inside much less than 0.35s. 0.8s of
+// remaining latency leaves several rounds; 2.0005 - 0.8 is this number,
+// rounded to the millisecond the config file is written in.
+//
+// It is the number MOST LIKELY to want changing once somebody has measured a
+// dropout against it, which is why it is one constant and one env var rather
+// than arithmetic spread over the call site.
+const DefaultLatencyTrimSec = 1.2
+
 const (
 	restartMin = 3 * time.Second
 	restartMax = time.Minute
@@ -152,11 +170,18 @@ type Options struct {
 	// off the pipe and the speaker emitting it — the music plane's prime
 	// depth. shairport-sync plays each packet at the instant the sender
 	// stamped it, so it has to be told what sits behind it or every packet
-	// lands that much late; see renderConfig for the sign.
+	// lands that much late; see renderConfig for where it goes.
 	//
-	// Zero writes no offset at all rather than writing 0.0, so a caller that
+	// Zero writes nothing at all rather than writing 0.0, so a caller that
 	// does not know its own delay does not assert that there is none.
 	BackendDelaySec float64
+	// LatencyTrimSec is how much of the stream latency the SENDER asked for
+	// this device gives back, in seconds — the whole of what shortens the
+	// delay between pressing play and hearing something. See renderConfig.
+	//
+	// Zero keeps the sender's latency exactly, which is what every build
+	// before #389 did.
+	LatencyTrimSec float64
 	// ConfigPath overrides ConfigPath, for tests.
 	ConfigPath string
 	// ExtraArgs are appended verbatim.
@@ -750,21 +775,57 @@ func (c *Client) args(cfg string) []string {
 
 // renderConfig builds the shairport-sync configuration.
 //
-// It carries ONE setting. The name stays on the command line where it already
-// was — it is what SetName restarts the receiver for, and a second copy in a
-// file is a second thing to keep in step.
+// The name stays on the command line where it already was — it is what
+// SetName restarts the receiver for, and a second copy in a file is a second
+// thing to keep in step.
 //
-// **The sign.** shairport-sync's own sample puts it plainly: "if the output
-// device delays by 100 ms, set this to -0.1". Our music plane holds
-// `localPrimePeriods` before it starts, so the delay behind shairport is that
-// depth, and the compensation is its negative — shairport then hands the audio
-// over that much earlier and the sound leaves the speaker at the instant the
-// sender scheduled it, rather than a buffer-length late.
+// # Two latency settings, and they answer different questions (#389)
 //
-// Zero delay writes NO offset rather than `0.0`. The two are the same number
-// and not the same statement: absent means nobody measured, and a caller that
-// does not know its own delay should not assert there is none.
-func renderConfig(delaySec float64, metadataPipe string, verbosity int) string {
+// **`audio_backend_buffer_desired_length_in_seconds` says how much WE hold.**
+// shairport releases each frame to the backend that far ahead of the moment
+// it should sound, on the understanding that the backend will delay it by
+// exactly that much. `audio_stdout.c` sets it to 1.0 in its own `init()` —
+// the "otherwise" default for a backend that is neither alsa nor pa — and our
+// music plane holds `localPrimePeriods`, 0.171s. We had never overridden it,
+// so the statement shairport was working from was wrong by a factor of six.
+//
+// **`audio_backend_latency_offset_in_seconds` moves the moment itself**, by
+// being added to the latency the sender requested (`rtp.c`, both the classic
+// and the PTP path). It is the ONLY lever on the delay between pressing play
+// and hearing something, and a negative value shortens it.
+//
+// Until #389 this wrote the backend delay as a negative offset, which is the
+// shape shairport's own sample suggests for a device whose buffering it
+// cannot ask about ("if the output device delays by 100 ms, set this to
+// -0.1"). It works, in the sense that the audio lands when the sender meant
+// it to — but it leaves the first statement unmade, and the first statement
+// is what CAPS the second: `rtp.c` discards an offset that would take the
+// stream latency to zero or below, and it subtracts the declared backend
+// buffer when it checks. Declaring 1.0s of backend buffer therefore refuses
+// any offset past -1.0s, silently, by reverting to the sender's full latency.
+//
+// So the order is forced: say what we hold, then spend the trim.
+//
+// # Why the trim is not free, and where its floor comes from
+//
+// AirPlay asks for ~2s (77175 + 11035 frames for every AirPlay 2 sender) so a
+// lost packet can be noticed and asked for again before it is due. Those
+// retries are shairport's `resend_control_*` settings — a first check 0.10s
+// after a gap, repeated every 0.25s, the last one 0.10s before the frame
+// would reach the output buffer — so a stream latency under roughly 0.35s
+// cannot resend at all, and anything close to it gets one try.
+//
+// A satellite speaker has no group to stay in step with and no video to
+// lip-sync to, which is what the other 1.65s is for. `DefaultLatencyTrimSec`
+// spends that and keeps a resend window several rounds deep; the floor is the
+// resend constants rather than taste, and the trade — a shorter cushion
+// against this device's WiFi — is the part that wants measuring on hardware.
+//
+// Zero for either writes NOTHING rather than `0.0`. The two are the same
+// number and not the same statement: absent means nobody measured, and a
+// caller that does not know its own pipeline should not assert there is
+// nothing in it.
+func renderConfig(delaySec, trimSec float64, metadataPipe string, verbosity int) string {
 	general := "general = {\n"
 	// PINNED, all three, because FireOS drops every inbound port that is not
 	// on an allowlist and a firewall rule cannot name a default that a future
@@ -793,7 +854,11 @@ func renderConfig(delaySec float64, metadataPipe string, verbosity int) string {
 	general += fmt.Sprintf("  interface = %q;\n", netfilter.Iface)
 	if delaySec != 0 {
 		general += fmt.Sprintf(
-			"  audio_backend_latency_offset_in_seconds = %.4f;\n", -delaySec)
+			"  audio_backend_buffer_desired_length_in_seconds = %.4f;\n", delaySec)
+	}
+	if trimSec != 0 {
+		general += fmt.Sprintf(
+			"  audio_backend_latency_offset_in_seconds = %.4f;\n", -trimSec)
 	}
 	general += "};\n"
 	// The receiver's own diagnostics, off unless somebody asked. Written here
@@ -865,7 +930,8 @@ func (c *Client) writeConfig() string {
 			"latency offset", filepath.Dir(path), err)
 		return ""
 	}
-	cfg := renderConfig(c.opts.BackendDelaySec, c.metadataPipe(), c.opts.LogVerbosity)
+	cfg := renderConfig(c.opts.BackendDelaySec, c.opts.LatencyTrimSec,
+		c.metadataPipe(), c.opts.LogVerbosity)
 	if err := atomicfile.Write(path, []byte(cfg), 0o644); err != nil {
 		log.Printf("[airplay] cannot write %s: %v — starting without the "+
 			"latency offset", path, err)
