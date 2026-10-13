@@ -12,6 +12,45 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.69.0-fx.1
+
+### AirPlay fängt deutlich schneller an zu spielen
+
+Bisher vergingen zwischen dem Druck auf Play und dem ersten Ton rund zwei
+Sekunden. Das war kein Messfehler und auch nichts, was am Netz lag: Es ist die
+Vorlaufzeit, die das sendende Gerät vorgibt, und das Echo hat sie vollständig
+übernommen.
+
+Ab dieser Fassung gibt das Echo 1,2 Sekunden davon zurück. Es bleiben 0,8
+Sekunden — genug, damit ein verlorenes Paket noch mehrfach nachgefordert
+werden kann, bevor es gebraucht wird; diese Grenze stammt aus den
+Nachforder-Zeiten von shairport-sync selbst und ist nicht geschätzt.
+
+**Was du merkst:** Play reagiert schneller, Pause ebenso, und der Abstand
+zwischen Tippen und Ton fühlt sich an wie bei einem gekauften AirPlay-2-
+Lautsprecher.
+
+**Was das kostet, und das steht hier, weil es dich betreffen kann:** Der
+Puffer gegen WLAN-Aussetzer ist jetzt kürzer. Wenn das Echo weit vom Router
+steht oder das Band stark belegt ist, können Aussetzer hörbar werden, die
+vorher der große Puffer verschluckt hat. Das ist auf echter Hardware **nicht
+gemessen** — falls es bei dir aussetzt, sag Bescheid: der richtige nächste
+Schritt ist dann ein größerer Wert, nicht die Rückkehr zu zwei Sekunden.
+
+### Warum es überhaupt zwei Sekunden waren
+
+shairport-sync bekommt zwei Angaben: wie viel Ton das Gerät hinter ihm
+zwischenspeichert, und wie viel von der Vorlaufzeit es zurückgeben soll. Diese
+Firmware hat bisher nur die zweite geschrieben — mit dem Wert der ersten. Für
+den Klang war das richtig, aber damit blieb die erste Angabe auf dem Standard
+des Ausgabe-Backends, 1,0 Sekunden gegen tatsächlich 0,171. Und genau diese
+Angabe begrenzt, wie viel Vorlaufzeit überhaupt zurückgegeben werden darf:
+shairport-sync verwirft stillschweigend alles darüber und nimmt wieder die
+volle Vorlaufzeit. Beide Angaben stehen jetzt getrennt in der Konfiguration.
+
+Gelesen im Quelltext von shairport-sync 4.3.7, der hier gebaut wird — `in CI
+verifiziert`: `go test`, `go vet` für ARM und `gofmt` sind grün, auf Hardware
+ist davon nichts gemessen. Siehe #389.
 ## 2.68.0-fx.1
 
 ### Pause an AirPlay hält jetzt wirklich an

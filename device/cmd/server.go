@@ -550,19 +550,24 @@ func main() {
 	// than one that is not listed.
 	//
 	// BackendDelaySec is what OUR pipeline adds behind shairport-sync, which
-	// plays each packet at the instant the sender stamped it and therefore has
-	// to be told what sits behind it. Derived from the music plane's own
-	// local prime depth, so the two cannot drift.
+	// releases each frame to its backend on the understanding that the backend
+	// holds it for exactly this long. Derived from the music plane's own local
+	// prime depth, so the two cannot drift.
 	//
-	// EM_AIRPLAY_LATENCY_OFFSET overrides it, in seconds. An env var rather
-	// than a config key, for EM_AEC_HW_REF's reason: this is a property of
-	// this device's audio path rather than a user preference, and it exists so
-	// the number can be corrected against a real speaker without a rebuild —
-	// the sign convention comes from shairport-sync's own documentation and
-	// has not been measured here.
+	// LatencyTrimSec is the separate question of how much of the sender's own
+	// ~2s this device gives back, and it is the only one of the two that
+	// shortens the wait after pressing play. renderConfig has the whole of
+	// why they are two numbers and why this one has a floor.
+	//
+	// EM_AIRPLAY_LATENCY_OFFSET and EM_AIRPLAY_LATENCY_TRIM override them, in
+	// seconds. Env vars rather than config keys, for EM_AEC_HW_REF's reason:
+	// both are properties of this device's audio path rather than user
+	// preferences, and they exist so the numbers can be corrected against a
+	// real speaker without a rebuild. Neither has been measured on hardware.
 	airplayClient := airplay.New(airplay.Options{
 		Name:            deviceID,
 		BackendDelaySec: envFloat("EM_AIRPLAY_LATENCY_OFFSET", speaker.LocalPrimeSeconds()),
+		LatencyTrimSec:  envFloat("EM_AIRPLAY_LATENCY_TRIM", airplay.DefaultLatencyTrimSec),
 		OnVolume:        airplayVolume(s),
 		// A pause has to empty the music plane, and nothing else can carry
 		// the news (#387). shairport-sync answers a pause by ceasing to

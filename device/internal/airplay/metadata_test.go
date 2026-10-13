@@ -135,10 +135,10 @@ func TestUnparseablePayloadsAreIgnored(t *testing.T) {
 // buffer and then BLOCKS the process decoding the audio — a silent stall of
 // the music, caused by a diagnostic feature nobody switched on.
 func TestNoMetadataBlockWithoutAReader(t *testing.T) {
-	if got := renderConfig(0, "", 0); strings.Contains(got, "metadata") {
+	if got := renderConfig(0, 0, "", 0); strings.Contains(got, "metadata") {
 		t.Fatalf("metadata asked for with no reader:\n%s", got)
 	}
-	got := renderConfig(0, "/data/local/etc/revoice/airplay-metadata", 0)
+	got := renderConfig(0, 0, "/data/local/etc/revoice/airplay-metadata", 0)
 	if !strings.Contains(got, `enabled = "yes"`) {
 		t.Fatalf("metadata not enabled:\n%s", got)
 	}
@@ -152,16 +152,19 @@ func TestNoMetadataBlockWithoutAReader(t *testing.T) {
 // already "no" — this asserts what we rely on, so a future default flip
 // arrives as a failing test rather than as a memory problem with no cause.
 func TestCoverArtIsRefusedExplicitly(t *testing.T) {
-	got := renderConfig(0, "/tmp/p", 0)
+	got := renderConfig(0, 0, "/tmp/p", 0)
 	if !strings.Contains(got, `include_cover_art = "no"`) {
 		t.Fatalf("cover art not refused:\n%s", got)
 	}
 }
 
-// The latency offset and the metadata block have to coexist: they are
+// The latency settings and the metadata block have to coexist: they are
 // independent settings and one must not overwrite the other's section.
 func TestLatencyAndMetadataCoexist(t *testing.T) {
-	got := renderConfig(0.171, "/tmp/p", 0)
+	got := renderConfig(0.171, 1.2, "/tmp/p", 0)
+	if !strings.Contains(got, "audio_backend_buffer_desired_length_in_seconds") {
+		t.Fatalf("the backend buffer length was lost:\n%s", got)
+	}
 	if !strings.Contains(got, "audio_backend_latency_offset_in_seconds") {
 		t.Fatalf("the latency offset was lost:\n%s", got)
 	}

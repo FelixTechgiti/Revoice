@@ -2866,6 +2866,68 @@ Two things not to undo:
   statement: absent means nobody measured, and a caller that does not know its
   own pipeline should not assert there is none.
 
+### The start of a session was one setting we had never written (#389)
+
+**The delay between pressing play and hearing something is the stream latency
+the SENDER asked for, and nothing else.** Every AirPlay 2 sender asks for
+77175 + 11035 frames — 2.0005s at 44.1kHz; `rtp.c` logs the first number only
+when it is something else. shairport then writes exactly that much silence
+into the backend before the first note, because `audio_stdout.c` declares no
+`delay()` function and `player.c` takes the no-delay branch:
+
+```c
+} else {
+  // if the output device doesn't have a delay, we simply send the lead-in
+  int64_t lead_time = conn->first_packet_time_to_play - local_time_now;
+  ...
+  config.output->play(silence, fs, play_samples_are_untimed, 0, 0);
+```
+
+An ALSA backend never reaches that: it asks the DAC how full it is and tops it
+up to `audio_backend_buffer_desired_length`. Ours cannot be asked, so it is
+handed the lot — and our music plane takes 128 periods (5.46s) without
+blocking, so the whole 1.8s lands in the queue and is then played out at
+realtime. That is the wait, and the same depth stays for the session, which is
+the other half of why a pause used to ring on.
+
+**Two settings, and the one we wrote was capping the one we needed.**
+
+| key | says |
+|---|---|
+| `audio_backend_buffer_desired_length_in_seconds` | how much WE hold, so shairport knows how far ahead to release a frame |
+| `audio_backend_latency_offset_in_seconds` | how much of the sender's latency to give back — the only lever on the wait |
+
+Until this, the package wrote the backend delay as a NEGATIVE offset: right
+about when the audio lands, and silent about how much we hold, so
+`audio_stdout.c`'s own default of **1.0** stood — six times our 0.171s. That
+default is what refused any real trim: `rtp.c` subtracts the declared backend
+buffer before deciding whether an offset leaves a workable stream, and throws
+the whole offset away past about −1.0s **without failing**, reverting to the
+sender's full latency. So the order is forced — declare what we hold, then
+spend the trim.
+
+**`DefaultLatencyTrimSec` (1.2s) is derived, and its floor is shairport's own
+resend timings**, not taste: `resend_control_first_check_time` 0.10,
+`resend_control_check_interval_time` 0.25, `resend_control_last_check_time`
+0.10, so a missing packet cannot be noticed, asked for and delivered inside
+much under 0.35s. 0.8s of remaining latency leaves several rounds. A satellite
+speaker has no group to stay in step with and no video to lip-sync to, which
+is what the other 1.65s is for.
+
+**The trade is real and is NOT measured on hardware**: a shorter cushion is
+less room for a WiFi stall, on a device whose radio this file has a section
+about. `EM_AIRPLAY_LATENCY_TRIM` overrides it in seconds, for
+`EM_AIRPLAY_LATENCY_OFFSET`'s reason. If dropouts appear, the answer is a
+larger floor rather than a return to 2.0s — and a config key somebody can
+reach from the dashboard, which is the part of #389 that is not built.
+
+**The silent failure worth remembering is the revert**, because it is the
+shape that wastes an afternoon: an offset past the guard changes nothing at
+all, the receiver starts normally, and the only sign is one `*warning` line in
+shairport's own output on a device nobody is reading. A test pins the default
+against the guard's arithmetic so a future change to either cannot quietly
+cross it.
+
 ## What `PlaybackDelay` measures, and the buffer it used to miss
 
 **`PlaybackDelay()` is the only thing standing between Sendspin's scheduler
