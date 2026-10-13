@@ -34,6 +34,26 @@ import (
 // therefore "the rule was replaced", never "no traffic", and the caller has to
 // re-baseline rather than read it as silence.
 
+// # NOT the deafness instrument any more, and the reason is a third way to lie
+//
+// `internal/mcast` read the mDNS rule's counter until 2026-10-13, and that was
+// the THIRD version of this probe to measure something nearer than the network
+// (#384). A rule matches on the DESTINATION address and says nothing about
+// where a packet came from; the kernel delivers a locally sent multicast packet
+// back up the input path with the outgoing interface still on it; so this
+// device's own announcements move the mDNS rule's counter. The probe's repair
+// restarted both endpoints, both announced themselves as they came up, and the
+// probe read its own echo as the network returning — once a minute after every
+// attempt. Measured on Studio with the arrivals split by source: two
+// consecutive repairs, each "recovering" over exactly the two packets the
+// device had just sent, nothing from any other host in 22 minutes.
+//
+// Arrivals from OTHER hosts are counted on the group socket, which already has
+// to tell them apart — `mdnsannounce.Listener.ForeignCount`. What is left here
+// is a shell-session diagnostic: a rule's counter still answers "has this port
+// ever accepted anything", which is a different and sometimes useful question.
+// It is not an answer about the LAN.
+
 // CountInput returns the INPUT chain with packet counters, as
 // `iptables -L INPUT -v -x -n` prints it.
 //
