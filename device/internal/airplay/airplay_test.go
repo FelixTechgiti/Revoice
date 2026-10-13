@@ -654,9 +654,9 @@ func TestLogVerbosityIsWrittenOnlyWhenItWasAskedFor(t *testing.T) {
 		want      string
 	}{
 		{0, ""}, // the default: nothing at all
-		{1, "  log_verbosity = 1;"},
-		{2, "  log_verbosity = 2;"},
-		{3, "  log_verbosity = 3;"},
+		{1, "diagnostics = {\n  log_verbosity = 1;\n};"},
+		{2, "diagnostics = {\n  log_verbosity = 2;\n};"},
+		{3, "diagnostics = {\n  log_verbosity = 3;\n};"},
 		{4, ""},  // out of range is unset, not clamped
 		{-1, ""}, // and so is nonsense
 	} {

@@ -9,8 +9,8 @@
  * prompt a fresh report is itself multicast.
  *
  * This sends the report the kernel will not, without touching either
- * responder. It is the instrument that proves the mechanism; the firmware
- * does the same thing on a timer (internal/mcastkeep).
+ * responder. It DISPROVED the theory it was built for — see the README —
+ * and no firmware does this on a timer any more.
  *
  * Freestanding, for mdnsprobe's reasons: it crosses the shell plane as
  * base64, and depending on no libc removes the bionic question rather than
