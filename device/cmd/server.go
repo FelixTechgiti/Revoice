@@ -569,6 +569,29 @@ func main() {
 		BackendDelaySec: envFloat("EM_AIRPLAY_LATENCY_OFFSET", speaker.LocalPrimeSeconds()),
 		LatencyTrimSec:  envFloat("EM_AIRPLAY_LATENCY_TRIM", airplay.DefaultLatencyTrimSec),
 		OnVolume:        airplayVolume(s),
+		// A pause has to empty the music plane, and nothing else can carry
+		// the news (#387). shairport-sync answers a pause by ceasing to
+		// write to its pipe and sends no end-of-stream, because a pipe has
+		// none — so the periods already queued play out and the Echo keeps
+		// singing for seconds after the button. This is the same shape
+		// `dropQueue` exists for, reached from a fourth producer.
+		//
+		// **Unconditional, unlike the volume handler.** Pausing is not a
+		// preference, and setting it here is also what asks shairport for
+		// metadata at all on a device whose owner never turned the volume
+		// slider on.
+		OnPlayState: func(st airplay.PlayState) {
+			if st == airplay.PlayStatePlaying {
+				return
+			}
+			// DropMusicQueue rather than FlushMusic: flush ARMS the discard
+			// for the remainder of a stream that is ending, which is right
+			// for a producer that sends an end-of-stream and permanent for
+			// one that does not. `dropQueue` clears the flag instead, so the
+			// next track plays.
+			log.Printf("[airplay] sender %s — dropping the queued music", st)
+			pcmSpeaker.DropMusicQueue()
+		},
 		// Off unless somebody asked, and an env var rather than a config key
 		// for EM_AIRPLAY_LATENCY_OFFSET's reason: it is a diagnostic for one
 		// device rather than a user preference, and it exists so a session
@@ -596,11 +619,11 @@ func main() {
 	}
 	applyAirplayConfig(airplayClient, s)
 	applyFirewall()
-	// The busy predicate is passed in rather than reached for: startNetworkRepair
-	// is about the network and has no business knowing what owns the speaker.
-	startNetworkRepair(spotifyClient, airplayClient, func() bool {
-		return dataClient.MusicPlane().Owner() != musicplane.None
-	}, mdnsListener, mdnsCache)
+	// The busy predicate went with the deafness repair (#384). It gated a
+	// restart of both endpoints on nothing playing; with nothing left here
+	// that stops audio, passing it would be a parameter nobody reads, which
+	// is how a caller comes to believe this still waits for the music.
+	startNetworkRepair(spotifyClient, airplayClient, mdnsListener, mdnsCache)
 
 	// Re-execute one endpoint after its binary has been replaced. The
 	// controller decides whether to ask — it is the side that knows whether
@@ -2551,7 +2574,7 @@ func coresTotal() int {
 // is about the KERNEL; emOS answers both the same way, and a device that one
 // day loses a membership under emOS is repaired without anybody remembering
 // this comment.
-func startNetworkRepair(sp *spotify.Client, ap *airplay.Client, busy func() bool,
+func startNetworkRepair(sp *spotify.Client, ap *airplay.Client,
 	mdns *mdnsannounce.Listener, mdnsCache *mdnsannounce.Cache) {
 	// The re-join, shared by both repairs below. One closure rather than two,
 	// because they repair the same thing from two different instruments and
@@ -2625,31 +2648,43 @@ func startNetworkRepair(sp *spotify.Client, ap *airplay.Client, busy func() bool
 	// query version could not work on this platform at all, because FireOS
 	// drops the unicast replies it asked for. See internal/mcast.
 	prober := &mcast.Prober{
-		Sample: func() mcast.Reading {
-			// The firewall's own counter on the mDNS rule. It cannot be fooled
-			// by the firewall because it IS the firewall — the version that
-			// SENT a query measured the drop policy instead and reported a
-			// device deaf whose 5353 rule had accepted 93,704 packets.
-			listing, err := netfilter.CountInput()
-			if err != nil {
-				return mcast.Reading{Err: err}
-			}
-			// The MULTICAST counter, not the port's total. The general
-			// `dpt:5353` rule accepts unicast too, and reading it meant a deaf
-			// device looked healthy on the strength of a handful of unicast
-			// packets a minute — so the repair below could never fire (#328).
-			n, ok := netfilter.PacketsForDest(listing, "udp", mcast.MDNSPort,
-				mcast.Iface, netfilter.MDNSGroup)
-			return mcast.Reading{Packets: n, Found: ok}
-		},
+		// The group socket's own count of packets from OTHER hosts, which is
+		// the only instrument here that has ever been asked the right
+		// question. Three versions preceded it and each measured something
+		// closer to home than the network: a query whose answers the firewall
+		// dropped, then the port's total including unicast, then — until
+		// #384 — the firewall's mDNS rule, which matches on the destination
+		// and therefore counted this device's own announcements coming back
+		// through the kernel's multicast loopback. The repair below restarted
+		// the endpoints, the endpoints announced, and the probe read that as
+		// the network returning, once a minute, for ever.
+		//
+		// No socket is NOT a reading of zero (mcast.ErrNoSocket), so a device
+		// whose listener never opened is left alone rather than reported deaf.
+		Sample: mcast.SocketSample(mdns.ForeignCount),
 		Active: func() bool { return sp.Running() || ap.Running() },
-		Repair: rejoin,
-		// A repair restarts the endpoints, so it waits for the music to stop.
-		// A session already streaming is unaffected by the device being deaf —
-		// it has its connection — so repairing through it would be the cure
-		// costing more than the disease. The prober keeps asking, so nothing
-		// is dropped; it only waits.
-		Busy: busy,
+		// No Repair, and that is a decision rather than an omission.
+		//
+		// Restarting the endpoints was credited with re-joining the group and
+		// re-programming the chip's address filter as a side effect. The
+		// mechanism was disproved on 2026-10-12 (device/CLAUDE.md, "The
+		// interface stops accepting the group"), and on 2026-10-13 the
+		// evidence FOR it turned out to be the probe reading its own echo:
+		// 21 repairs and 45 shairport-sync restarts in one day on Studio,
+		// with not one packet from another host arriving in any of them.
+		//
+		// Fixing the instrument is what makes the repair dangerous rather
+		// than merely useless. A device that is genuinely deaf no longer
+		// talks the probe out of its verdict, so the repair would fire on
+		// every cycle — dropping whatever AirPlay session is live and taking
+		// the receiver out of every picker for about four seconds each time,
+		// to perform a re-join that does not work.
+		//
+		// internal/mdnsannounce already removes the symptom this reached for:
+		// a device that cannot hear a query says who it is anyway. The
+		// membership Watcher above keeps ITS repair — that one answers a
+		// different question (/proc/net/igmp has genuinely lost the group)
+		// and has a mechanism that holds.
 	}
 	go prober.Run(nil)
 

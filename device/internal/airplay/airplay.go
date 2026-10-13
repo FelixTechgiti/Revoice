@@ -196,6 +196,20 @@ type Options struct {
 	// goroutine and a config block, and a nil callback means nothing would
 	// read them. One thing to be true rather than two that can disagree.
 	OnVolume func(db float64)
+	// OnPlayState, when set, receives the sender's transport state — play,
+	// pause, stop — as shairport-sync reports it on the same metadata stream
+	// the volume rides.
+	//
+	// **It exists because a pause has to reach the music plane and nothing
+	// else can carry it.** shairport-sync answers a pause by ceasing to write
+	// to its pipe; it sends no end-of-stream, because the pipe has no such
+	// thing. So without this the periods already queued on the device play
+	// out at their own pace and the Echo keeps singing for seconds after the
+	// button (#387) — the same shape `dropQueue` was written for.
+	//
+	// Unlike OnVolume this is NOT a user preference: pausing is expected to
+	// pause. A caller should set it whenever AirPlay runs at all.
+	OnPlayState func(PlayState)
 	// MetadataPipe is where shairport-sync writes metadata. Overridable for
 	// tests; MetadataPipePath otherwise.
 	MetadataPipe string
@@ -587,10 +601,30 @@ func (c *Client) syncMetadataReader() {
 	}
 	stop := make(chan struct{})
 	c.metaStop = stop
-	fn := c.opts.OnVolume
 	c.mu.Unlock()
 
-	go startMetadataReader(pipe, stop, fn)
+	// The handlers are looked up PER EVENT rather than captured here, so a
+	// handler installed later reaches a reader that is already running. The
+	// captured version was only ever correct because changing OnVolume
+	// restarted the whole receiver — and it no longer does, since the pipe
+	// is asked for whatever the volume setting says.
+	go startMetadataReader(pipe, stop,
+		func(db float64) {
+			c.mu.Lock()
+			fn := c.opts.OnVolume
+			c.mu.Unlock()
+			if fn != nil {
+				fn(db)
+			}
+		},
+		func(st PlayState) {
+			c.mu.Lock()
+			fn := c.opts.OnPlayState
+			c.mu.Unlock()
+			if fn != nil {
+				fn(st)
+			}
+		})
 }
 
 // SetVolumeHandler installs (or removes) the AirPlay volume callback, live.
@@ -609,20 +643,26 @@ func (c *Client) syncMetadataReader() {
 // empty. A change that does not cross that boundary restarts nothing.
 func (c *Client) SetVolumeHandler(fn func(db float64)) {
 	c.mu.Lock()
-	was := c.opts.OnVolume != nil
-	now := fn != nil
+	wasAsked := c.opts.OnVolume != nil || c.opts.OnPlayState != nil
 	c.opts.OnVolume = fn
+	nowAsked := c.opts.OnVolume != nil || c.opts.OnPlayState != nil
 	running := c.running
 	c.mu.Unlock()
 
-	if was == now || !running {
+	// **The restart follows the CONFIG, not the handler, and that changed
+	// with #387.** What has to be rewritten is shairport's config file, which
+	// says whether to write metadata at all — so the question is whether the
+	// metadata gate crossed, and with a transport handler installed it never
+	// does. The old version asked whether OnVolume crossed and killed a
+	// receiver mid-track to rewrite a file that was about to be identical.
+	if wasAsked == nowAsked || !running {
 		return
 	}
 	// Reader first, THEN the restart that rewrites the config: the new
 	// process must never be the one waiting for a reader to appear.
 	c.syncMetadataReader()
-	log.Printf("[airplay] volume control %s — restarting the receiver",
-		map[bool]string{true: "on", false: "off"}[now])
+	log.Printf("[airplay] metadata %s — restarting the receiver",
+		map[bool]string{true: "on", false: "off"}[nowAsked])
 	c.kill()
 }
 
@@ -894,13 +934,19 @@ func renderConfig(delaySec, trimSec float64, metadataPipe string, verbosity int)
 // metadataPipe is the pipe to ask shairport-sync for metadata on, or "" when
 // nothing is listening.
 //
-// Driven by OnVolume rather than by a separate flag: a config block telling
-// shairport to write down a pipe nobody opens would fill its buffer and
-// eventually block the process that is playing the music.
+// Driven by the HANDLERS rather than by a separate flag: a config block
+// telling shairport to write down a pipe nobody opens would fill its buffer
+// and eventually block the process that is playing the music.
+//
+// **Either handler is enough, and that widening is the point of #387.** The
+// gate used to be OnVolume alone, which is `airplayVolumeControl` and
+// defaults OFF — so on an ordinary device shairport was never asked for
+// metadata at all, and the pause that has to reach the music plane could
+// never be seen. Pausing is not a preference.
 func (c *Client) metadataPipe() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.opts.OnVolume == nil {
+	if c.opts.OnVolume == nil && c.opts.OnPlayState == nil {
 		return ""
 	}
 	if c.opts.MetadataPipe != "" {

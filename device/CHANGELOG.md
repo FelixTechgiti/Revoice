@@ -51,6 +51,98 @@ volle Vorlaufzeit. Beide Angaben stehen jetzt getrennt in der Konfiguration.
 Gelesen im Quelltext von shairport-sync 4.3.7, der hier gebaut wird — `in CI
 verifiziert`: `go test`, `go vet` für ARM und `gofmt` sind grün, auf Hardware
 ist davon nichts gemessen. Siehe #389.
+## 2.68.0-fx.1
+
+### Pause an AirPlay hält jetzt wirklich an
+
+Bisher hat dein Echo nach dem Pausieren noch sekundenlang weitergespielt.
+Der Grund: shairport-sync hört beim Pausieren einfach auf, Audio zu
+schicken — ein Ende-Signal gibt es auf diesem Weg nicht. Was schon im
+Puffer des Geräts lag, lief also in aller Ruhe zu Ende.
+
+shairport sagt durchaus Bescheid, über denselben Metadaten-Kanal, über den
+auch der Lautstärkeregler kommt. Nur hat das niemand gelesen. Jetzt wird
+beim Pausieren und beim Stoppen der gepufferte Ton verworfen.
+
+### Zwei Dinge, die dabei herauskamen
+
+**Die Metadaten wurden auf den meisten Geräten gar nicht erst angefordert.**
+Sie hingen an der Einstellung „AirPlay-Lautstärke ändert die
+Gerätelautstärke", und die ist standardmäßig aus. Pausieren ist keine
+Geschmacksfrage, also werden die Metadaten jetzt immer angefordert, sobald
+AirPlay läuft.
+
+**Und selbst dann wären die Pausemeldungen verworfen worden.** Der Parser
+hat jedes Metadaten-Element ohne Nutzlast weggeworfen — und genau das sind
+die Transportmeldungen: sie bestehen nur aus ihrem Code. Richtig, solange
+nur die Lautstärke gelesen wurde; falsch ab dem Moment, in dem etwas
+anderes dazukam.
+
+### Nebeneffekt, den du merken wirst
+
+Das Umschalten der Lautstärke-Einstellung startet den AirPlay-Empfänger
+nicht mehr neu. Vorher hat es das getan — mitten in einer laufenden
+Wiedergabe — um eine Konfigurationsdatei zu schreiben, die sich gar nicht
+geändert hätte.
+
+### Was das NICHT behebt
+
+Die Verzögerung, bis nach dem Play-Druck der erste Ton kommt. AirPlay 2
+bringt im gepufferten Modus rund zwei Sekunden von sich aus mit; das ist
+Apples Design. Was unsere Kette obendrauf legt, ist bisher nur
+konfiguriert und nicht gemessen.
+
+### Verifikation
+
+In CI verifiziert (`go test`, `gofmt`, `go vet` für ARM mit `-tags server`).
+Die Tests wurden gegengeprüft, indem die Änderung zurückgedreht wurde — drei
+fallen dann um. Am echten Gerät **nicht verifiziert**: das zeigt sich erst,
+wenn jemand Pause drückt.
+## 2.67.0-fx.1
+
+### Dein Echo startet AirPlay und Spotify nicht mehr alle elf Minuten neu
+
+Das Gerät hat sich bisher mehrmals pro Stunde selbst repariert, und die
+Reparatur war ein Neustart beider Empfänger. Auf Studio waren das an einem
+Tag **21 Reparaturen und 45 Neustarts von shairport-sync**. Jeder davon
+beendet eine laufende AirPlay-Wiedergabe und nimmt das Gerät für rund vier
+Sekunden aus jeder Geräteliste.
+
+Diese Reparatur hat nie etwas repariert. Sie hat sich nur selbst bestätigt:
+Der Test, der entscheidet ob das Echo das Netz noch hört, hat die Pakete am
+Zähler einer Firewall-Regel gezählt — und diese Regel zählt auch die
+Ankündigungen, die das Echo **selbst** verschickt. Ein Neustart der
+Empfänger erzeugt genau solche Ankündigungen. Der Test hat also sein eigenes
+Echo gehört und daraus geschlossen, dass die Reparatur gewirkt hat.
+
+Nachgemessen am Gerät, mit nach Absender getrennten Zählern: in 22 Minuten
+kam **kein einziges** Paket von einem anderen Rechner an, während die
+Reparatur zweimal „hört das Netz wieder" meldete — über genau die zwei
+Pakete, die das Echo Sekunden vorher selbst gesendet hatte.
+
+Auch das rätselhafte Elf-Minuten-Muster löst sich damit auf: es war die
+Rechnung des Tests selbst (zweimal fünf Minuten bis zur Diagnose, eine
+Minute bis zur nächsten Messung), nicht irgendetwas im Netz.
+
+### Was sich sonst ändert
+
+Der Test misst jetzt an der richtigen Stelle — am mDNS-Socket, der ohnehin
+offen ist und Absender ohnehin unterscheiden muss. Er meldet weiterhin im
+Protokoll, wenn das Gerät nichts mehr hört, und **unternimmt nichts mehr
+dagegen**. Dass dein Echo trotzdem in den AirPlay- und Spotify-Listen
+auftaucht, erledigt seit 2.65.0-fx.1 die regelmäßige Selbstankündigung.
+
+Die zweite Reparatur bleibt unverändert: Wenn die Gruppenmitgliedschaft
+wirklich verloren geht, startet das Gerät die Empfänger weiterhin neu. Dafür
+gibt es einen belegten Mechanismus.
+
+### Verifikation
+
+In CI verifiziert (`go test`, `go vet` für ARM mit `-tags server`, `gofmt`).
+Die Fehlanalyse selbst ist am echten Gerät verifiziert, über zwei
+aufeinanderfolgende Reparaturen mit nach Absender getrennten Zählern.
+Dass dadurch weniger Neustarts passieren, ist **nicht verifiziert** — das
+zeigt sich erst im Betrieb.
 
 ## 2.66.0-fx.1
 

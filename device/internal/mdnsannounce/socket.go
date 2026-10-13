@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync/atomic"
 )
 
 // Group and Port are the mDNS link-local group, RFC 6762 §3.
@@ -36,6 +37,11 @@ type Listener struct {
 	conn *net.UDPConn
 	addr *net.UDPAddr
 	ifi  *net.Interface
+
+	// foreign counts packets that reached the group from SOMEBODY ELSE. See
+	// ForeignCount for why the count lives on the socket rather than on the
+	// firewall, where it was measuring this device's own announcements.
+	foreign atomic.Int64
 }
 
 // Open binds the mDNS group on iface and joins it.
@@ -134,15 +140,33 @@ func (l *Listener) Watch(c *Cache, local func() (string, error)) {
 		if src == nil || n <= 0 {
 			continue
 		}
-		mine, err := local()
-		if err != nil || mine == "" {
-			continue
-		}
-		if src.IP == nil || src.IP.String() != mine {
-			continue
-		}
-		c.Observe(buf[:n])
+		l.note(c, buf[:n], src.IP, local)
 	}
+}
+
+// note decides what one arrival is: this device's own announcement, worth
+// keeping so it can be repeated, or somebody else's, worth COUNTING so the
+// deafness probe has an instrument that is about the network (#384).
+//
+// Split out of the read loop so both halves can be driven without a socket —
+// a host test cannot join a multicast group, and the decision is the part
+// worth pinning.
+func (l *Listener) note(c *Cache, pkt []byte, src net.IP, local func() (string, error)) {
+	mine, err := local()
+	if err != nil || mine == "" {
+		// Failure to look is not evidence, and here that cuts both ways: a
+		// packet whose origin cannot be decided is neither ours to cache nor
+		// somebody else's to count.
+		return
+	}
+	if src == nil {
+		return
+	}
+	if src.String() != mine {
+		l.foreign.Add(1)
+		return
+	}
+	c.Observe(pkt)
 }
 
 // Listen opens the socket and starts watching the group. It is called before
