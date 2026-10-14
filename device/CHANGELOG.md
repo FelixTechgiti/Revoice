@@ -12,6 +12,54 @@ Newest first. Written for the person deciding whether to push this to a
 device they rely on, so it says what changed, what to expect, and what is
 required of them.
 
+## 2.70.0-fx.1
+
+### Spotify Connect kann wieder in der Liste auftauchen
+
+Dein Echo stand dauerhaft in der AirPlay-Liste und in keiner Spotify-Liste.
+Der Grund lag nicht bei Spotify, sondern bei uns.
+
+Damit das Gerät auffindbar bleibt, auch wenn es Anfragen aus dem Netz nicht
+mehr hört, merkt sich die Firmware die Ankündigungen ihrer eigenen Dienste und
+schickt sie alle 45 Sekunden erneut. Dieser Speicher fasste **acht** Pakete —
+und shairport-sync allein kündigt zwei Dienste an und füllte alle acht Plätze.
+
+Schlimmer: Ist der Speicher voll, verdrängt ein neues Paket nur dann eines,
+wenn es **mehr** Einträge mitbringt. librespots Ankündigung ist schlanker als
+die von AirPlay. Sie wurde also nicht knapp verdrängt, sondern bei jeder
+Runde abgelehnt, solange das Gerät lief.
+
+Der Speicher fasst jetzt 32. Das ist gefahrlos, seit v2.67.0-fx.1 nur noch
+Pakete vom Gerät selbst hineinkommen — fremder Netzverkehr kann ihn nicht mehr
+füllen, und damit wird er nie mehr voll.
+
+**Was du merkst:** Dein Echo kann wieder in der Spotify-App erscheinen. Dass es
+erscheint, ist damit nicht garantiert — siehe unten.
+
+### Und ein Zähler, der niemand war
+
+Die Firmware hat die Ablehnungen die ganze Zeit mitgezählt und niemandem
+gesagt. In der stündlichen Logzeile stand nur „8 record set(s)" — also genau
+die Zahl, die nach einem gesunden Speicher aussieht, während in Wahrheit die
+Obergrenze erreicht war. Die Zeile nennt jetzt auch gesehen, gespeichert,
+abgelehnt und zurückgesetzt.
+
+### Was das NICHT behebt
+
+Ob librespots Ankündigung überhaupt bis zu diesem Speicher kommt, ist noch
+offen: Eine Messung zählte nach einem librespot-Neustart ein eigenes Paket, nach
+einem shairport-Neustart drei. Im Quelltext von libmdns 0.10.1 kündigt
+librespot bei jeder Registrierung an, und es hält Port 5353 — die Lücke ist
+also unerklärt. Diese Fassung räumt eine von zwei möglichen Ursachen weg; die
+neue Zeile mit `refused=` wird zeigen, ob es die einzige war.
+
+Ebenfalls offen bleibt #76: libmdns verwirft ein ganzes Anfragepaket, sobald
+darin ein Fragetyp vorkommt, den es nicht kennt — ein iPhone im Netz genügt.
+
+`in CI verifiziert`: `go test`, `go vet` für ARM und `gofmt` sind grün. Mit dem
+alten Wert 8 fallen beide neuen Tests. Auf Hardware ist nichts gemessen.
+Siehe #386.
+
 ## 2.69.0-fx.1
 
 ### AirPlay fängt deutlich schneller an zu spielen

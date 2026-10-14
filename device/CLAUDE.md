@@ -2632,6 +2632,66 @@ it; `Prober.Repairs` says the support bundle and nothing reads that either.
 Checked 2026-10-12. Both comments now say so, and wiring them — with
 `MultiKeeper.Sets` beside them — is the part of #367 that is not built.
 
+### The cache bound decided WHICH services stayed in a picker (#386)
+
+**The Echo was in the AirPlay picker and in no Spotify one, permanently, and
+the number that would have said so read as healthy.** `DefaultMax` was 8, and
+the device announced `8 record set(s)` on every round for hours — a cache
+sitting at exactly its bound and never moving, which is indistinguishable from
+a cache holding everything there is.
+
+The arithmetic behind the 8 was off by a service. Its comment said "two
+responders announce a handful of packets each at startup, so this is several
+times what a healthy device produces" — but `shairport-sync` announces
+`_raop._tcp` AND `_airplay._tcp`, so one responder fills eight slots by itself.
+
+**Then the eviction policy made the exclusion permanent rather than merely
+tight.** A full cache replaces the held packet carrying the FEWEST records,
+and only if the new one carries strictly more:
+
+```go
+poorest, fewest := -1, m.Records
+for i, have := range c.pkts {
+    if hm.Records < fewest { poorest, fewest = i, hm.Records }
+}
+if poorest < 0 { c.refused++; return false }
+```
+
+That is right WITHIN a service — a startup announcement carrying PTR, SRV, TXT
+and A together holds a picker entry whole where a browser's single-record
+answer does not — and blind ACROSS services. librespot's PTR+SRV+TXT is leaner
+than shairport's sets, so once the eight were AirPlay's it could never be
+admitted. Not crowded: excluded, on every round, for the life of the process.
+
+**The bound is 32 now, and what makes that safe is #385.** The limit was sized
+against "a link that is talking"; since the listener began admitting only
+packets sourced from this device's own address, foreign traffic cannot reach
+`Observe` at all. What can fill it is exactly our own responders — three
+service types today, a handful of packets each — so the bound is no longer
+reached and the policy never has to arbitrate between services.
+
+**The eviction is deliberately left alone.** Making a lean packet displace a
+rich one trades permanent exclusion for churn, and the comment defending
+"richest wins" is correct about the case it names. The fix is that the cache
+never fills, not that it fills more fairly; `TestTheBoundIsNotReachedByThis
+DevicesOwnResponders` pins the bound against a FOURTH endpoint, because that
+is what would bring this back.
+
+**`Cache.Stats` had existed the whole time with no caller**, which is why the
+refusals were invisible — the same shape as `Watcher.Repairs` and
+`Prober.Repairs` elsewhere in this file. They ride the hourly announce line
+now (`seen/stored/refused/goodbyes/resets`), so a cache turning announcements
+away says so instead of reporting the bound as a result.
+
+**What this does NOT fix**: whether librespot's announcement reaches the
+listener at all. #386's original measurement counted one self-sourced
+multicast packet after a librespot restart against three after shairport's,
+and that gap is unexplained — libmdns demonstrably calls `send_unsolicited` on
+every service registration (`Responder::register`, libmdns 0.10.1), and
+librespot holds 5353 beside the other two responders. So this removes one of
+two possible causes; the hourly `refused=` is what will say whether it was the
+only one.
+
 ### The probe that measured the firewall, and shipped three times
 
 **`Prober`'s first version was wrong in a way this repository had already

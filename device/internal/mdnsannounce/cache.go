@@ -7,10 +7,31 @@ import (
 
 // DefaultMax is how many distinct announcements are kept.
 //
-// Two responders announce a handful of packets each at startup, so this is
-// several times what a healthy device produces. It exists to bound memory
-// against a link that is talking, not to shape what is kept.
-const DefaultMax = 8
+// It exists to bound memory, and **it must never be the thing that decides
+// WHICH services are kept** — which is what 8 turned out to be (#386).
+//
+// The old value came with "two responders announce a handful of packets each
+// at startup, so this is several times what a healthy device produces". The
+// arithmetic was off by a service: shairport-sync announces `_raop._tcp` AND
+// `_airplay._tcp`, so one responder fills eight slots by itself. Measured on
+// Studio, 2026-10-13 — `announced 8 record set(s)` on every round for hours,
+// which is the cache sitting at exactly `max` and never moving. With it full
+// of the richer AirPlay packets, librespot's PTR+SRV+TXT could never be
+// admitted, because the eviction below only replaces a packet carrying
+// STRICTLY FEWER records. The Echo was in the AirPlay picker and in no
+// Spotify one, permanently, with nothing reporting a refusal.
+//
+// **The reason a bigger number is now safe is #385.** The bound was sized
+// against "a link that is talking", and since the listener began admitting
+// only packets sourced from this device's own address, foreign traffic can no
+// longer reach `Observe` at all. What can fill this is exactly our own
+// responders: three service types today, a handful of packets each.
+//
+// 32 is therefore several times what the DEVICE produces rather than several
+// times what one responder produces, and it leaves room for a fourth endpoint
+// without this being read again. At a few hundred bytes a packet the whole
+// cache is single-digit kilobytes.
+const DefaultMax = 32
 
 // Cache holds the announcements this device's own responders have made, as
 // the bytes they were sent as.
