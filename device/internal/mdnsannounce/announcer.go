@@ -117,9 +117,19 @@ func (a *Announcer) Tick() int {
 		// One line an hour at the default interval: enough for a support
 		// bundle to answer the next question, which is whether the device was
 		// announcing while somebody could not see it.
+		//
+		// **The cache's REFUSALS ride this line, because without them a cache
+		// that is turning announcements away reads exactly like one that has
+		// everything there is** (#386). `n` sat at the bound for hours on a
+		// device whose Spotify announcement was being refused on every round,
+		// and the only number anybody could see was the one that looked
+		// healthy. `Cache.Stats` had existed the whole time with no caller.
 		if a.announced == 1 || a.announced%80 == 0 {
+			seen, stored, refused, goodbyes, resets := a.Cache.Stats()
 			log.Printf("[mdnsannounce] announced %d record set(s) unprompted "+
-				"(round %d, %d packets sent in total)", n, a.announced, a.sent)
+				"(round %d, %d packets sent in total; cache seen=%d stored=%d "+
+				"refused=%d goodbyes=%d resets=%d)", n, a.announced, a.sent,
+				seen, stored, refused, goodbyes, resets)
 		}
 	}
 	return n

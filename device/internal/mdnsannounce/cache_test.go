@@ -150,3 +150,47 @@ func TestRubbishOffTheLinkIsRefusedWithoutPanicking(t *testing.T) {
 		t.Errorf("Len = %d, want 0", c.Len())
 	}
 }
+
+// ─── The bound may not decide WHICH services are kept (#386) ─────────────────
+//
+// The eviction below the bound keeps the RICHEST packet, which is right within
+// one service — a startup announcement carrying PTR, SRV, TXT and A together
+// holds a picker entry whole, where a browser's single-record answer does not.
+// Across services it is blind: a leaner responder's announcement can never
+// displace a richer one, so once the cache is full of one endpoint's packets
+// the other endpoint is excluded permanently rather than merely crowded.
+//
+// That is what 8 did on a device running both receivers. The fix is that the
+// bound is large enough to never be reached by this device's own responders,
+// so the policy never has to arbitrate between services at all — which is why
+// these tests are about the BOUND and not about the eviction.
+
+func TestALeanAnnouncementSurvivesARicherResponder(t *testing.T) {
+	// shairport-sync announces two service types with full record sets;
+	// librespot announces one, leaner. The lean one must still be held.
+	c := NewCache(0)
+	for i := 0; i < 8; i++ {
+		if !c.Observe(records(6, "rich"+string(rune('a'+i))+".local.")) {
+			t.Fatalf("rich announcement %d was refused", i)
+		}
+	}
+	if !c.Observe(records(3, "lean.local.")) {
+		_, stored, refused, _, _ := c.Stats()
+		t.Fatalf("the lean announcement was refused — the bound is deciding "+
+			"which services are kept (stored=%d refused=%d)", stored, refused)
+	}
+}
+
+func TestTheBoundIsNotReachedByThisDevicesOwnResponders(t *testing.T) {
+	// Since #385 the listener admits only packets sourced from this device,
+	// so nothing but our own responders can fill this. Three service types
+	// today — _raop._tcp, _airplay._tcp, _spotify-connect._tcp — and RFC 6762
+	// section 8.3 asks a responder to repeat an announcement at least twice.
+	// A fourth endpoint must not be the thing that reintroduces #386.
+	const services, repeats, headroom = 4, 2, 2
+	if want := services * repeats * headroom; DefaultMax < want {
+		t.Fatalf("DefaultMax = %d, which leaves no room for %d services "+
+			"announcing %d times; #386 is one endpoint away from returning",
+			DefaultMax, services, repeats)
+	}
+}
