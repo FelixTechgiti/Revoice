@@ -81,9 +81,26 @@ jobs:
       - name: Build the resolver shim
         if: inputs.which == 'gaishim' || inputs.which == 'both'
         working-directory: device/gaishim
-        run: ./build.sh
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        # The NDK is NAMED here rather than left to build.sh's autodetect
+        # search order, because abicheck.c is only meaningful against a known
+        # set of Android headers — a search that finds a different NDK checks
+        # the shim against headers nobody chose.
+        #
+        # It has to be a shell variable. The `env` context holds only what a
+        # workflow, job or step `env:` block set, never the runner image's own
+        # environment, so the `ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}`
+        # that stood here until 2026-09-21 expanded to the empty string: the
+        # line read as the mechanism selecting the NDK and selected nothing,
+        # and every build ran on the autodetect instead. It never failed,
+        # because the runner does ship an SDK the loop finds.
+        #
+        # The `:?` is what the old line could not do: if the image stops
+        # setting the variable, the step says so here instead of quietly
+        # building against whatever the search lands on.
+        run: |
+          : "${ANDROID_NDK_LATEST_HOME:?the runner image no longer sets it — name an NDK for this step}"
+          echo "NDK: $ANDROID_NDK_LATEST_HOME"
+          NDK="$ANDROID_NDK_LATEST_HOME" ./build.sh
 
       # What the ELF actually is, before anyone installs it. The controller's
       # upload endpoint checks this too and refuses a host build — the likely
